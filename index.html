@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Helper</title>
+<meta name="description" content="Личный помощник: кэшбэки, напоминания, WiFi, агент.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b0d10">
+<script src="theme.js"></script>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="Icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%92%B8%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1 class="sr">Personal Helper</h1>
+  <div class="wrap bar">
+    <nav class="nav" aria-label="Разделы"><a class="logo on" id="navMain" href="#main" aria-current="page"><i></i><span>Кэшбэк</span></a><a id="navRem" href="#reminders"><span>Напоминания</span></a><a id="navWifi" href="#wifi"><span>WiFi</span></a><a id="navAgent" href="#agent"><span>Агент</span></a></nav>
+    <div class="tools">
+      <span id="st" role="status" aria-live="polite"></span>
+      <button class="icon-btn" id="editBtn" type="button" aria-pressed="false" aria-label="Режим редактирования" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+      <button class="icon-btn" id="outBtn" type="button" aria-label="Выйти" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="Переключить тему"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    </div>
+  </div>
+</header>
+<div class="wrap"><div class="warn" id="warn" role="alert" hidden></div></div>
+<div class="wrap" id="loginRoot"><p class="empty" role="status">Загрузка…</p></div>
+<main id="stage" hidden>
+  <div class="prompt" id="prompt" inert><div class="pin"><div class="pbox"><span>Хотите заполнить категории на следующий месяц?</span><span><button class="btn" data-m="yes" type="button">Да</button><button class="btn" data-m="hide" type="button">Скрыть</button></span></div></div></div>
+  <div class="vsw" id="vsw" role="group" aria-label="Вид"><button type="button" data-v="blocks" aria-pressed="true">Блоки</button><button type="button" data-v="compact" aria-pressed="false">Компактно</button></div>
+  <div class="months" id="months">
+    <section class="mp" id="pCur"><div class="mi"><h2 class="mt" id="tCur"></h2><div id="bCur"></div></div></section>
+    <section class="mp next" id="pNext" inert><div class="mi"><h2 class="mt" id="tNext"></h2><div class="lnks"><button class="lnk" data-m="close" type="button">скрыть</button></div><div id="bNext"></div></div></section>
+  </div>
+  <div id="foot"></div>
+  <div class="histw"><button class="hlink" id="hBtn" data-h="toggle" type="button" aria-expanded="false" aria-controls="hist">История</button></div>
+  <section class="hist" id="hist" inert><div class="hi"><div id="hBody"></div></div></section>
+</main>
+<main id="remStage" hidden>
+  <div class="rwrap rwide">
+    <h2 class="mt">Напоминания</h2>
+    <p class="rsub">Уведомления приходят в Telegram по московскому времени.</p>
+    <div class="warn" id="remWarn" role="status" hidden></div>
+    <div class="rcols">
+      <section class="rcol" aria-labelledby="rhPerm">
+        <h3 class="rch" id="rhPerm">Постоянные</h3>
+        <div id="remBody"></div>
+      </section>
+      <section class="rcol" aria-labelledby="rhRec">
+        <h3 class="rch" id="rhRec">Повторяющиеся</h3>
+        <button class="addbtn" id="recAdd" type="button">+ Добавить напоминание</button>
+        <div class="fm" id="recForm" hidden></div>
+        <div id="recList"></div>
+      </section>
+      <section class="rcol" aria-labelledby="rhTmp">
+        <h3 class="rch" id="rhTmp">Временные</h3>
+        <button class="addbtn" id="tmpAdd" type="button">+ Добавить напоминание</button>
+        <div class="fm" id="tmpForm" hidden></div>
+        <div id="tmpList"></div>
+      </section>
+    </div>
+    <p class="rmsg" id="remMsg" role="status" aria-live="polite"></p>
+  </div>
+</main>
+<main id="wifiStage" hidden>
+  <div class="rwrap">
+    <h2 class="mt">WiFi</h2>
+    <p class="rsub">Наведите камеру телефона на код: подключение без ввода пароля.</p>
+    <div id="wifiBody"></div>
+    <p class="rmsg" id="wifiMsg" role="status" aria-live="polite"></p>
+  </div>
+</main>
+
+<main id="agentStage" hidden>
+  <div class="rwrap">
+    <h2 class="mt">Агент</h2>
+    <p class="rsub">Когда и где сбросятся токены. Время по Москве. Строки можно перетаскивать за значок слева.</p>
+    <div id="agBody"></div>
+    <p class="rmsg" id="agMsg" role="status" aria-live="polite"></p>
+  </div>
+</main>
+
+<dialog id="dlg" aria-label="Сообщение"></dialog>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
