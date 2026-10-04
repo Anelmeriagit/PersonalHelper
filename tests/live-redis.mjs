@@ -1,4 +1,4 @@
-// Проверка НАСТОЯЩЕГО Redis (Upstash): атомарные скрипты версии документа и счётчика, SET NX.
+// Проверка НАСТОЯЩЕГО Redis (Upstash): атомарные скрипты версии документа, счётчика и одноразового значения (take), SET NX.
 // Заглушка tests/redis.mjs Lua не исполняет, поэтому этот прогон нужен один раз после подключения базы и после правок скриптов в api/_db.js.
 // Запуск (PowerShell): $env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; node tests/live-redis.mjs
 // Пишет только ключи с префиксом selftest<время>: и удаляет их в конце. Значения переменных нигде не печатаются.
@@ -6,6 +6,7 @@ process.env.DB_PREFIX = 'selftest' + Date.now();
 const db = await import('../api/_db.js');
 let bad = 0;
 const ok = (c, m) => { console.log((c ? 'ok   ' : 'FAIL ') + m); if (!c) bad++; };
+const kt = db.key('tgt', 'x');
 const kx = db.key('doc', 'x'), ky = db.key('doc', 'y'), kh = db.key('hit'), kn = db.key('n');
 try {
   ok((await db.getDoc(kx)).v === 0, 'документа нет: версия 0');
@@ -23,7 +24,11 @@ try {
   const c = await db.count(kh);
   ok(c.n === 2 && c.ttl > 0 && c.ttl <= 60000, 'у счётчика есть срок жизни (ttl ' + c.ttl + ' мс)');
   ok((await db.setNx(kn, 'a')) === true && (await db.setNx(kn, 'b')) === false, 'SET NX: второй раз отказ');
+  await db.cmd('SET', kt, 'v1', 'EX', 60);
+  const tk = await Promise.all([db.take(kt), db.take(kt)]);
+  ok(tk.filter((x) => x === 'v1').length === 1 && tk.filter((x) => x === null).length === 1, 'take: значение достаётся одному из двух параллельных запросов');
+  ok((await db.take(kt)) === null && (await db.take(db.key('tgt', 'нет'))) === null, 'take: после выдачи ключа нет, несуществующий даёт null');
 } catch (e) { console.log('FAIL исключение:', e.name, e.message); bad++; }
-finally { try { await db.del(kx, ky, db.key('doc', 'z'), kh, kn); } catch { /* нечего чистить */ } }
+finally { try { await db.del(kx, ky, db.key('doc', 'z'), kh, kn, kt); } catch { /* нечего чистить */ } }
 console.log(bad ? `\nПровалено: ${bad}` : '\nВсе проверки настоящего Redis пройдены');
 process.exit(bad ? 1 : 0);

@@ -40,4 +40,7 @@ export const routes = {
   'PUT /api/wifi': (body) => ({ configured: true, ssid: body && body.ssid, password: (body && body.password) || '', security: (body && body.security) || 'WPA', hidden: !!(body && body.hidden), qr: { size: 21, rows: qrRows } }),
   'DELETE /api/wifi': () => ({ configured: false }),
   'POST /api/auth': () => ({ ok: true }), // вход, регистрация и выход (action в теле)
+  'GET /api/tglink': () => ({ linked: false }),
+  'POST /api/tglink': () => ({ url: 'https://t.me/TestBot?start=AAAAAAAAAAAAAAAAAAAAAA', ttl: 600 }),
+  'DELETE /api/tglink': () => ({ linked: false }),
 };

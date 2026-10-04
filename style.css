@@ -273,3 +273,13 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .wfn{color:var(--muted);font-size:.9rem;margin:0 0 1rem}
 .wfm .acts .btn{min-height:44px}
 
+
+/* этап 3a: привязка Telegram */
+.tgb{max-width:640px;margin-inline:auto}
+.tgb .et{margin:0 0 .5rem}
+.tgn{margin:0 0 .75rem;color:var(--muted);font-size:.9rem}
+.tgb .acts{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem 1rem;margin-top:0}
+.tgb .btn,.tgb .addbtn{min-height:44px}
+.tgb a.btn{display:inline-flex;align-items:center;text-decoration:none}
+.tgb .lnk{font-size:.9rem;padding:.6rem .5rem}
+.tgb .rmsg{margin-top:.5rem}

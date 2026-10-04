@@ -449,6 +449,16 @@ export const webhookSecret = () => crypto.createHash('sha256').update('wh:' + to
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Username бота для ссылки привязки: getMe, кэш в памяти экземпляра (новый токен = новый деплой). Пустая строка, если не вышло.
+let botUser = '';
+export async function botUsername() {
+  if (botUser) return botUser;
+  const me = await tg('getMe', {}, { retries: 1 });
+  const u = me && typeof me.username === 'string' && /^[A-Za-z0-9_]{5,32}$/.test(me.username) ? me.username : '';
+  if (u) botUser = u;
+  return u;
+}
+
 // Запрос к Telegram: таймаут 10 с, повтор при сетевой ошибке, 429 (с учётом retry_after) и 5xx.
 export async function tg(method, payload, { retries = 2 } = {}) {
   if (!token()) throw new Error('Не задан TELEGRAM_BOT_TOKEN');

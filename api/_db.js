@@ -61,6 +61,11 @@ export const HIT = `-- hit
 local n = redis.call('INCR', KEYS[1])
 if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end
 return n`;
+// Атомарно забрать и удалить значение (одноразовые ссылки): два параллельных запроса не получат его оба.
+export const TAKE = `-- take
+local v = redis.call('GET', KEYS[1])
+if v then redis.call('DEL', KEYS[1]) end
+return v`;
 
 /* ---------- документ: хэш {d: JSON, v: версия}; запись только при совпадении версии ---------- */
 // getDoc → { doc: объект | null, v: номер версии (0, если документа нет) }
@@ -82,6 +87,9 @@ export async function count(k) {
   const [n, t] = await pipe([['GET', k], ['PTTL', k]]);
   return { n: Number(n) || 0, ttl: Math.max(0, Number(t) || 0) };
 }
+
+// → значение или null (в Lua отсутствие значения приходит как false, REST отдаёт null).
+export const take = async (k) => { const v = await cmd('EVAL', TAKE, 1, k); return v == null || v === false ? null : String(v); };
 
 export const setNx = async (k, v) => (await cmd('SET', k, v, 'NX')) === 'OK';
 export const del = (...ks) => cmd('DEL', ...ks);

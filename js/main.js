@@ -8,6 +8,7 @@ import {initReminders,remLoad} from './reminders/index.js';
 import {initWifi,wifiLoad,wifiClear} from './wifi.js';
 import {initAgent,agClear,agLeave,agVisible,agOnPage} from './agent/index.js';
 import {initTheme} from './theme-switch.js';
+import {initTg,tgLoad,tgClear} from './tglink.js';
 
 var editBtn=$('editBtn'),outBtn=$('outBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
 
@@ -25,7 +26,8 @@ function applyPage(){var prev=S.page;S.page=pageFromHash();
   editBtn.hidden=!S.loggedIn||S.page!=='main';
   if(prev!==S.page)window.scrollTo(0,0);
   if(S.page!=='wifi')wifiClear();
-  if(S.loggedIn&&S.page==='rem')remLoad();
+  if(S.page!=='rem')tgClear();
+  if(S.loggedIn&&S.page==='rem'){remLoad();tgLoad()}
   if(S.loggedIn&&S.page==='wifi')wifiLoad();
   agOnPage()}
 
@@ -33,7 +35,7 @@ function applyPage(){var prev=S.page;S.page=pageFromHash();
 var NICK_RE=/^[a-z0-9][a-z0-9_.-]{2,23}$/;
 function showLogin(){var keep=hasUnsaved();stopSave();ui(false);
   Object.keys(PAGES).forEach(function(k){PAGES[k].stage.hidden=true});
-  wifiClear();agClear();S.loggedIn=false;loggedOut(keep);
+  wifiClear();agClear();tgClear();S.loggedIn=false;loggedOut(keep);
   authForm('login',keep,'')}
 /* mode: 'login' | 'reg'. Переключатель внизу формы меняет режим и сохраняет введённый никнейм. */
 function authForm(mode,keep,nick){var reg=mode==='reg';
@@ -70,7 +72,7 @@ function boot(){api('GET','/api/data').then(function(r){
 document.addEventListener('visibilitychange',function(){
   if(document.visibilityState==='visible'){
     cbVisible();
-    if(S.loggedIn&&S.page==='rem')remLoad();
+    if(S.loggedIn&&S.page==='rem'){remLoad();tgLoad()}
     if(S.loggedIn&&S.page==='wifi')wifiLoad();
     agVisible()
   }else{cbHidden();agLeave()}});
@@ -80,5 +82,5 @@ window.addEventListener('hashchange',applyPage);
 document.addEventListener('error',function(e){var t=e.target,b=t&&t.tagName==='IMG'&&t.parentNode;if(b&&(b.classList.contains('badge')||b.classList.contains('mb'))){b.classList.add('nologo');t.remove()}},true);
 
 onAuthFail(showLogin);
-initCashback();initReminders();initWifi();initAgent();initTheme();
+initCashback();initReminders();initWifi();initAgent();initTheme();initTg();
 boot();

@@ -1,9 +1,12 @@
 import { loadDoc } from './_lib.js';
+import { bindTelegram, TOKEN_RE } from './_acc.js';
 import { PERSONS, REMINDERS, whoIs, tg, mutate, readState, markDone, isFilled, targetMonth, webhookSecret, safeEq, mskNow, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
 import { resolveShop, disp } from './_shops.js';
 
 const CM_RE = /^\d{4}-\d{2}$/;
 const SHOP_CB = /^(sk|so|sp|sf|sr|sb)\|[0-9a-f]{8}(\|\d{1,3})?$/; // кнопки ответа по магазину (см. shopKb/pickKb в _bot.js)
+const START_RE = /^\/start(?:@\w+)?(?=\s|$)\s*(\S*)/i; // группа 1: токен привязки (может быть пустым)
+const NEW_LINK = ' Получите новую ссылку на сайте: Напоминания → «Привязать Telegram».';
 const HINT = '\nИли выберите категорию кнопкой ниже: запомню для обоих.';
 
 // Текст и кнопки ответа по результату поиска. id — ожидающий запрос (есть, если удалось записать состояние).
@@ -14,11 +17,29 @@ function shopView(doc, mo, r, id, ch) {
   return { text, kb: [] };
 }
 
+// /start <токен>: привязка Telegram к аккаунту. Работает для любого человека в личном чате (токен выдаёт только сайт после входа).
+async function onBind(m, token) {
+  const say = (text) => tg('sendMessage', { chat_id: m.chat.id, text });
+  if (!TOKEN_RE.test(token)) return say('Ссылка недействительна.' + NEW_LINK);
+  let r;
+  try { r = await bindTelegram(token, m.from, m.chat.id); }
+  catch (e) { console.error(e); return say('Что-то пошло не так. Попробуйте ещё раз чуть позже.'); }
+  if (r.error === 'busy') return say('Этот Telegram уже привязан к другому аккаунту. Отвяжите его там на сайте или откройте ссылку из другого Telegram.' + NEW_LINK);
+  if (r.error) return say('Ссылка недействительна или устарела (она живёт 10 минут).' + NEW_LINK);
+  return say('Готово: Telegram привязан к аккаунту «' + r.nick + '».');
+}
+
 async function onMessage(m) {
+  if (!m.chat || m.chat.type !== 'private') return; // группы: полная тишина
+  const sm = START_RE.exec(String(m.text || ''));
+  if (sm && sm[1]) return onBind(m, sm[1]);
   const p = await whoIs(m.from);
-  // Чужие и групповые чаты: полная тишина.
-  if (!p || !m.chat || m.chat.type !== 'private') return;
-  if (/^\/start(\s|@|$)/i.test(String(m.text || ''))) {
+  if (!p) {
+    // Чужой человек без токена: только на /start подсказываем, как привязать; на всё остальное тишина.
+    if (sm) await tg('sendMessage', { chat_id: m.chat.id, text: 'Привет! Чтобы привязать бота к аккаунту, откройте сайт: Напоминания → «Привязать Telegram».' });
+    return;
+  }
+  if (sm) {
     await mutate((st) => { st.users[p] = { chat: m.chat.id, username: m.from.username, id: m.from.id }; });
     await tg('sendMessage', { chat_id: m.chat.id, text: `Привет, ${PERSONS[p].name}! Бот подключён: напоминания будут приходить сюда. Список кэшбэков — в меню слева от поля ввода.` });
     return;
