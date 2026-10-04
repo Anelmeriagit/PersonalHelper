@@ -3,7 +3,7 @@ import {$,esc,ls,lset,nrm} from '../util.js';
 import {clock} from '../time.js';
 import {api,S,authFail} from '../api.js';
 import {dlgAlert,dlgConfirm,dlgPrompt} from '../dialogs.js';
-import {C,PEOPLE,empty,blank,list,setPart,getPart,peek,norm,allCats,eachRow,prune,partName,changedParts,hasUnsaved} from './state.js';
+import {C,empty,blank,list,setPart,getPart,peek,norm,allCats,eachRow,prune,partName,changedParts,hasUnsaved} from './state.js';
 import {render,syncView} from './view.js';
 
 export {hasUnsaved};
@@ -43,10 +43,10 @@ function refresh(){
 /* ---------- свои категории ---------- */
 function validCat(v){return v&&v.length<=40&&!/[<>"'`&\\\u0000-\u001f]/.test(v)}
 function bad(){return dlgAlert('Недопустимое название: до 40 символов, без знаков < > " \' & \\')}
-function copyCol(p){
-  var l=peek(C.ck.cur,p).map(function(b){return{bank:b.bank,items:b.items.filter(function(i){return i.cat&&i.pct}).map(function(i){return{cat:i.cat,pct:i.pct}})}}).filter(function(b){return b.bank&&b.items.length});
+function copyCur(){
+  var l=peek(C.ck.cur).map(function(b){return{bank:b.bank,items:b.items.filter(function(i){return i.cat&&i.pct}).map(function(i){return{cat:i.cat,pct:i.pct}})}}).filter(function(b){return b.bank&&b.items.length});
   if(!l.length){dlgAlert('В текущем месяце пока нечего копировать');return}
-  var k=C.ck.nxt+':'+p;setPart(k,l);save([k]);render()}
+  var k=C.ck.nxt;setPart(k,l);save([k]);render()}
 function newCat(){return dlgPrompt('Название своей категории (до 40 символов)','').then(function(r){var v=nrm(r);if(!v)return '';
   if(!validCat(v))return bad().then(function(){return ''});
   var ex=allCats().filter(function(c){return c.toLowerCase()===v.toLowerCase()})[0];if(ex)return ex;
@@ -84,11 +84,11 @@ export function initCashback(){
   warn.addEventListener('click',function(e){var w=e.target.dataset.w;if(!w||!C.conflict)return;
     var c=C.conflict;C.conflict=null;
     c.parts.forEach(function(k){C.rev[k]=c.rev[k]||0;
-      if(w==='load'){if(k==='custom')C.data.custom=c.data.custom||[];else{var a=k.split(':');setPart(k,(c.data.months[a[0]]&&c.data.months[a[0]][a[1]])||[])}delete C.dirty[k]}else C.dirty[k]=1});
+      if(w==='load'){setPart(k,k==='custom'?(c.data.custom||[]):(c.data.months[k]||[]));delete C.dirty[k]}else C.dirty[k]=1});
     showWarn();render();flush()});
   editBtn.addEventListener('click',function(){C.edit?saveEdit():enterEdit()});
   stage.addEventListener('change',function(e){var t=e.target,k=t.dataset.k;if(!k)return;
-    var mo=t.dataset.mo,p=t.dataset.p,ex=[mo+':'+p],b=list(mo,p)[+t.dataset.b];
+    var mo=t.dataset.mo,ex=[mo],b=list(mo)[+t.dataset.b];
     if(k==='bank'){b.bank=t.value;render()}
     else if(k==='cat'&&t.value==='__new'){var n0=C.data.custom.length;newCat().then(function(n){if(n)b.items[+t.dataset.r].cat=n;if(C.data.custom.length!==n0)ex.push('custom');render();save(ex)});return}
     else{b.items[+t.dataset.r][k]=t.value;t.classList.toggle('ph',!t.value)}
@@ -100,10 +100,10 @@ export function initCashback(){
       if(hv==='pick'){C.histMo=hb.dataset.mo;var hbd=$('hBody');hbd.classList.add('swap');setTimeout(function(){hbd.classList.remove('swap')},450);return render()}}
     var m=e.target.closest('[data-m]');
     if(m){var w=m.dataset.m;
-      if(w==='yes'){lset('nm-open',C.ck.cur)}else if(w==='hide'){lset('nm-snooze',C.ck.day)}else if(w==='close'){lset('nm-open','')}else if(w==='copy'){return copyCol(m.dataset.p)}
+      if(w==='yes'){lset('nm-open',C.ck.cur)}else if(w==='hide'){lset('nm-snooze',C.ck.day)}else if(w==='close'){lset('nm-open','')}else if(w==='copy'){return copyCur()}
       return render()}
     var t=e.target.closest('[data-act]');if(!t)return;
-    var a=t.dataset.act,mo=t.dataset.mo,p=t.dataset.p,i=+t.dataset.b,j=+t.dataset.r,key=mo+':'+p;
+    var a=t.dataset.act,mo=t.dataset.mo,i=+t.dataset.b,j=+t.dataset.r,key=mo;
     if(a==='save')return saveEdit();
     if(a==='discard')return discardEdit();
     if(a==='add')return enterEdit();
@@ -117,7 +117,7 @@ export function initCashback(){
       return(n?dlgConfirm('Категория «'+c0+'» используется в строках: '+n+'. Они станут пустыми. Удалить?'):Promise.resolve(true)).then(function(ok){
         if(ok){eachRow(function(r,k){if(r.cat===c0){r.cat='';ch2[k]=1}});C.data.custom.splice(i,1)}
         save(Object.keys(ch2));render()})}
-    var l=list(mo,p),parts=[];
+    var l=list(mo),parts=[];
     if(a==='addr'){l[i].items.push({cat:'',pct:''});parts=[key]}
     if(a==='addb'){l.push(blank());parts=[key]}
     if(a==='delr'){l[i].items.splice(j,1);if(!l[i].items.length)l[i].items.push({cat:'',pct:''});parts=[key]}

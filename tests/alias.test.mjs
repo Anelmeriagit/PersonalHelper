@@ -14,10 +14,10 @@ const { resolveShop, shopKey, disp } = sh;
 beforeEach(() => { __reset(); setEnv(); });
 
 const NOW = 1_760_000_000_000;
-const DOC = { custom: ['Моя категория'], months: { '2026-10': {
-  zhanna: [{ bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] }],
-  denis: [{ bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }, { cat: 'Моя категория', pct: '3' }] }],
-} } };
+const DOC = { custom: ['Моя категория'], months: { '2026-10': [
+  { bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] },
+  { bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }, { cat: 'Моя категория', pct: '3' }] },
+] } };
 const A = (c, t = 'X') => ({ c, t, at: NOW });
 const allButtons = (kb) => kb.flat();
 

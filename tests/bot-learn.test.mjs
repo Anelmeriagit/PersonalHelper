@@ -19,10 +19,10 @@ const PUT = { access: 'private', addRandomSuffix: false, contentType: 'applicati
 async function seedDoc(custom = ['Моя категория']) {
   await seedDocForce(lib, process.env.AUTH_USER, {
     custom,
-    months: { [bot.mskNow().month]: {
-      zhanna: [{ bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] }],
-      denis: [{ bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }] }],
-    } },
+    months: { [bot.mskNow().month]: [
+      { bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] },
+      { bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }] },
+    ] },
     rev: {},
   });
 }
@@ -93,7 +93,7 @@ test('неизвестный → кнопки (сначала заполненн
   strip(calls);
   await send(cb(DENIS, press(other, 'Книги').callback_data));
   const ed = last(calls, 'editMessageText');
-  assert.equal(ed.body.text, 'Ларёк у дома · Книги\nУ вас нет категории книги\nВсе покупки: 1% — Жанна: ОТП');
+  assert.equal(ed.body.text, 'Ларёк у дома · Книги\nУ вас нет категории книги\nВсе покупки: 1% — ОТП');
   assert.deepEqual(btns(ed).map((b) => b.text), ['Не та категория', 'Сбросить к словарю']);
   assert.ok(calls.some((c) => c.method === 'answerCallbackQuery' && c.body.text === 'Запомнил для обоих'));
   const st = await state();
@@ -106,7 +106,7 @@ test('неизвестный → кнопки (сначала заполненн
   await send(msg(ZHANNA, 'ЛАРЁК, у дома!'));
   const z = last(calls, 'sendMessage');
   assert.equal(z.body.chat_id, 201);
-  assert.equal(z.body.text, 'Ларёк у дома · Книги\nУ вас нет категории книги\nВсе покупки: 1% — Жанна: ОТП');
+  assert.equal(z.body.text, 'Ларёк у дома · Книги\nУ вас нет категории книги\nВсе покупки: 1% — ОТП');
   assert.deepEqual(btns(z).map((b) => b.text), ['Не та категория', 'Сбросить к словарю']);
 });
 
@@ -115,7 +115,7 @@ test('выбор среди заполненных категорий сразу
   const m1 = await askUnknown(calls, ZHANNA, 'Неведомый магазин');
   strip(calls);
   await send(cb(ZHANNA, press(m1, 'Супермаркеты').callback_data, { id: 201, type: 'private' }));
-  assert.equal(last(calls, 'editMessageText').body.text, 'Неведомый магазин · Супермаркеты\n✅ 10% — Денис: Сбер\n5% — Жанна: ОТП\nВсе покупки: 1% — Жанна: ОТП');
+  assert.equal(last(calls, 'editMessageText').body.text, 'Неведомый магазин · Супермаркеты\n✅ 10% — Сбер\n5% — ОТП\nВсе покупки: 1% — ОТП');
 });
 
 test('пустой месяц: у неизвестного сразу все категории, без «Другая…»', async (t) => {
@@ -132,7 +132,7 @@ test('исправление перекрывает словарь: «Не та 
   strip(calls);
   await send(msg(DENIS, 'Пятёрочка'));
   const a1 = last(calls, 'sendMessage');
-  assert.equal(a1.body.text, 'Пятёрочка · Супермаркеты\n✅ 10% — Денис: Сбер\n5% — Жанна: ОТП\nВсе покупки: 1% — Жанна: ОТП');
+  assert.equal(a1.body.text, 'Пятёрочка · Супермаркеты\n✅ 10% — Сбер\n5% — ОТП\nВсе покупки: 1% — ОТП');
   assert.deepEqual(btns(a1).map((b) => b.text), ['Не та категория'], 'сброса нет, пока нет исправления');
 
   strip(calls);
@@ -146,13 +146,13 @@ test('исправление перекрывает словарь: «Не та 
   strip(calls);
   await send(cb(DENIS, press(pick, 'Все покупки').callback_data));
   const fixed = last(calls, 'editMessageText');
-  assert.equal(fixed.body.text, 'Пятёрочка · Все покупки\n1% — Жанна: ОТП');
+  assert.equal(fixed.body.text, 'Пятёрочка · Все покупки\n1% — ОТП');
   assert.deepEqual(btns(fixed).map((b) => b.text), ['Не та категория', 'Сбросить к словарю']);
   assert.equal((await state()).alias['пятерочка'].c, 'Все покупки');
 
   strip(calls);
   await send(msg(ZHANNA, 'пятерчка'));
-  assert.equal(last(calls, 'sendMessage').body.text, 'Пятёрочка · Все покупки\n1% — Жанна: ОТП');
+  assert.equal(last(calls, 'sendMessage').body.text, 'Пятёрочка · Все покупки\n1% — ОТП');
   strip(calls);
   await send(msg(DENIS, 'Магнит'));
   assert.match(last(calls, 'sendMessage').body.text, /^Магнит · Супермаркеты\n✅ 10%/, 'другие магазины не затронуты');

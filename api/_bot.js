@@ -283,23 +283,23 @@ export function markDone(id, cm, p) {
 /* ---------- проверка заполнения на сайте ---------- */
 export const targetMonth = (cm) => (cm === TEST_CYCLE ? shiftMonth(mskNow().month, 1) : shiftMonth(cm, 1));
 
-export async function isFilled(person, month) {
+// Заполнен ли месяц на сайте. Документ один на аккаунт, поэтому «заполнено» относится к документу, а не к человеку
+// (до этапа 3 бот читает документ по AUTH_USER для обоих получателей).
+export async function isFilled(month) {
   const { doc } = await loadDoc(process.env.AUTH_USER);
-  const list = (doc.months[month] && doc.months[month][person]) || [];
-  return list.some((b) => (b.items || []).some((i) => i.cat && i.pct));
+  return (doc.months[month] || []).some((b) => (b.items || []).some((i) => i.cat && i.pct));
 }
 
 /* ---------- текст «Показать кэшбэки» ---------- */
 const BANK_NAMES = { otp: 'ОТП', alfa: 'Альфа', vtb: 'ВТБ', halva: 'Халва', sber: 'Сбер' };
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 const monthLabel = (k) => { const [y, m] = k.split('-'); return MONTHS[+m - 1] + ' ' + y; };
-const PEOPLE_ORDER = ['zhanna', 'denis']; // как на сайте: сначала Жанна, потом Денис
 const pctText = (v) => String(v).replace('.', ',') + '%';
 
-// Заполненные строки человека за месяц: [{bank, cat, v}]
-export function filledRows(doc, month, p) {
+// Заполненные строки месяца: [{bank, cat, v}]. Формат документа: months[месяц] = [{bank, items:[{cat, pct}]}].
+export function filledRows(doc, month) {
   const out = [];
-  for (const b of (doc.months[month] && doc.months[month][p]) || []) {
+  for (const b of doc.months[month] || []) {
     for (const i of (b && b.items) || []) {
       const v = parseFloat(i && i.pct);
       if (i && i.cat && i.pct && Number.isFinite(v)) out.push({ bank: b.bank, cat: i.cat, v });
@@ -307,44 +307,37 @@ export function filledRows(doc, month, p) {
   }
   return out;
 }
-export const blocksOf = (doc, month, p) => filledRows(doc, month, p);
 
-// Заполненные строки месяца по категориям: { категория: [{p, bank, v}] }; люди в порядке PEOPLE_ORDER.
+// Заполненные строки месяца по категориям: { категория: [{bank, v}] }.
 export function catRows(doc, mo) {
   const g = {};
-  for (const p of PEOPLE_ORDER) for (const r of filledRows(doc, mo, p)) (g[r.cat] = g[r.cat] || []).push({ p, bank: r.bank, v: r.v });
+  for (const r of filledRows(doc, mo)) (g[r.cat] = g[r.cat] || []).push({ bank: r.bank, v: r.v });
   return g;
 }
 
 // Строки процентов одной категории (общая для /cashback и ответа по магазину): по убыванию процента,
-// банки с одним процентом в одной строке. ✅ у лучшего процента, если пар «человек + банк» больше одной (mark=false: без ✅).
+// банки с одним процентом в одной строке. ✅ у лучшего процента, если банков больше одного (mark=false: без ✅).
 export function pctLines(rows, mark = true) {
-  const multi = new Set(rows.map((r) => r.p + '|' + r.bank)).size > 1;
+  const multi = new Set(rows.map((r) => r.bank)).size > 1;
   const best = Math.max(...rows.map((r) => r.v));
   const groups = new Map();
   for (const r of rows) {
-    if (!groups.has(r.v)) groups.set(r.v, {});
-    const by = groups.get(r.v);
-    (by[r.p] = by[r.p] || []).push(BANK_NAMES[r.bank] || r.bank);
+    if (!groups.has(r.v)) groups.set(r.v, []);
+    groups.get(r.v).push(BANK_NAMES[r.bank] || r.bank);
   }
-  return [...groups.keys()].sort((a, b) => b - a).map((v) => {
-    const by = groups.get(v);
-    const who = PEOPLE_ORDER.filter((p) => by[p]).map((p) => PERSONS[p].name + ': ' + by[p].join(', ')).join(' · ');
-    return (mark && multi && v === best ? '✅ ' : '') + pctText(v) + ' — ' + who;
-  });
+  return [...groups.keys()].sort((a, b) => b - a).map((v) => (mark && multi && v === best ? '✅ ' : '') + pctText(v) + ' — ' + groups.get(v).join(', '));
 }
 
 // Одно сообщение на месяц, как компактный вид на сайте:
 // категории по алфавиту, под каждой строки по убыванию процента; банки с одним процентом в одной строке.
-// ✅ у лучшего процента, если в категории есть из чего выбирать (больше одной пары «человек + банк»).
+// ✅ у лучшего процента, если в категории есть из чего выбирать (больше одного банка).
 export function monthText(doc, mo) {
   const g = catRows(doc, mo);
   const cats = Object.keys(g).sort((a, b) => a.localeCompare(b, 'ru'));
   const head = 'Кэшбэки, ' + monthLabel(mo);
   if (!cats.length) return head + '\n\nПока не заполнено';
   const blocks = cats.map((c) => c + '\n' + pctLines(g[c]).join('\n'));
-  const missing = PEOPLE_ORDER.filter((p) => !filledRows(doc, mo, p).length).map((p) => PERSONS[p].name);
-  return head + '\n\n' + blocks.join('\n\n') + (missing.length ? '\n\n' + missing.join(', ') + ': пока не заполнено' : '');
+  return head + '\n\n' + blocks.join('\n\n');
 }
 
 // «У вас нет категории фастфуд»: название категории с маленькой буквы, кроме аббревиатур (АЗС) — у них вторая буква тоже заглавная.
@@ -403,7 +396,7 @@ export function aliasSet(state, key, cat, title, now) {
 }
 export function aliasDel(state, key) { if (own(state.alias, key)) delete state.alias[key]; }
 
-// Категории для кнопок: сначала те, где в этом месяце кто-то заполнил кэшбэк (по алфавиту), затем остальные (порядок CATS, потом свои).
+// Категории для кнопок: сначала те, где в этом месяце заполнен кэшбэк (по алфавиту), затем остальные (порядок CATS, потом свои).
 // list — все названия, f — сколько из них «заполненных» (они идут первыми).
 export function catChoices(doc, mo) {
   const all = validCats(doc && doc.custom);
@@ -430,11 +423,11 @@ export function pickKb(id, l, f, other, cancel) {
   return kb;
 }
 
-// Тексты сообщений: текущий месяц и, если кто-то уже заполнил, следующий.
+// Тексты сообщений: текущий месяц и, если следующий уже заполнен, он тоже.
 export function cashbackTexts(doc, curMonth) {
   const months = [curMonth];
   const nxt = shiftMonth(curMonth, 1);
-  if (PEOPLE_ORDER.some((p) => filledRows(doc, nxt, p).length)) months.push(nxt);
+  if (filledRows(doc, nxt).length) months.push(nxt);
   return months.map((mo) => monthText(doc, mo));
 }
 

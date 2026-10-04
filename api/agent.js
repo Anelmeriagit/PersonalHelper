@@ -1,7 +1,5 @@
 import crypto from 'node:crypto';
-import * as B from '@vercel/blob';
-import { session, renewCookie } from './_lib.js';
-const { get, put } = B;
+import { session, renewCookie, readRec, writeRec, isPrecond } from './_lib.js';
 
 // Страница «Агент»: список строк «приложение — время сброса» в заданном порядке. Время по Москве.
 // У строки с часами и минутами есть `at` — момент ближайшего сброса в мс (UTC). Его считает сервер при сохранении:
@@ -12,9 +10,9 @@ export const AGENT_APPS = ['app', 'opera', 'mozilla', 'edge'];
 const LABELS = { app: 'app', opera: 'opera', mozilla: 'mozilla', edge: 'edge' };
 export const AGENT_NAME_MAX = 40;
 export const AGENT_MAX = 12; // не больше 12 строк
-const PATH = 'agent/rows.json';
+// Хранилище: Redis, ключ agent:<id аккаунта> (с префиксом DB_PREFIX), у каждого пользователя свой список.
+const KIND = 'agent';
 const ID_RE = /^[a-z0-9]{1,16}$/;
-const isMissing = (e) => /not\s*found|404/i.test(String(e && (e.message || e.name)));
 
 export const defaults = () => AGENT_APPS.map((app) => ({ id: app, app, h: null, m: null, at: null }));
 
@@ -63,35 +61,40 @@ export function withAt(rows, prev, now = Date.now()) {
   });
 }
 
-async function readRows() {
-  try {
-    const r = await get(PATH, { access: 'private', useCache: false });
-    if (!r || r.statusCode !== 200) return defaults();
-    const raw = JSON.parse(await new Response(r.stream).text());
-    return Array.isArray(raw && raw.rows) ? cleanRows(raw.rows, true).slice(0, AGENT_MAX) : defaults();
-  } catch (e) {
-    if (isMissing(e)) return defaults();
-    throw e;
-  }
+// → { rows, etag }: до первого сохранения четыре строки по умолчанию, etag пустой.
+async function readRows(user) {
+  const { raw, etag } = await readRec(KIND, user);
+  return { rows: Array.isArray(raw && raw.rows) ? cleanRows(raw.rows, true).slice(0, AGENT_MAX) : defaults(), etag };
 }
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'GET' && req.method !== 'PUT') return res.status(405).end();
-  if (!session(req)) return res.status(401).json({ error: 'auth' });
+  const user = session(req);
+  if (!user) return res.status(401).json({ error: 'auth' });
   const c = renewCookie(req);
   if (c) res.setHeader('Set-Cookie', c);
   try {
-    if (req.method === 'GET') return res.status(200).json({ rows: await readRows() });
+    if (req.method === 'GET') return res.status(200).json({ rows: (await readRows(user)).rows });
     let b = req.body;
     if (typeof b === 'string') { try { b = JSON.parse(b); } catch { b = null; } }
     if (!b || !Array.isArray(b.rows)) return res.status(400).json({ error: 'bad request' });
     if (b.rows.length > AGENT_MAX) return res.status(400).json({ error: 'limit' });
-    const rows = withAt(cleanRows(b.rows), await readRows());
-    await put(PATH, JSON.stringify({ rows }), { access: 'private', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json' });
-    return res.status(200).json({ rows });
+    const incoming = cleanRows(b.rows);
+    // Последняя запись побеждает, но проходит через проверку версии: если запись пришла между чтением и записью, читаем заново.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { rows: prev, etag } = await readRows(user);
+      const rows = withAt(incoming, prev);
+      try {
+        await writeRec(KIND, user, { rows }, etag);
+        return res.status(200).json({ rows });
+      } catch (e) {
+        if (!isPrecond(e)) throw e;
+      }
+    }
+    return res.status(409).json({ error: 'busy' });
   } catch (e) {
-    console.error('agent failed:', e.message);
+    console.error('agent failed:', e.name);
     return res.status(500).json({ error: 'server' });
   }
 }

@@ -9,15 +9,17 @@ function mskMonth() {
 
 const qrRows = Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => ((x * 7 + y * 3 + (x ^ y)) % 3 === 0 ? '1' : '0')).join(''));
 
+export const qr = { size: 21, rows: qrRows };
 export const routes = {
   'GET /api/data': () => ({
     user: 'test',
     data: {
       months: {
-        [mskMonth()]: {
-          zhanna: [{ bank: 'otp', items: [{ cat: 'Маркетплейсы', pct: '12' }, { cat: 'АЗС', pct: '5' }] }],
-          denis: [{ bank: 'alfa', items: [{ cat: 'Маркетплейсы', pct: '5' }] }, { bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }] }],
-        },
+        [mskMonth()]: [
+          { bank: 'otp', items: [{ cat: 'Маркетплейсы', pct: '12' }, { cat: 'АЗС', pct: '5' }] },
+          { bank: 'alfa', items: [{ cat: 'Маркетплейсы', pct: '5' }] },
+          { bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }] },
+        ],
       },
       custom: [],
     },
@@ -35,5 +37,7 @@ export const routes = {
   }),
   'PUT /api/agent': (body) => ({ rows: (body && body.rows) || [] }),
   'GET /api/wifi': () => ({ configured: true, ssid: 'TestNet', password: 'test-password', security: 'WPA', hidden: false, qr: { size: 21, rows: qrRows } }),
+  'PUT /api/wifi': (body) => ({ configured: true, ssid: body && body.ssid, password: (body && body.password) || '', security: (body && body.security) || 'WPA', hidden: !!(body && body.hidden), qr: { size: 21, rows: qrRows } }),
+  'DELETE /api/wifi': () => ({ configured: false }),
   'POST /api/auth': () => ({ ok: true }), // вход, регистрация и выход (action в теле)
 };

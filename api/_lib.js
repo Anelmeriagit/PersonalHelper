@@ -1,8 +1,7 @@
 import crypto from 'node:crypto';
-import { key, getDoc, putDoc } from './_db.js';
+import { key, getDoc, putDoc, del } from './_db.js';
 import { ID_RE } from './_acc.js';
 
-export const PEOPLE = ['zhanna', 'denis'];
 export const BANKS = ['otp', 'alfa', 'vtb', 'halva', 'sber'];
 export const CATS = ['АЗС','Авто и автосервис','Активный отдых','Аптеки','Бытовые услуги','Все покупки','Дом и ремонт','Животные и зоотовары','Здоровье и медицина','Кафе и рестораны','Кино и театры','Книги','Красота','Маркетплейсы','Образование','Одежда и обувь','Путешествия','Развлечения','Связь и интернет','Спорт и фитнес','Супермаркеты','Такси и каршеринг','Техника и электроника','Транспорт','Фастфуд','Цветы','Цифровые товары и подписки'];
 export const PCTS = ['0.5','1','1.5','2','3','4','5','6','7','8','10','12','15','20','25','30'];
@@ -61,7 +60,8 @@ export function cleanCustom(list) {
 }
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-export const PART_RE = /^(\d{4}-(0[1-9]|1[0-2]):(zhanna|denis)|custom)$/;
+// «Часть» документа — единица версии и конфликтов: месяц ('2026-10') или список своих категорий ('custom').
+export const PART_RE = /^(\d{4}-(0[1-9]|1[0-2])|custom)$/;
 
 export function curMonth() {
   const p = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
@@ -86,16 +86,15 @@ function cleanBlocks(list, allowed) {
     }));
 }
 
-// Документ: { months: { 'YYYY-MM': { zhanna: [...], denis: [...] } }, custom: [...] }
+// Документ: { months: { 'YYYY-MM': [ { bank, items: [{cat, pct}] } ] }, custom: [...] }
 export function clean(d) {
   const custom = cleanCustom(d && d.custom);
   const allowed = new Set([...CATS, ...custom]);
   const src = d && d.months && typeof d.months === 'object' ? d.months : {};
   const months = {};
   for (const k of Object.keys(src).filter((k) => MONTH_RE.test(k)).sort().slice(-60)) {
-    const m = src[k] || {};
-    const v = { zhanna: cleanBlocks(m.zhanna, allowed), denis: cleanBlocks(m.denis, allowed) };
-    if (v.zhanna.length || v.denis.length) months[k] = v;
+    const v = cleanBlocks(src[k], allowed); // старый формат (объект с zhanna/denis) не массив: такой месяц отбрасывается
+    if (v.length) months[k] = v;
   }
   return { months, custom };
 }
@@ -129,3 +128,16 @@ export async function writeDoc(user, doc, etag) {
 }
 
 export const loadDoc = readDoc;
+
+// Прочие личные данные пользователя (агент, WiFi): отдельная запись на раздел, ключ <kind>:<id> с префиксом DB_PREFIX.
+// Версия и запись по версии те же, что у документа кэшбэков: чужую запись не затереть. raw — как лежит в Redis (null, если записи нет).
+export async function readRec(kind, user) {
+  const { doc, v } = await getDoc(key(kind, user));
+  return { raw: doc, etag: doc ? v : null };
+}
+export const dropRec = (kind, user) => del(key(kind, user));
+export async function writeRec(kind, user, obj, etag) {
+  const n = await putDoc(key(kind, user), obj, etag || 0);
+  if (n === null) { const e = new Error('Precondition failed: version mismatch'); e.name = 'PreconditionFailedError'; throw e; }
+  return { etag: n };
+}

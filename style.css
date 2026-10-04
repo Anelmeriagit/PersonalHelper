@@ -262,3 +262,14 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .login .hint{color:var(--muted);font-size:.8rem;margin:.3rem 0 0}
 .login .alt{text-align:center;margin:1rem 0 0}
 .login .lnk{font-size:.9rem;padding:.6rem .5rem}
+
+/* этап 2: один человек, личная сеть WiFi, вход без навигации */
+.wfm .del{color:var(--err);border-color:var(--err)}
+.wfm{width:100%;margin:0}
+.wfl{margin-bottom:1rem}
+.wfl label:not(.chk){display:block;font-weight:600;font-size:.9rem;margin:0 0 .3rem}
+.wfl .chk{margin-top:.25rem;color:var(--muted);font-size:.9rem}
+.wfm>.chk{margin-bottom:.5rem}
+.wfn{color:var(--muted);font-size:.9rem;margin:0 0 1rem}
+.wfm .acts .btn{min-height:44px}
+

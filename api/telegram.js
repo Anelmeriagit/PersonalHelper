@@ -159,7 +159,7 @@ async function onCallback(cq) {
     const c = state.cycles[id + ':' + cm];
     if (!(c && c.done && c.done[p])) {
       let filled;
-      try { filled = await isFilled(p, targetMonth(cm)); }
+      try { filled = await isFilled(targetMonth(cm)); }
       catch (e) {
         console.error(e);
         return ans({ text: 'Не удалось проверить сайт. Попробуйте чуть позже.', show_alert: true });

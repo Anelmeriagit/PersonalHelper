@@ -9,14 +9,14 @@ import {initWifi,wifiLoad,wifiClear} from './wifi.js';
 import {initAgent,agClear,agLeave,agVisible,agOnPage} from './agent/index.js';
 import {initTheme} from './theme-switch.js';
 
-var editBtn=$('editBtn'),outBtn=$('outBtn'),loginRoot=$('loginRoot');
+var editBtn=$('editBtn'),outBtn=$('outBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
 
 /* ---------- страницы ---------- */
 var PAGES={main:{stage:$('stage'),nav:$('navMain')},rem:{stage:$('remStage'),nav:$('navRem')},wifi:{stage:$('wifiStage'),nav:$('navWifi')},agent:{stage:$('agentStage'),nav:$('navAgent')}};
 var HASH={'#reminders':'rem','#wifi':'wifi','#agent':'agent'};
 function pageFromHash(){return HASH[location.hash]||'main'}
 S.page=pageFromHash();
-function ui(on){editBtn.hidden=!on||S.page!=='main';outBtn.hidden=!on;if(!on)setStatus('')}
+function ui(on){mainNav.hidden=!on;editBtn.hidden=!on||S.page!=='main';outBtn.hidden=!on;if(!on)setStatus('')}
 function applyPage(){var prev=S.page;S.page=pageFromHash();
   Object.keys(PAGES).forEach(function(k){var p=PAGES[k],on=k===S.page;
     p.stage.hidden=!S.loggedIn||!on;p.nav.classList.toggle('on',on);

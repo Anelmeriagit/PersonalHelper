@@ -23,10 +23,10 @@ beforeEach(async () => {
   await put('bot/state.json', JSON.stringify({ users, settings: {}, cycles: {}, custom: [], recurring: [] }), { access: 'private', addRandomSuffix: false, contentType: 'application/json' });
   await lib.writeDoc(process.env.AUTH_USER, {
     custom: ['Моя категория'],
-    months: { [bot.mskNow().month]: {
-      zhanna: [{ bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] }],
-      denis: [{ bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }] }],
-    } },
+    months: { [bot.mskNow().month]: [
+      { bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] },
+      { bank: 'sber', items: [{ cat: 'Супермаркеты', pct: '10' }] },
+    ] },
     rev: {},
   });
 });
@@ -56,7 +56,7 @@ test('текст → ответ: Денис пишет «Пятёрочка»', 
   assert.equal(res.statusCode, 200);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].body.chat_id, 101);
-  assert.equal(calls[0].body.text, 'Пятёрочка · Супермаркеты\n✅ 10% — Денис: Сбер\n5% — Жанна: ОТП\nВсе покупки: 1% — Жанна: ОТП');
+  assert.equal(calls[0].body.text, 'Пятёрочка · Супермаркеты\n✅ 10% — Сбер\n5% — ОТП\nВсе покупки: 1% — ОТП');
 });
 
 test('текст → ответ: Жанна, опечатка и латиница работают, словарь общий', async (t) => {
@@ -69,7 +69,7 @@ test('текст → ответ: Жанна, опечатка и латиниц�
 test('своя категория с сайта понимается', async (t) => {
   const calls = mockTg(t);
   await send(msg(DENIS, 'моя категория'));
-  assert.equal(texts(calls)[0], 'Моя категория\nУ вас нет категории моя категория\nВсе покупки: 1% — Жанна: ОТП');
+  assert.equal(texts(calls)[0], 'Моя категория\nУ вас нет категории моя категория\nВсе покупки: 1% — ОТП');
 });
 
 test('неизвестный магазин → подсказка про категорию', async (t) => {
