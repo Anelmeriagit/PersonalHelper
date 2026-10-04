@@ -3,7 +3,7 @@
 Читать при правках раздела «Кэшбэк», истории, формата сообщения бота `/cashback`. Общие ограничения и карта файлов — в `PROJECT_NOTES.md`.
 
 ## Данные
-- Один документ на пользователя: Blob `data/<sha256(user)[:32]>.json`. Логин общий (`AUTH_USER`), поэтому у обоих один и тот же документ.
+- Один документ на пользователя: Upstash Redis, ключ `doc:<id аккаунта>` (с префиксом `DB_PREFIX`), хэш `{d, v}`: `d` — JSON документа, `v` — номер версии. Чтение и запись: `readDoc/loadDoc/writeDoc` в `api/_lib.js`; запись только при совпадении версии (CAS через Lua в `api/_db.js`), «etag» в коде = номер версии, у нового документа его нет. Бот пока читает документ по `AUTH_USER` как id (уйдёт на этапе 3). Данные Ж/Д остаются до этапа 2 (`months: {YYYY-MM: [блоки]}` для одного человека).
 - Формат: `{ months: { 'YYYY-MM': { zhanna: [{bank, items:[{cat, pct}]}], denis: [...] } }, custom: [строки], rev: { часть: номер } }`.
 - «Части» (parts): `YYYY-MM:zhanna`, `YYYY-MM:denis`, `custom`. У каждой части свой счётчик версии `rev`.
 - Серверная валидация (`clean` в `api/_lib.js`): справочники `BANKS`, `CATS`, `PCTS`; лимиты: до 60 строк на банк, до 30 своих категорий, до 60 месяцев.
@@ -43,8 +43,8 @@
 - Для `callback_query` вебхук должен быть подписан в `allowed_updates` (`api/tg-setup.js`: `['message','callback_query']`, проверено по коду, менять не нужно).
 
 ## API
-- `GET /api/data` → `{user, data, rev}`.
-- `PUT /api/data` с `{parts: {ключ: {base, value}}}`. Если `base` не совпал с `rev` на сервере — `409 {error:'conflict', parts, data, rev}`. При несовпадении ETag до 4 повторов, затем `409 busy`. Новые месяцы создаются только в окне «прошлый … +2 месяца», существующие менять можно всегда.
+- `GET /api/data` → `{user, data, rev}` (`user` = никнейм аккаунта; без сессии 401).
+- `PUT /api/data` с `{parts: {ключ: {base, value}}}`. Если `base` не совпал с `rev` на сервере — `409 {error:'conflict', parts, data, rev}`. При несовпадении версии в Redis до 4 повторов, затем `409 busy`. Новые месяцы создаются только в окне «прошлый … +2 месяца», существующие менять можно всегда.
 
 ## Фронтенд
 - `js/cashback/state.js`: справочники, состояние `C`, чистые функции над данными (`peek`, `list`, `changedParts`, ...); `js/cashback/view.js`: разметка (`colHtml`, `compactHtml`, `histHtml`, `customHtml`) и `render()`; `js/cashback/index.js`: `save/flush/refresh`, конфликты, режим редактирования, события и функции для `main.js` (`startSession`, `finishBoot`, `loggedOut`, `onVisible`, `onHidden`).

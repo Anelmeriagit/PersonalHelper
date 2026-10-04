@@ -2,9 +2,9 @@
 // Запуск: node --import ./tests/register.mjs --test "tests/*.test.mjs"
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import { __reset, put } from './blob.mjs';
-import { mockReq, mockRes, setEnv, TEST_USER } from './helpers.mjs';
+import { __fail } from './redis.mjs';
+import { mockReq, mockRes, setEnv } from './helpers.mjs';
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -126,8 +126,7 @@ test('/start по-прежнему подключает бота и пишет �
 test('сбой чтения данных → понятное сообщение, а не тишина', async (t) => {
   t.mock.method(console, 'error', () => {});
   const calls = mockTg(t);
-  const path = 'data/' + crypto.createHash('sha256').update(TEST_USER).digest('hex').slice(0, 32) + '.json';
-  await put(path, '{сломанный json', { access: 'private', addRandomSuffix: false, allowOverwrite: true, contentType: 'application/json' });
+  __fail('network'); // документ кэшбэков лежит в Redis: чтение падает, состояние бота (Blob) читается
   await send(msg(DENIS, 'Пятёрочка'));
   assert.equal(texts(calls).length, 1);
   assert.match(texts(calls)[0], /^Не удалось загрузить данные/);

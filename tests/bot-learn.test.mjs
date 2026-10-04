@@ -3,7 +3,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __reset, __failPut, put } from './blob.mjs';
-import { mockReq, mockRes, setEnv, fakeClock } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, fakeClock, seedDocForce } from './helpers.mjs';
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -17,7 +17,7 @@ const STRANGER = { id: 999, username: 'stranger' };
 const PUT = { access: 'private', addRandomSuffix: false, contentType: 'application/json' };
 
 async function seedDoc(custom = ['Моя категория']) {
-  await lib.writeDoc(process.env.AUTH_USER, {
+  await seedDocForce(lib, process.env.AUTH_USER, {
     custom,
     months: { [bot.mskNow().month]: {
       zhanna: [{ bank: 'otp', items: [{ cat: 'Супермаркеты', pct: '5' }, { cat: 'Все покупки', pct: '1' }] }],
@@ -119,7 +119,7 @@ test('выбор среди заполненных категорий сразу
 });
 
 test('пустой месяц: у неизвестного сразу все категории, без «Другая…»', async (t) => {
-  await lib.writeDoc(process.env.AUTH_USER, { custom: [], months: {}, rev: {} });
+  await seedDocForce(lib, process.env.AUTH_USER, { custom: [], months: {}, rev: {} });
   const calls = mockTg(t);
   const m1 = await askUnknown(calls);
   const names = btns(m1).map((b) => b.text);

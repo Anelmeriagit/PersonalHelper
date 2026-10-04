@@ -33,3 +33,10 @@ export function fakeClock(t) {
   t.mock.method(Date, 'now', () => real() + offset);
   return { advance(ms) { offset += ms; } };
 }
+
+// Записывает документ кэшбэков поверх существующего: writeDoc принимает только текущую версию (CAS),
+// поэтому повторная запись без etag даёт «Precondition failed». Для подготовки данных в тестах.
+export async function seedDocForce(lib, user, doc) {
+  const { etag } = await lib.readDoc(user);
+  return lib.writeDoc(user, doc, etag);
+}

@@ -13,8 +13,8 @@
 
 ## Стек
 - Фронтенд: статика без сборки. `index.html`, `style.css`, `theme.js`, `sw.js` и ES-модули в `js/` (точка входа `js/main.js`, подключена как `<script type="module">`; внутри модулей прежний стиль ES5: `var`, `function`). HTML собирается строками и вставляется через `innerHTML`, все значения проходят через `esc()`.
-- Бэкенд: Vercel Functions в `api/` (ESM, Node 22). Единственная зависимость — `@vercel/blob`. QR генерирует собственный код `api/_qr.js` (без пакетов).
-- Хранилище: Vercel Blob, доступ private.
+- Бэкенд: Vercel Functions в `api/` (ESM, Node 22). Единственная зависимость — `@vercel/blob` (нужна агенту и боту до этапов 2–3). QR генерирует собственный код `api/_qr.js` (без пакетов).
+- Хранилище: документ кэшбэков и аккаунты — Upstash Redis через REST (`api/_db.js`, без пакетов; запись по версии через Lua, CAS). Vercel Blob (private) — пока только агент (`agent/rows.json`) и состояние бота (`bot/state.json`).
 - Бот: вебхук `api/telegram.js`, рассылка `api/cron.js`, общая логика бота `api/_bot.js`, словарь магазинов, поиск и общие псевдонимы для ответов бота `api/_shops.js`, разовая настройка вебхука `api/tg-setup.js`.
 
 ## Ограничения (важно при правках)
@@ -22,10 +22,11 @@
 - Без сборщика и фреймворков.
 - Проект станет публичным (решение 2026-10-04): в репозитории, заметках и тестах только имена переменных окружения, без значений секретов, паролей, токенов и хешей. `README.md` удалён.
 - Написание: по-русски «кэшбэк», по-английски «cashback» (идентификаторы `cashback`, `/cashback`, `js/cashback/`). Другие варианты написания не использовать.
+- Состояние бота (`bot/state.json`, пока в Blob) — см. следующую строку. Данные пользователей (документ кэшбэков, аккаунты) пишутся только через `writeDoc` / функции `api/_acc.js` (CAS по версии).
 - Секреты только в переменных окружения Vercel (список имён в `notes/CHECKLIST.md`), в коде не хранить.
 - Состояние бота (`bot/state.json`) пишется только через `mutate(fn)` (ETag + повторы), в обход `mutate`/`norm` не писать: иначе потеряются `custom`, `recurring`, `alias` и `pending`. Новое поле состояния сначала добавляется в `norm` и `fresh` в `_bot.js`.
 - Новые стили добавлять в конец `style.css`, используя существующие классы.
-- Тариф Hobby: не больше 12 функций в `api/`. Сейчас 11 (все файлы без `_`: `data`, `reminders`, `custom`, `recurring`, `agent`, `wifi`, `cron`, `telegram`, `tg-setup`, `login`, `logout`). Вспомогательные модули называть с `_` (`_lib`, `_bot`, `_qr`, `_shops`): проект с такими файлами деплоится, значит они в счёт не идут; новый эндпоинт без `_` занимает последнюю свободную ячейку.
+- Тариф Hobby: не больше 12 функций в `api/`. Сейчас 10 (все файлы без `_`: `data`, `reminders`, `custom`, `recurring`, `agent`, `wifi`, `cron`, `telegram`, `tg-setup`, `auth`). Вспомогательные модули называть с `_` (`_lib`, `_bot`, `_qr`, `_shops`, `_db`, `_acc`): проект с такими файлами деплоится, значит они в счёт не идут; новый эндпоинт без `_` занимает последнюю свободную ячейку.
 
 ## Парные правила (править обе части синхронно)
 - Формат кэшбэка: сайт (`compactHtml`, `hl` в `js/cashback/view.js`) и бот (`_bot.js`: `filledRows`, `catRows`, `pctLines`, `monthText`, `cashbackTexts`). Логика продублирована; ответ бота по магазину (`shopText`) использует ту же `pctLines`. Подробности в `notes/cashback.md`.
@@ -33,18 +34,18 @@
 - Бот: `@PersonalHelper1Bot` (с 2026-10-04; токен в `TELEGRAM_BOT_TOKEN`, секрет вебхука считается от токена). Смена бота: новый токен в Vercel → Redeploy → `/api/tg-setup` → `/start` у обоих (без него Telegram не даёт писать); состояние в Blob сохраняется, людей узнаёт `whoIs` по Telegram id. Описание команды `/cashback` задаётся в `BOT_COMMANDS` (`api/_bot.js`) и применяется вызовом `tg-setup`. Username бота есть в `js/reminders/index.js` (ссылка в предупреждении «Бот ещё не подключён»): при смене бота править там.
 
 ## Сессия и вход
-- Логин общий (`AUTH_USER`): у обоих один и тот же документ кэшбэков.
-- Сессия: cookie `cb_session`, подпись HMAC (`SESSION_SECRET`), 30 дней со скользящим продлением. Смена `SESSION_VERSION` разлогинивает все устройства.
-- Ограничение попыток входа хранится в Blob `auth/<hash>.json` (5 попыток на IP и 50 всего за 15 минут).
-- `AUTH_HASH` — строка `salt:hash` (scrypt, hex) для проверки пароля в `checkLogin` (`api/_lib.js`); он же запасной ключ подписи сессий, если не задан `SESSION_SECRET` (в логах тогда предупреждение). Удалять из Vercel нельзя.
-- `POST /api/login` (просмотрен 2026-10-03: 429 при блокировке, 401 с задержкой 700 мс при неверных данных), `POST /api/logout` (не просмотрено). Любой 401 на сайте ведёт на экран входа.
+- Мультипользовательский вход (этап 1, 2026-10-04): аккаунты в Redis, `api/_acc.js` + `api/auth.js` (`login`, `register`, `logout` одним эндпоинтом). Никнейм: латиница, цифры, `_ . -` (3–24). Пароль от 8 символов, scrypt.
+- Лимиты: 10 неудач на адрес и 10 на никнейм за 15 минут, 10 регистраций в час с адреса. Регистрация только при `REG_OPEN=1`, всего аккаунтов `MAX_USERS` (по умолчанию 500). Ключи Redis с префиксом `DB_PREFIX`.
+- Сессия: cookie `cb_session` хранит id аккаунта (32 hex), подпись HMAC только от `SESSION_SECRET` (≥32 символов), 30 дней со скользящим продлением. Смена `SESSION_VERSION` разлогинивает все устройства. `AUTH_HASH` больше не используется. Любой 401 на сайте ведёт на экран входа.
+- До этапов 2–3 любой зарегистрированный пользователь видит общий агент (Blob) и пароль WiFi из `WIFI_*`: `REG_OPEN` держать закрытым, настоящие `WIFI_*` в тестовый проект не класть.
+- `AUTH_USER` остаётся только для бота и его тестов (id документа кэшбэков), уйдёт на этапе 3. `@vercel/blob` из `package.json` не убирать.
 
 ## Карта файлов
 **Корень:** `index.html`, `style.css`, `theme.js` (тема без мигания), `sw.js` (только уведомления, ничего не кеширует), `manifest.webmanifest`, `vercel.json`.
 
 **Служебное:** `tests/` (все файлы лежат в одной папке, без подпапок; проверки без деплоя, см. «Как работать»), `.vercelignore` (файл начинается с точки; заметки и `tests/` не должны раздаваться как статика и попадать в деплой), `notes/` (эти заметки).
 
-**api/:** `_lib.js` (общее, `clean`, сессия), `data.js`, `reminders.js`, `custom.js`, `recurring.js`, `agent.js`, `wifi.js`, `cron.js`, `telegram.js`, `_bot.js`, `_shops.js`, `_qr.js`, `tg-setup.js`, `login.js`, `logout.js`.
+**api/:** `_db.js` (Redis REST, CAS), `_acc.js` (аккаунты, лимиты), `auth.js` (вход/регистрация/выход), `_lib.js` (общее, `clean`, `readDoc/loadDoc/writeDoc`, сессия), `data.js`, `reminders.js`, `custom.js`, `recurring.js`, `agent.js`, `wifi.js`, `cron.js`, `telegram.js`, `_bot.js`, `_shops.js`, `_qr.js`, `tg-setup.js`.
 
 **js/:**
 - `main.js` — каркас: вход и выход, переключение страниц по hash (`#reminders`, `#wifi`, `#agent`, основная), события вкладки. Вызывает `initCashback / initReminders / initWifi / initAgent / initTheme` и `boot()`.
@@ -67,25 +68,25 @@
 - Нужна история решений → `notes/CHANGELOG.md` (по умолчанию не читать)
 
 ## Не просмотрено
-`theme.js`, `api/logout.js`. Проверить в них, нет ли секретов в коде. (`manifest.webmanifest`, `sw.js`, `js/main.js` просмотрены 2026-10-04: секретов нет. `api/telegram.js`, `api/tg-setup.js`, `api/login.js`, `_lib.js`, `wifi.js`, `index.html`, `style.css`, `vercel.json` просмотрены 2026-10-03: состояние пишет только через `mutate`, секретов в коде нет.)
+`theme.js`. Проверить в нём, нет ли секретов в коде. Файлы `api/_db.js`, `_acc.js`, `auth.js` и правки `_lib.js`, `data.js`, `js/main.js` этапа 1 прошли `node --check` и тесты, но построчно на секреты не читались. (`manifest.webmanifest`, `sw.js` просмотрены 2026-10-04; `api/telegram.js`, `api/tg-setup.js`, `index.html`, `style.css`, `vercel.json`, `wifi.js` — 2026-10-03.) В загруженной копии репозитория есть `README.md`, хотя он считается удалённым.
 
 ## Как работать с проектом
 - В начале задачи: прочитать этот файл и нужные файлы из `notes/` по индексу, назвать, какие файлы кода нужны (списком, очень кратко), не просить весь репозиторий. Фронтенд по модулям: просить только нужные файлы из `js/` по карте выше.
 - После своих правок пользователь коммитит, пушит и нажимает Sync now на репозитории в знаниях проекта.
 - Пользователь работает в Windows (PowerShell): вместо `grep` предлагать `Select-String -Encoding utf8`, вместо `curl` писать `curl.exe`.
 - Проверка перед выдачей: `node --check` для JS.
-  - Сервер на заглушке Blob: `node --import ./tests/register.mjs --test "tests/*.test.mjs"` (кавычки нужны). Заглушка `tests/blob.mjs` подменяет `@vercel/blob` без правок кода (через `register.mjs` и `hooks.mjs`); новые проверки класть в `tests/*.test.mjs`, общие помощники в `tests/helpers.mjs`.
+  - Сервер на заглушках Blob и Redis: `node --import ./tests/register.mjs --test "tests/*.test.mjs"` (кавычки нужны). Заглушка `tests/blob.mjs` подменяет `@vercel/blob`, `tests/redis.mjs` — Upstash REST (Lua-скрипты не исполняет, только повторяет смысл); подключаются без правок кода через `register.mjs` и `hooks.mjs`. `tests/live-redis.mjs` проверяет настоящий Redis (запускает владелец, нужны ключи). Запись документа кэшбэков в тестах поверх существующего — через `seedDocForce` из `helpers.mjs` (иначе CAS даёт «Precondition failed»); новые проверки класть в `tests/*.test.mjs`, общие помощники в `tests/helpers.mjs`.
   - Интерфейс: `node tests/smoke.mjs` (Chromium, CSP из `vercel.json`, мок-API из `tests/fixtures.mjs`, сервер стенда `tests/serve.mjs`; страницы × 360/1280 px × светлая/тёмная тема; ловит CSP, ошибки JS, незамоканный API, горизонтальную прокрутку). Playwright в `package.json` не добавлять: `npm i --no-save playwright && npx playwright install chromium`. Для нового эндпоинта дописать заглушку в `fixtures.mjs`.
   - Непроверенное записывать в `notes/CHECKLIST.md`.
 - Какие файлы тестов запрашивать вместе с кодом задачи (пользователь присылает только то, что названо; остальное я не прошу):
-  - Сервер (`api/*.js`): затронутый `api/*.js`, а из `tests/` — `blob.mjs`, `hooks.mjs`, `register.mjs`, `helpers.mjs` и тест по теме (`auth.test.mjs` для входа, сессий, `_lib.js`; `shops.test.mjs` для поиска магазинов и текстов бота; `bot-shop.test.mjs` для обработчика `api/telegram.js` на мок-fetch к Telegram; `alias.test.mjs` для псевдонимов, ожидающих запросов и сохранения полей состояния; `bot-learn.test.mjs` для кнопок обучения и исправления). Если подходящего теста нет, пишу новый в `tests/*.test.mjs`.
+  - Сервер (`api/*.js`): затронутый `api/*.js`, а из `tests/` — `blob.mjs`, `hooks.mjs`, `register.mjs`, `helpers.mjs` и тест по теме (`db.test.mjs` для `api/_db.js`, `auth.test.mjs` для входа, регистрации, сессий, `_lib.js`, `data.test.mjs` для `api/data.js`; `shops.test.mjs` для поиска магазинов и текстов бота; `bot-shop.test.mjs` для обработчика `api/telegram.js` на мок-fetch к Telegram; `alias.test.mjs` для псевдонимов, ожидающих запросов и сохранения полей состояния; `bot-learn.test.mjs` для кнопок обучения и исправления). Если подходящего теста нет, пишу новый в `tests/*.test.mjs`.
   - Интерфейс и стили (`js/`, `index.html`, `style.css`): затронутые файлы, `index.html`, `vercel.json`, `tests/serve.mjs`, `smoke.mjs`, `fixtures.mjs`. Для нового или изменённого эндпоинта `fixtures.mjs` обязателен. Стили тоже: проверка 360/1280 px, тем и горизонтальной прокрутки делается через `smoke.mjs`.
   - Правка только заметок или текстов без изменения разметки и логики: тесты не нужны.
 - Формат записи в «Журнале»: до трёх строк (дата, что изменено, какие файлы; отдельно «не проверялось», если это важно после деплоя). Счёт проверок не пишем. В ядре хранятся последние 5 записей, остальные переносятся в `notes/CHANGELOG.md`.
 
 ## Журнал (последние 5; новые записи в конец)
-- 2026-10-03: бот учится (этап 2): неизвестный магазин → кнопки категорий (сначала заполненные в месяце, остальные через «Другая…») → общий псевдоним; под ответом «Не та категория» (перекрывает словарь) и «Сбросить к словарю». Новые поля `alias` и `pending` в `bot/state.json`, `norm` их сохраняет. Файлы: `api/_shops.js` (`resolveShop`), `_bot.js`, `telegram.js` (`onShopCb`), `tests/alias.test.mjs`, `tests/bot-learn.test.mjs`, `tests/blob.mjs` (`__failPut`). Проверено: `node --check`, тесты на заглушке Blob и мок-fetch (в песочнице вместо настоящего `_lib.js` была заглушка), намеренные поломки ловятся, `/cashback` не менялся. Не проверялось: прежние 22 теста, реальные Telegram и Blob (см. `notes/CHECKLIST.md`).
 - 2026-10-03: бот: заголовок списка «Кэшбэки» (единое написание); для магазина без категории в месяце «У вас нет категории фастфуд» вместо «Пока не заполнено» (`noCategory`, при нескольких категориях «нет категории»). Файлы: `api/_bot.js`, `tests/shops.test.mjs`, `bot-shop.test.mjs`, `bot-learn.test.mjs`, `notes/cashback.md`. Проверено: `node --check`, тесты на заглушках, поломки ловятся. Не проверялось: реальный Telegram.
 - 2026-10-04: единое написание «кэшбэк» (рус.) и «cashback» (англ.); сайт «Personal Helper», пункт «Кэшбэк»; бот: описание `/cashback`, `REMINDERS` и `REM` синхронно, @PersonalHelper1Bot в `js/reminders/index.js`. Файлы: `index.html`, `manifest.webmanifest`, `api/_bot.js`, `api/telegram.js`, `js/cashback/view.js` и `index.js`, `js/reminders/index.js`, комментарии тестов, заметки. Проверено: `node --check`, патч применяется на чистую копию. Не проверялось: `smoke.mjs`, серверные тесты, реальный Telegram и меню после `tg-setup`, остальные файлы репозитория на старое написание.
 - 2026-10-04: переезд на нового бота `@PersonalHelper1Bot`: новый `TELEGRAM_BOT_TOKEN` в Vercel, Redeploy, `/api/tg-setup`, `/start` у обоих; ссылка и @username в `js/reminders/index.js` обновлены. Состояние бота в Blob сохранено, старому боту отозвать токен (`/revoke` в BotFather). Проверено: `tg-setup` ok, новый бот отвечает. Не проверялось: отправка напоминаний новым ботом по cron.
 - 2026-10-04: удалён `README.md` (проект станет публичным); список переменных окружения и служебные вызовы перенесены в `notes/CHECKLIST.md`, ссылки на README убраны из заметок. Не проверялось: ссылки на README в `.vercelignore`, `notes/`, `tests/`.
+- 2026-10-04: этап 1 мультипользовательской версии: Upstash Redis вместо Blob для документа кэшбэков, аккаунты и вход (`api/_db.js`, `_acc.js`, `auth.js`, `_lib.js`, `data.js`, `js/main.js`, `style.css`, `tests/*`; `login.js` и `logout.js` удалены). Заметки обновлены (хранилище, вход, карта, переменные). Проверено: `node --check`, серверные тесты 115/115 (4 устаревших теста поправлены), `smoke.mjs` на настоящих `index.html` и `vercel.json`; владелец вручную: деплой, регистрация, вход, выход, сохранение кэшбэка. Не проверялось: `tests/live-redis.mjs` на настоящем Upstash, реальный Telegram после смены хранилища.
