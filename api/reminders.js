@@ -1,30 +1,15 @@
 import { session } from './_lib.js';
-import { REMINDERS, readState, mutate, pubState } from './_bot.js';
+import { readRem, pubRem } from './_rem.js';
 
-const pub = pubState;
-
+// GET /api/reminders → { linked, custom, recurring } личных напоминаний аккаунта из сессии. Изменения идут через /api/custom и /api/recurring.
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
-  if (!session(req)) return res.status(401).json({ error: 'auth' });
+  const id = session(req);
+  if (!id) return res.status(401).json({ error: 'auth' });
+  if (req.method !== 'GET') return res.status(405).end();
   try {
-    if (req.method === 'GET') {
-      const { state } = await readState();
-      return res.status(200).json(pub(state));
-    }
-    if (req.method === 'PUT') {
-      if (!String(req.headers['content-type'] || '').includes('application/json')) return res.status(415).end();
-      let b = req.body;
-      if (typeof b === 'string') b = JSON.parse(b);
-      const { id, key, value } = b || {};
-      const R = REMINDERS[id];
-      if (!R || typeof value !== 'boolean' || !(key === 'on' || R.who.includes(key))) return res.status(400).json({ error: 'bad request' });
-      const state = await mutate((st) => {
-        st.settings[id] = { ...(st.settings[id] || {}), [key]: value };
-        return st;
-      });
-      return res.status(200).json(pub(state));
-    }
-    return res.status(405).end();
+    const { rem } = await readRem(id);
+    return res.status(200).json(await pubRem(id, rem));
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'storage' });

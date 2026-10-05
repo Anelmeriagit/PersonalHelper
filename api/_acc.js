@@ -7,6 +7,7 @@
 //   tgp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
 //   tg:<id>          → JSON {tid, chat, un, at}: привязанный Telegram аккаунта
 //   tgu:<tid>        → id аккаунта (обратный поиск: один Telegram привязан к одному аккаунту)
+//   tgs              → множество id аккаунтов с привязанным Telegram (обход для cron, этап 3b); ведут bindTelegram и unlinkTelegram
 // Пароль нигде не хранится и не логируется, только scrypt-хэш.
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
@@ -88,6 +89,16 @@ export async function getLink(id) {
   try { const d = JSON.parse(raw); return d && d.tid ? d : null; } catch { return null; }
 }
 
+// Кто пишет боту: id аккаунта по числовому Telegram id или null. Верим только полной паре: tgu:<tid> → id и tg:<id> с тем же tid
+// (привязка, прерванная посередине, или перепривязка не дадут чужого доступа). Username не используется: его можно сменить.
+export async function accountOfTelegram(tid) {
+  if (!/^\d{1,20}$/.test(String(tid))) return null;
+  const id = await cmd('GET', key('tgu', String(tid)));
+  if (!id || !ID_RE.test(String(id))) return null;
+  const l = await getLink(id);
+  return l && String(l.tid) === String(tid) ? id : null;
+}
+
 // Привязка по токену из /start. from — объект Telegram from, chat — id личного чата.
 // → { id, nick } | { error: 'bad' (нет такой ссылки или она устарела) | 'busy' (этот Telegram уже у другого аккаунта) }
 // Токен одноразовый: после попытки (даже неудачной по 'busy') нужна новая ссылка.
@@ -105,13 +116,22 @@ export async function bindTelegram(token, from, chat) {
   const prev = await getLink(id);
   if (prev && String(prev.tid) !== tid) await del(key('tgu', String(prev.tid))); // аккаунт перешёл на другой Telegram
   const un = String(from.username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 32);
+  // Сначала в множество для cron, потом сама привязка: сбой посередине оставит id без tg:<id>, а cron такие пропускает.
+  await cmd('SADD', key('tgs'), id);
   await cmd('SET', key('tg', id), JSON.stringify({ tid, chat: String(chat), un, at: Date.now() }));
   return { id, nick: (await nickOf(id)) || '' };
 }
 
 // Отвязка: убирает запись аккаунта и обратный поиск (только если он указывает на этот аккаунт). Идемпотентна.
 export async function unlinkTelegram(id) {
+  await cmd('SREM', key('tgs'), id);
   const l = await getLink(id);
   if (l && (await cmd('GET', key('tgu', String(l.tid)))) === id) await del(key('tgu', String(l.tid)));
   await del(key('tg', id), key('tgp', id));
+}
+
+// id всех аккаунтов с привязанным Telegram (для рассылки cron). Каждый id надо ещё проверить через getLink: запись могла пропасть.
+export async function linkedIds() {
+  const r = await cmd('SMEMBERS', key('tgs'));
+  return Array.isArray(r) ? r.filter((x) => ID_RE.test(String(x))).sort() : [];
 }

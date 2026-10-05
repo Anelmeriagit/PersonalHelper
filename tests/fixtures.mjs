@@ -7,6 +7,12 @@ function mskMonth() {
   return p.find((x) => x.type === 'year').value + '-' + p.find((x) => x.type === 'month').value;
 }
 
+// Дата по Москве со сдвигом в днях (YYYY-MM-DD)
+export function mskDay(offset = 0) {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() + offset * 864e5));
+  return p;
+}
+
 const qrRows = Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => ((x * 7 + y * 3 + (x ^ y)) % 3 === 0 ? '1' : '0')).join(''));
 
 export const qr = { size: 21, rows: qrRows };
@@ -26,7 +32,12 @@ export const routes = {
     rev: {},
   }),
   'PUT /api/data': () => ({ ok: true }),
-  'GET /api/reminders': () => ({ settings: {}, linked: { denis: true, zhanna: true }, custom: [], recurring: [] }),
+  // Форма ответа этапа 3b: { linked: bool, custom, recurring }; PUT /api/reminders больше нет
+  'GET /api/reminders': () => ({
+    linked: true,
+    custom: [{ id: 'aaaaaaaaaaaa', date: mskDay(3), slot: 'day', text: 'Позвонить <b>маме</b>', on: true, sent: false }],
+    recurring: [{ id: 'bbbbbbbbbbbb', date: mskDay(2), every: 'week', slot: 'evening', text: 'Полить цветы', on: true, next: mskDay(2) }],
+  }),
   'GET /api/agent': () => ({
     rows: [
       { id: 'a1', app: 'app', h: null, m: null },

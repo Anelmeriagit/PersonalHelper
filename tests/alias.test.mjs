@@ -1,12 +1,13 @@
-// Этап 2: псевдонимы и ожидающие запросы (чистые функции) и сохранение новых полей состояния.
+// Этап 3b: псевдонимы и ожидающие запросы (чистые функции) и личное состояние бота bot:<id> в Redis.
 // Запуск: node --import ./tests/register.mjs --test "tests/*.test.mjs"
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __reset, put } from './blob.mjs';
+import { __reset, __keys, __raw } from './redis.mjs';
 import { setEnv } from './helpers.mjs';
 
 setEnv();
-const { CATS } = await import('../api/_lib.js');
+const lib = await import('../api/_lib.js');
+const { CATS } = lib;
 const sh = await import('../api/_shops.js');
 const bot = await import('../api/_bot.js');
 const { resolveShop, shopKey, disp } = sh;
@@ -197,31 +198,41 @@ test('callback_data: не длиннее 64 байт и без текста ка
   assert.ok(bytes('sk|' + ID + '|999') <= 64);
 });
 
-/* ---------- состояние ---------- */
-const PUT = { access: 'private', addRandomSuffix: false, contentType: 'application/json' };
-test('norm состояния: alias и pending сохраняются при mutate вместе с custom и recurring', async () => {
-  const keep = {
-    users: { denis: { chat: 1, id: 1, username: 'anelmeria' } }, settings: {}, cycles: {},
-    custom: [{ id: 'c1', text: 't' }], recurring: [{ id: 'r1', text: 't' }],
-    alias: { ларек: { c: 'Книги', t: 'Ларёк', at: NOW } }, pending: { abcdef12: { q: 'ларёк', ts: NOW } },
-  };
-  await put('bot/state.json', JSON.stringify(keep), PUT);
-  await bot.mutate((st) => { st.settings.x = { on: false }; });
-  const { state } = await bot.readState();
-  assert.deepEqual(state.alias, keep.alias);
-  assert.deepEqual(state.pending, keep.pending);
-  assert.deepEqual(state.custom, keep.custom);
-  assert.deepEqual(state.recurring, keep.recurring);
-  assert.deepEqual(state.settings, { x: { on: false } });
+/* ---------- состояние бота аккаунта (Redis bot:<id>) ---------- */
+const ID1 = 'a'.repeat(32), ID2 = 'b'.repeat(32);
+
+test('состояние: пустая запись читается как пустые alias и pending, etag null', async () => {
+  const { state, etag } = await bot.readBot(ID1);
+  assert.deepEqual(state, { alias: {}, pending: {} });
+  assert.equal(etag, null);
 });
 
-test('norm состояния: старый файл без новых полей читается, поля пустые; мусор вместо объектов заменяется', async () => {
-  await put('bot/state.json', JSON.stringify({ users: {}, settings: {}, cycles: {}, custom: [], recurring: [] }), PUT);
-  let { state } = await bot.readState();
-  assert.deepEqual([state.alias, state.pending], [{}, {}]);
-  await put('bot/state.json', JSON.stringify({ alias: [1, 2], pending: 'x' }), { ...PUT, allowOverwrite: true });
-  ({ state } = await bot.readState());
-  assert.deepEqual([state.alias, state.pending], [{}, {}]);
-  const empty = (await (async () => { __reset(); return bot.readState(); })()).state;
-  assert.deepEqual([empty.alias, empty.pending], [{}, {}]);
+test('состояние: alias и pending сохраняются между записями, лишние поля отбрасываются', async () => {
+  const keep = { alias: { ларек: { c: 'Книги', t: 'Ларёк', at: NOW } }, pending: { abcdef12: { q: 'ларёк', ts: NOW } } };
+  await lib.writeRec('bot', ID1, { ...keep, users: { x: 1 }, custom: [1] }, null);
+  await bot.mutateBot(ID1, (st) => { st.alias.второй = { c: 'Аптеки', t: 'Второй', at: NOW + 1 }; });
+  const { state } = await bot.readBot(ID1);
+  assert.deepEqual(state.pending, keep.pending);
+  assert.deepEqual(Object.keys(state.alias).sort(), ['второй', 'ларек']);
+  assert.deepEqual(Object.keys(__raw('bot:' + ID1) && JSON.parse(__raw('bot:' + ID1).d)).sort(), ['alias', 'pending'], 'в Redis только два поля');
+});
+
+test('состояние: мусор вместо объектов заменяется пустыми', async () => {
+  await lib.writeRec('bot', ID1, { alias: [1, 2], pending: 'x' }, null);
+  const { state } = await bot.readBot(ID1);
+  assert.deepEqual(state, { alias: {}, pending: {} });
+});
+
+test('состояние: у аккаунтов раздельное; запись без изменений ничего не создаёт', async () => {
+  await bot.mutateBot(ID1, (st) => { bot.aliasSet(st, 'ключ', 'Книги', 'T', NOW); });
+  assert.deepEqual((await bot.readBot(ID2)).state, { alias: {}, pending: {} });
+  await bot.mutateBot(ID2, () => {});
+  assert.deepEqual(__keys(), ['bot:' + ID1]);
+});
+
+test('mutateBot: параллельные записи не теряют друг друга (CAS с повтором), результат fn возвращается', async () => {
+  const ids = await Promise.all([0, 1, 2, 3].map((i) => bot.mutateBot(ID1, (st) => bot.pendingPut(st, 'запрос ' + i, NOW + i))));
+  assert.equal(new Set(ids).size, 4);
+  const { state } = await bot.readBot(ID1);
+  assert.equal(Object.keys(state.pending).length, 4);
 });

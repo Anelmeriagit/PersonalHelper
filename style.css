@@ -130,8 +130,7 @@ select option{color:var(--text);background:var(--surface)}
 /* колонки: постоянные | повторяющиеся | временные. От 900 px: постоянные слева, остальные две друг под другом справа; от 1200 px: три колонки */
 .rwide{width:min(100% - 2rem,1100px)}
 .rcols{display:grid;grid-template-columns:minmax(0,1fr);gap:0 2rem;align-items:start}
-@media(min-width:900px){.rcols{grid-template-columns:repeat(2,minmax(0,1fr))}.rcol:first-child{grid-row:span 2}}
-@media(min-width:1200px){.rwide{width:min(100% - 2rem,1320px)}.rcols{grid-template-columns:repeat(3,minmax(0,1fr))}.rcol:first-child{grid-row:auto}}
+@media(min-width:900px){.rcols{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .rch{margin:0 0 .75rem;font-size:1.15rem;text-align:center}
 .rcol .addbtn{margin-bottom:1rem}
 .sw:disabled{opacity:.45;cursor:not-allowed}

@@ -2,8 +2,7 @@ export const TEST_USER = 'Test';
 export const TEST_PASS = 'secret-pass';
 
 export function setEnv() {
-  // AUTH_USER остаётся только для тестов бота (этап 3 уберёт): они используют его как id документа кэшбэков.
-  process.env.AUTH_USER = TEST_USER;
+  delete process.env.AUTH_USER; // с этапа 3b бот читает документ привязанного аккаунта, переменная не нужна
   process.env.SESSION_SECRET = 'test-session-secret-0123456789abcdef';
   process.env.SESSION_VERSION = '1';
   process.env.DB_PREFIX = '';
@@ -39,4 +38,14 @@ export function fakeClock(t) {
 export async function seedDocForce(lib, user, doc) {
   const { etag } = await lib.readDoc(user);
   return lib.writeDoc(user, doc, etag);
+}
+
+// Создаёт аккаунт и привязывает к нему Telegram (как делает сайт + /start <токен>). from — объект Telegram from, chat по умолчанию from.id * 100 + 1.
+// acc — модуль api/_acc.js (импортируют в тесте после setEnv). → id аккаунта.
+export async function linkUser(acc, nick, from, chat = from.id * 100 + 1) {
+  const { id } = await acc.createAccount(nick, 'pass-12345', 100);
+  const { token } = await acc.createLinkToken(id);
+  const r = await acc.bindTelegram(token, from, chat);
+  if (r.error) throw new Error('linkUser: ' + r.error);
+  return id;
 }

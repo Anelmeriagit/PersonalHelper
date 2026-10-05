@@ -2,7 +2,7 @@
 // Подключается через tests/register.mjs: подменяет globalThis.fetch только для адреса KV_REST_API_URL,
 // остальные запросы идут в прежний fetch. Код в api/ менять не нужно.
 // Поддержано то, что использует код проекта: GET, SET (NX, EX, PX), DEL, EXISTS, INCR, DECR, EXPIRE, PEXPIRE, PTTL,
-// HGET, HMGET, HSET и три скрипта EVAL (по первой строке «-- cas», «-- hit» и «-- take», см. api/_db.js).
+// HGET, HMGET, HSET, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и три скрипта EVAL (по первой строке «-- cas», «-- hit» и «-- take», см. api/_db.js).
 // Сами Lua-скрипты здесь НЕ исполняются: заглушка повторяет их смысл на JS. Реальный Redis проверяется отдельно (notes/CHECKLIST.md).
 process.env.KV_REST_API_URL = process.env.KV_REST_API_URL || 'https://redis.test';
 process.env.KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN || 'test-redis-token';
@@ -10,14 +10,15 @@ process.env.KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN || 'test-redis-tok
 const GOOD_TOKEN = process.env.KV_REST_API_TOKEN; // токен, который «знает» заглушка; отличающийся в окружении кода отвергается
 
 const store = new Map(); // ключ -> { t: 's' | 'h', v, exp: мс | null }
-let failMode = null;     // null | 'network' | 'http'
+let failMode = null;     // null | 'network' | 'http' | 'write' (сбой только у команд записи)
+let failMatch = null;    // если задано: сбой только у команд, чей ключ содержит эту строку (например 'doc:')
 let calls = 0;
 
-export function __reset() { store.clear(); failMode = null; calls = 0; }
-export function __fail(mode) { failMode = mode || null; }
+export function __reset() { store.clear(); failMode = null; failMatch = null; calls = 0; }
+export function __fail(mode, match) { failMode = mode || null; failMatch = match || null; }
 export function __keys() { return [...store.keys()].sort(); }
 export function __calls() { return calls; }
-export function __raw(k) { const e = store.get(k); return e ? (e.t === 'h' ? Object.fromEntries(e.v) : e.v) : undefined; }
+export function __raw(k) { const e = store.get(k); return e ? (e.t === 'h' ? Object.fromEntries(e.v) : e.t === 'set' ? [...e.v].sort() : e.v) : undefined; }
 
 const rerr = (msg) => { const e = new Error(msg); e.redis = true; return e; };
 const live = (k) => {
@@ -38,7 +39,27 @@ const hash = (k, create) => {
   if (e && e.t !== 'h') throw rerr('WRONGTYPE Operation against a key holding the wrong kind of value');
   return e;
 };
+const set = (k, create) => {
+  let e = live(k);
+  if (!e && create) { e = { t: 'set', v: new Set(), exp: null }; store.set(k, e); }
+  if (e && e.t !== 'set') throw rerr('WRONGTYPE Operation against a key holding the wrong kind of value');
+  return e;
+};
 const int = (s) => { if (!/^-?\d+$/.test(String(s))) throw rerr('ERR value is not an integer or out of range'); return Number(s); };
+
+// Шаблон SCAN MATCH → RegExp: * ? и обратная косая черта; классы [...] заглушка не поддерживает (код проекта экранирует их в префиксе).
+function globRe(pat) {
+  let r = '';
+  for (let i = 0; i < pat.length; i++) {
+    const c = pat[i];
+    if (c === '\\') r += (pat[++i] || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    else if (c === '*') r += '[\\s\\S]*';
+    else if (c === '?') r += '[\\s\\S]';
+    else if (c === '[') throw rerr('ERR заглушка не поддерживает классы [...] в MATCH');
+    else r += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp('^' + r + '$');
+}
 
 function evalScript(script, keys, argv) {
   const k = keys[0];
@@ -107,6 +128,32 @@ function exec(args) {
       for (let i = 1; i + 1 < a.length; i += 2) { if (!h.v.has(a[i])) added++; h.v.set(a[i], String(a[i + 1])); }
       return added;
     }
+    case 'SADD': { const e = set(a[0], true); let n = 0; for (const m of a.slice(1)) if (!e.v.has(String(m))) { e.v.add(String(m)); n++; } return n; }
+    case 'SREM': {
+      const e = set(a[0], false);
+      if (!e) return 0;
+      let n = 0;
+      for (const m of a.slice(1)) if (e.v.delete(String(m))) n++;
+      if (!e.v.size) store.delete(a[0]); // как в Redis: пустое множество исчезает
+      return n;
+    }
+    case 'SMEMBERS': { const e = set(a[0], false); return e ? [...e.v] : []; }
+    case 'SISMEMBER': { const e = set(a[0], false); return e && e.v.has(String(a[1])) ? 1 : 0; }
+    case 'SCARD': { const e = set(a[0], false); return e ? e.v.size : 0; }
+    case 'SCAN': {
+      const cur = int(a[0]);
+      let pat = '*', count = 10;
+      for (let i = 1; i < a.length; i++) {
+        const f = String(a[i]).toUpperCase();
+        if (f === 'MATCH') pat = String(a[++i]);
+        else if (f === 'COUNT') count = int(a[++i]);
+        else throw rerr('ERR syntax error');
+      }
+      const all = [...store.keys()].filter((k) => live(k)).sort();
+      const re = globRe(pat);
+      // как в Redis: COUNT — сколько ключей просмотреть за шаг, фильтр применяется после (страница может быть пустой, а курсор ещё не 0)
+      return [String(cur + count >= all.length ? 0 : cur + count), all.slice(cur, cur + count).filter((k) => re.test(k))];
+    }
     case 'EVAL': { const n = int(a[1]); return evalScript(a[0], a.slice(2, 2 + n), a.slice(2 + n)); }
     default: throw rerr('ERR unknown command ' + name);
   }
@@ -115,13 +162,22 @@ function exec(args) {
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } });
 const REAL_FETCH = globalThis.fetch;
 
+// Ключи команды (для фильтра __fail по ключу) и признак записи.
+const WRITES = new Set(['SET', 'DEL', 'INCR', 'DECR', 'EXPIRE', 'PEXPIRE', 'HSET', 'SADD', 'SREM', 'EVAL']);
+const keysOf = (c) => (String(c[0]).toUpperCase() === 'EVAL' ? c.slice(3, 3 + Number(c[2])) : c.slice(1, 2)).map(String);
+const hits = (c) => (!failMatch || keysOf(c).some((k) => k.includes(failMatch))) && (failMode !== 'write' || WRITES.has(String(c[0]).toUpperCase()));
+
 globalThis.fetch = async function fetchWithRedis(url, opts = {}) {
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const u = String(url);
   if (!base || !u.startsWith(base)) return REAL_FETCH(url, opts);
   calls++;
-  if (failMode === 'network') throw new TypeError('fetch failed');
-  if (failMode === 'http') return json({ error: 'ERR simulated outage' }, 500);
+  const body0 = JSON.parse(opts.body);
+  const cmds0 = u.slice(base.length).replace(/\/+$/, '') === '/pipeline' ? body0 : [body0];
+  if (failMode && cmds0.some(hits)) {
+    if (failMode === 'http') return json({ error: 'ERR simulated outage' }, 500);
+    throw new TypeError('fetch failed'); // 'network' и 'write'
+  }
   const auth = (opts.headers && (opts.headers.Authorization || opts.headers.authorization)) || '';
   if (auth !== 'Bearer ' + GOOD_TOKEN) return json({ error: 'WRONGPASS invalid or missing auth token' }, 401);
   const path = u.slice(base.length).replace(/\/+$/, '');

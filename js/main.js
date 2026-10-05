@@ -82,5 +82,5 @@ window.addEventListener('hashchange',applyPage);
 document.addEventListener('error',function(e){var t=e.target,b=t&&t.tagName==='IMG'&&t.parentNode;if(b&&(b.classList.contains('badge')||b.classList.contains('mb'))){b.classList.add('nologo');t.remove()}},true);
 
 onAuthFail(showLogin);
-initCashback();initReminders();initWifi();initAgent();initTheme();initTg();
+initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);
 boot();

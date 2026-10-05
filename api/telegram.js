@@ -1,13 +1,14 @@
 import { loadDoc } from './_lib.js';
-import { bindTelegram, TOKEN_RE } from './_acc.js';
-import { PERSONS, REMINDERS, whoIs, tg, mutate, readState, markDone, isFilled, targetMonth, webhookSecret, safeEq, mskNow, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
+import { bindTelegram, accountOfTelegram, nickOf, TOKEN_RE } from './_acc.js';
+import { tg, readBot, mutateBot, webhookSecret, safeEq, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
+import { mskNow } from './_rem.js';
 import { resolveShop, disp } from './_shops.js';
 
-const CM_RE = /^\d{4}-\d{2}$/;
 const SHOP_CB = /^(sk|so|sp|sf|sr|sb)\|[0-9a-f]{8}(\|\d{1,3})?$/; // кнопки ответа по магазину (см. shopKb/pickKb в _bot.js)
 const START_RE = /^\/start(?:@\w+)?(?=\s|$)\s*(\S*)/i; // группа 1: токен привязки (может быть пустым)
 const NEW_LINK = ' Получите новую ссылку на сайте: Напоминания → «Привязать Telegram».';
-const HINT = '\nИли выберите категорию кнопкой ниже: запомню для обоих.';
+const HINT = '\nИли выберите категорию кнопкой ниже: я запомню.';
+const NO_DATA = 'Не удалось загрузить данные с сайта. Попробуйте чуть позже.';
 
 // Текст и кнопки ответа по результату поиска. id — ожидающий запрос (есть, если удалось записать состояние).
 function shopView(doc, mo, r, id, ch) {
@@ -29,27 +30,28 @@ async function onBind(m, token) {
   return say('Готово: Telegram привязан к аккаунту «' + r.nick + '».');
 }
 
+// uid — id аккаунта, к которому привязан этот Telegram (accountOfTelegram). Документ кэшбэков, псевдонимы и ожидающие запросы — этого аккаунта.
 async function onMessage(m) {
   if (!m.chat || m.chat.type !== 'private') return; // группы: полная тишина
   const sm = START_RE.exec(String(m.text || ''));
   if (sm && sm[1]) return onBind(m, sm[1]);
-  const p = await whoIs(m.from);
-  if (!p) {
-    // Чужой человек без токена: только на /start подсказываем, как привязать; на всё остальное тишина.
+  const uid = await accountOfTelegram(m.from && m.from.id);
+  if (!uid) {
+    // Не привязанный Telegram: только на /start подсказываем, как привязать; на всё остальное тишина.
     if (sm) await tg('sendMessage', { chat_id: m.chat.id, text: 'Привет! Чтобы привязать бота к аккаунту, откройте сайт: Напоминания → «Привязать Telegram».' });
     return;
   }
   if (sm) {
-    await mutate((st) => { st.users[p] = { chat: m.chat.id, username: m.from.username, id: m.from.id }; });
-    await tg('sendMessage', { chat_id: m.chat.id, text: `Привет, ${PERSONS[p].name}! Бот подключён: напоминания будут приходить сюда. Список кэшбэков — в меню слева от поля ввода.` });
+    const nick = await nickOf(uid);
+    await tg('sendMessage', { chat_id: m.chat.id, text: 'Привет' + (nick ? ', ' + nick : '') + '! Telegram привязан к вашему аккаунту: напоминания будут приходить сюда. Список кэшбэков — в меню слева от поля ввода.' });
     return;
   }
   if (/^\/cashback(\s|@|$)/i.test(String(m.text || ''))) {
     let texts;
-    try { texts = cashbackTexts((await loadDoc(process.env.AUTH_USER)).doc, mskNow().month); }
+    try { texts = cashbackTexts((await loadDoc(uid)).doc, mskNow().month); }
     catch (e) {
       console.error(e);
-      return tg('sendMessage', { chat_id: m.chat.id, text: 'Не удалось загрузить данные с сайта. Попробуйте чуть позже.' });
+      return tg('sendMessage', { chat_id: m.chat.id, text: NO_DATA });
     }
     for (const t of texts) for (const part of chunkText(t)) await tg('sendMessage', { chat_id: m.chat.id, text: part });
     return;
@@ -58,20 +60,20 @@ async function onMessage(m) {
   const text = typeof m.text === 'string' ? m.text.trim() : '';
   if (!text || text[0] === '/') return;
   let doc;
-  try { doc = (await loadDoc(process.env.AUTH_USER)).doc; }
+  try { doc = (await loadDoc(uid)).doc; }
   catch (e) {
     console.error(e);
-    return tg('sendMessage', { chat_id: m.chat.id, text: 'Не удалось загрузить данные с сайта. Попробуйте чуть позже.' });
+    return tg('sendMessage', { chat_id: m.chat.id, text: NO_DATA });
   }
   const mo = mskNow().month;
   let r, id = null, ch = null;
   try {
-    r = resolveShop(text, doc.custom, (await readState()).state.alias);
+    r = resolveShop(text, doc.custom, (await readBot(uid)).state.alias);
     const known = r.key && (r.res.kind === 'found' || r.res.kind === 'unknown');
     // Запоминаем запрос ради кнопок. Если состояние не записалось, ответ всё равно уходит, просто без кнопок.
     if (known) {
       if (r.res.kind === 'unknown') ch = catChoices(doc, mo);
-      id = await mutate((st) => pendingPut(st, text.slice(0, 100), Date.now(), ch ? { l: ch.list, f: ch.f, m: null } : { m: null }));
+      id = await mutateBot(uid, (st) => pendingPut(st, text.slice(0, 100), Date.now(), ch ? { l: ch.list, f: ch.f, m: null } : { m: null }));
     }
   } catch (e) {
     console.error(e);
@@ -84,8 +86,8 @@ async function onMessage(m) {
   await tg('sendMessage', body);
 }
 
-// Кнопки ответа по магазину: «Не та категория», выбор категории, «Другая…», «Сбросить к словарю». Вызывается после whoIs.
-async function onShopCb(cq) {
+// Кнопки ответа по магазину: «Не та категория», выбор категории, «Другая…», «Сбросить к словарю». Вызывается после accountOfTelegram; uid — аккаунт нажавшего.
+async function onShopCb(cq, uid) {
   const ans = (extra) => tg('answerCallbackQuery', { callback_query_id: cq.id, ...extra }).catch(() => {});
   const msg = cq.message;
   if (!msg || !msg.chat) return ans();
@@ -96,7 +98,7 @@ async function onShopCb(cq) {
   const edit = (text, kb) => tg('editMessageText', { chat_id: chat, message_id: mid, text, reply_markup: { inline_keyboard: kb || [] } }).catch(swallow);
   const editKb = (kb) => tg('editMessageReplyMarkup', { chat_id: chat, message_id: mid, reply_markup: { inline_keyboard: kb } }).catch(swallow);
   const now = Date.now();
-  const { state } = await readState();
+  const { state } = await readBot(uid);
   const pd = pendingGet(state, id, now);
   if (!pd) {
     await ans({ text: 'Запрос устарел. Напишите название магазина ещё раз.', show_alert: true });
@@ -109,10 +111,10 @@ async function onShopCb(cq) {
     return editKb(pickKb(id, pd.l, pd.f, act === 'so', pd.m === 'fix'));
   }
   let doc;
-  try { doc = (await loadDoc(process.env.AUTH_USER)).doc; }
+  try { doc = (await loadDoc(uid)).doc; }
   catch (e) {
     console.error(e);
-    return ans({ text: 'Не удалось загрузить данные с сайта. Попробуйте чуть позже.', show_alert: true });
+    return ans({ text: NO_DATA, show_alert: true });
   }
   const mo = mskNow().month;
   const r = resolveShop(pd.q, doc.custom, state.alias);
@@ -129,22 +131,22 @@ async function onShopCb(cq) {
   }
   if (act === 'sf') { // «Не та категория»: свежий список категорий
     const ch = catChoices(doc, mo);
-    const nid = await mutate((st) => pendingPut(st, pd.q, now, { l: ch.list, f: ch.f, m: 'fix' }));
+    const nid = await mutateBot(uid, (st) => pendingPut(st, pd.q, now, { l: ch.list, f: ch.f, m: 'fix' }));
     await ans();
     return edit('Какая категория у «' + title + '»?', pickKb(nid, ch.list, ch.f, false, true));
   }
-  if (act === 'sk') { // выбор категории: сохраняем общий псевдоним
+  if (act === 'sk') { // выбор категории: сохраняем личный псевдоним
     const c = Array.isArray(pd.l) && /^\d{1,3}$/.test(ix || '') ? pd.l[+ix] : null;
     if (typeof c !== 'string' || !catChoices(doc, mo).list.includes(c)) {
       return ans({ text: 'Такой категории уже нет. Начните заново: «Не та категория».', show_alert: true });
     }
-    const alias = await mutate((st) => { aliasSet(st, r.key, c, title, now); pendingPut(st, pd.q, now, { m: null }); return st.alias; });
+    const alias = await mutateBot(uid, (st) => { aliasSet(st, r.key, c, title, now); pendingPut(st, pd.q, now, { m: null }); return st.alias; });
     const v = shopView(doc, mo, resolveShop(pd.q, doc.custom, alias), id, null);
-    await ans({ text: 'Запомнил для обоих' });
+    await ans({ text: 'Запомнил' });
     return edit(v.text, v.kb);
   }
   if (act === 'sr') { // сбросить к словарю: убрать псевдоним
-    const out = await mutate((st) => {
+    const out = await mutateBot(uid, (st) => {
       aliasDel(st, r.key);
       const r2 = resolveShop(pd.q, doc.custom, st.alias);
       const ch = r2.res.kind === 'unknown' ? catChoices(doc, mo) : null;
@@ -158,46 +160,11 @@ async function onShopCb(cq) {
 }
 
 async function onCallback(cq) {
-  const p = await whoIs(cq.from);
-  if (!p) return; // чужие нажатия: полная тишина
-  if (SHOP_CB.test(String(cq.data || ''))) return onShopCb(cq);
-  const ans = (extra) => tg('answerCallbackQuery', { callback_query_id: cq.id, ...extra }).catch(() => {});
-  const [act, id, cm] = String(cq.data || '').split('|');
-  const R = REMINDERS[id];
-  if (!R || !R.who.includes(p) || !CM_RE.test(cm || '') || !['ok', 'chk', 'later'].includes(act) || !cq.message) return ans();
-
-  const chat = cq.message.chat.id, mid = cq.message.message_id;
-  const edit = (text, kb) => tg('editMessageText', { chat_id: chat, message_id: mid, text, reply_markup: { inline_keyboard: kb || [] } })
-    .catch((e) => { if (!/not modified/i.test(e.message)) throw e; });
-
-  if (act === 'later') {
-    await ans();
-    return edit(`${R.text}\n\n⏰ Напомню по расписанию.`);
-  }
-
-  if (id === 'cashback') {
-    const { state } = await readState();
-    const c = state.cycles[id + ':' + cm];
-    if (!(c && c.done && c.done[p])) {
-      let filled;
-      try { filled = await isFilled(targetMonth(cm)); }
-      catch (e) {
-        console.error(e);
-        return ans({ text: 'Не удалось проверить сайт. Попробуйте чуть позже.', show_alert: true });
-      }
-      if (!filled) {
-        await ans({ text: 'Категории на сайте пока не заполнены' });
-        return edit('Проверка не пройдена. Категории на сайте не заполнены', [[{ text: 'Проверить', callback_data: `chk|cashback|${cm}` }]]);
-      }
-      await markDone(id, cm, p);
-    }
-    await ans();
-    return edit(R.doneText);
-  }
-
-  await markDone(id, cm, p);
-  await ans();
-  return edit(`${R.text}\n\n✅ ${R.doneLabel}`);
+  const uid = await accountOfTelegram(cq.from && cq.from.id);
+  if (!uid) return; // чужие нажатия: полная тишина
+  if (SHOP_CB.test(String(cq.data || ''))) return onShopCb(cq, uid);
+  // Прочие кнопки (например, от напоминаний прежней версии, которых больше нет): снимаем «часики» и сообщаем.
+  await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Эта кнопка больше не работает.' }).catch(() => {});
 }
 
 export default async function handler(req, res) {
@@ -215,7 +182,7 @@ export default async function handler(req, res) {
     try {
       const cq = u && u.callback_query, m = u && u.message;
       if (cq) await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Не получилось. Попробуйте ещё раз через минуту.', show_alert: true }, { retries: 0 });
-      else if (m && m.chat && m.chat.type === 'private' && await whoIs(m.from)) await tg('sendMessage', { chat_id: m.chat.id, text: 'Что-то пошло не так. Попробуйте ещё раз чуть позже.' }, { retries: 0 });
+      else if (m && m.chat && m.chat.type === 'private' && await accountOfTelegram(m.from && m.from.id)) await tg('sendMessage', { chat_id: m.chat.id, text: 'Что-то пошло не так. Попробуйте ещё раз чуть позже.' }, { retries: 0 });
     } catch (e2) { console.error('error reply failed', e2.message); }
   }
   // Всегда 200, иначе Telegram будет слать то же обновление повторно.

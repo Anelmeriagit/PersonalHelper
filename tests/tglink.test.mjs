@@ -3,9 +3,8 @@
 // Тест «getMe не отвечает» должен идти первым: имя бота кэшируется в памяти после первого успеха.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __reset as blobReset, put } from './blob.mjs';
 import { __reset, __fail, __keys, __raw, __calls } from './redis.mjs';
-import { mockReq, mockRes, setEnv, fakeClock } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, fakeClock, linkUser } from './helpers.mjs';
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -15,7 +14,7 @@ const bot = await import('../api/_bot.js');
 const link = (await import('../api/tglink.js')).default;
 const hook = (await import('../api/telegram.js')).default;
 
-beforeEach(() => { __reset(); blobReset(); setEnv(); process.env.TELEGRAM_BOT_TOKEN = 'test-token'; });
+beforeEach(() => { __reset(); setEnv(); process.env.TELEGRAM_BOT_TOKEN = 'test-token'; });
 
 const mkAcc = async (nick) => (await acc.createAccount(nick, 'pass-12345', 100)).id;
 const cookieOf = (id) => ({ cookie: lib.makeCookie(id).split(';')[0] });
@@ -213,11 +212,12 @@ test('чужой без токена: /start даёт подсказку, ост
   assert.equal(texts(calls).length, 1);
 });
 
-test('Денис без токена: прежнее приветствие и подключение', async (t) => {
+test('привязанный без токена: /start приветствует по нику, а не просит привязку', async (t) => {
   const calls = mockTg(t);
-  await put('bot/state.json', JSON.stringify({ users: { denis: { chat: 101, id: 1, username: 'anelmeria' } }, settings: {}, cycles: {}, custom: [], recurring: [] }), { access: 'private', addRandomSuffix: false, contentType: 'application/json' });
-  await send({ id: 1, username: 'anelmeria' }, '/start');
-  assert.match(texts(calls)[0], /^Привет, Денис!/);
+  await linkUser(acc, 'ivan', U1);
+  await send(U1, '/start');
+  assert.equal(texts(calls).length, 1);
+  assert.match(texts(calls)[0], /^Привет, ivan! Telegram привязан/);
 });
 
 test('не более 5 новых ссылок за 10 минут на аккаунт', async (t) => {
@@ -249,4 +249,73 @@ test('токен не попадает в журнал ошибок бота', a
   await send(U1, '/start ' + tok);
   assert.ok(calls.length >= 1);
   assert.ok(!logs.join('\n').includes(tok));
+});
+
+/* ---------- этап 3b: множество tgs (обход для cron) ---------- */
+async function bindNow(id, from) {
+  const { token } = await acc.createLinkToken(id);
+  return acc.bindTelegram(token, from, from.id);
+}
+
+test('tgs: привязка добавляет аккаунт, отвязка убирает (идемпотентно), linkedIds отдаёт отсортированный список', async () => {
+  const a = await mkAcc('anna'), b = await mkAcc('boris');
+  assert.deepEqual(await acc.linkedIds(), []);
+  await bindNow(a, U1); await bindNow(b, U2);
+  assert.deepEqual(await acc.linkedIds(), [a, b].sort());
+  assert.deepEqual(__raw('tgs'), [a, b].sort());
+  await acc.unlinkTelegram(a);
+  await acc.unlinkTelegram(a);
+  assert.deepEqual(await acc.linkedIds(), [b]);
+  await acc.unlinkTelegram(b);
+  assert.deepEqual(await acc.linkedIds(), []);
+});
+
+test('tgs: отказ «busy» и неверный токен аккаунт в множество не добавляют; повторная привязка не дублирует', async () => {
+  const a = await mkAcc('anna'), b = await mkAcc('boris');
+  await bindNow(a, U1);
+  assert.equal((await bindNow(b, U1)).error, 'busy');
+  assert.equal((await acc.bindTelegram('x'.repeat(22), U2, U2.id)).error, 'bad');
+  assert.deepEqual(await acc.linkedIds(), [a]);
+  await bindNow(a, U1);
+  await bindNow(a, U2); // тот же аккаунт на другой Telegram
+  assert.deepEqual(await acc.linkedIds(), [a]);
+});
+
+test('tgs: мусор в множестве отбрасывается, запись tg:<id> проверяет вызывающий (getLink)', async () => {
+  const a = await mkAcc('anna');
+  await acc.bindTelegram((await acc.createLinkToken(a)).token, U1, U1.id);
+  const { cmd, key } = await import('../api/_db.js');
+  await cmd('SADD', key('tgs'), 'не-id', 'ABC');
+  assert.deepEqual(await acc.linkedIds(), [a]);
+  await cmd('DEL', key('tg', a)); // запись пропала, id в множестве остался
+  assert.deepEqual(await acc.linkedIds(), [a]);
+  assert.equal(await acc.getLink(a), null);
+});
+
+test('accountOfTelegram: верим только полной паре tgu:<tid> → id и tg:<id> с тем же tid', async () => {
+  const a = await mkAcc('anna');
+  await bindNow(a, U1);
+  assert.equal(await acc.accountOfTelegram(U1.id), a);
+  assert.equal(await acc.accountOfTelegram(String(U1.id)), a);
+  assert.equal(await acc.accountOfTelegram(U2.id), null, 'нет такой привязки');
+  for (const bad of ['', 'abc', '1 or 1', null, undefined, '9'.repeat(30)]) assert.equal(await acc.accountOfTelegram(bad), null, String(bad));
+  const { cmd, key } = await import('../api/_db.js');
+  // tgu указывает на аккаунт, а в tg:<id> уже другой Telegram (прерванная перепривязка): доступа нет
+  await cmd('SET', key('tg', a), JSON.stringify({ tid: String(U2.id), chat: '1', un: '', at: 1 }));
+  assert.equal(await acc.accountOfTelegram(U1.id), null);
+  // tg:<id> пропала: доступа нет
+  await cmd('DEL', key('tg', a));
+  assert.equal(await acc.accountOfTelegram(U1.id), null);
+  // tgu с мусором вместо id
+  await cmd('SET', key('tgu', '777'), 'не-id');
+  assert.equal(await acc.accountOfTelegram(777), null);
+});
+
+test('отвязка: accountOfTelegram сразу даёт null, повторная привязка возвращает доступ', async () => {
+  const a = await mkAcc('anna');
+  await bindNow(a, U1);
+  await acc.unlinkTelegram(a);
+  assert.equal(await acc.accountOfTelegram(U1.id), null);
+  await bindNow(a, U1);
+  assert.equal(await acc.accountOfTelegram(U1.id), a);
 });
