@@ -205,7 +205,11 @@ test('сухой прогон cron показывает состояние ко�
   await mkUser('anna');
   const putsBefore = __puts();
   const d0 = await run({ dry: '1' });
-  assert.deepEqual(d0.body.backup, { state: 'on', copies: 0, last: null, running: false, due: true });
+  assert.deepEqual(d0.body.backup, { state: 'on', blob: false, copies: 0, last: null, running: false, due: true });
+  process.env.BLOB_READ_WRITE_TOKEN = 'x';
+  assert.equal((await run({ dry: '1' })).body.backup.blob, true, 'видно, задан ли токен Blob (само значение не показывается)');
+  assert.ok(!JSON.stringify((await run({ dry: '1' })).body).includes('"x"'));
+  delete process.env.BLOB_READ_WRITE_TOKEN;
   assert.equal(__puts(), putsBefore);
   await run();
   clock.advance(3600 * 1000);
@@ -247,4 +251,26 @@ test('backupIfDue: незаконченная копия продолжаетс�
   const next = await B.backupIfDue({ now, count: 5 });
   assert.notEqual(next.state, 'skip');
   assert.equal(next.snap, part.snap, 'продолжена начатая копия');
+});
+
+test('BACKUP_KEY задан, но негоден (опечатка, не тот формат, слишком простой): это ошибка config и 502, а не тихое off; рассылка работает', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const calls = mockTg(t);
+  const a = await mkUser('anna'); await addCustom(a, 'Привет');
+  for (const bad of ['abc', KEY1.slice(2), KEY1 + 'ab', '"' + KEY1 + '"', 'z'.repeat(64), '0'.repeat(64)]) {
+    process.env.BACKUP_KEY = bad;
+    const dry = await run({ dry: '1' });
+    assert.deepEqual([dry.statusCode, dry.body.backup.state, dry.body.backup.kind], [200, 'error', 'config'], bad.slice(0, 6));
+    const man = await run({ backup: '1' });
+    assert.deepEqual([man.statusCode, man.body.backup.state, man.body.backup.kind], [502, 'error', 'config'], bad.slice(0, 6));
+    assert.ok(!JSON.stringify(man.body).includes(bad.slice(0, 20)) || bad.length < 20);
+  }
+  process.env.BACKUP_KEY = 'abc';
+  const r = await run();
+  assert.equal(r.statusCode, 502);
+  assert.equal(r.body.sent, 1, 'напоминание ушло');
+  assert.equal(sent(calls).length, 1);
+  assert.deepEqual(r.body.backup, { state: 'error', kind: 'config' });
+  assert.equal(__puts(), 0);
+  for (const empty of ['', '   ']) { process.env.BACKUP_KEY = empty; assert.deepEqual((await run({ dry: '1' })).body.backup, { state: 'off' }, 'пустое значение = не задан'); }
 });

@@ -5,7 +5,8 @@
 // Копия: после рассылки, на оставшееся время (всего 30 с), в оба слота: backupIfDue делает новую копию, только если последней полной больше 20 часов,
 // и продолжает незаконченную. Поэтому сбой или нехватка времени в дневном слоте доделываются вечерним. Копия не мешает рассылке: её сбой не
 // отменяет отправленное, а только даёт код 502. Ручной запуск только копии: /api/cron?backup=1 (без рассылки; &dry=1 — только состояние).
-// Нет BACKUP_KEY — копия выключена (state:'off'), рассылка работает как раньше.
+// Нет BACKUP_KEY — копия выключена (state:'off'), рассылка работает как раньше. Ключ задан, но негодный (не 64 hex-символа, слишком простой) —
+// это ошибка настройки (state:'error', kind:'config', код 502), а не тихое отключение: опечатка не должна оставлять базу без копий.
 import { authed, sendCustom } from './_bot.js';
 import { mskNow, readRem, mutateRem, planRem, unclaimRem } from './_rem.js';
 import { linkedIds, getLink } from './_acc.js';
@@ -35,9 +36,14 @@ function makePacer(gap) {
 
 const short = (id) => String(id).slice(0, 8); // в журнал только начало id
 
+// 'off' — переменная не задана или пуста; 'bad' — задана, но backupKey() её не примет; 'ok'.
+const keyState = () => (!String(process.env.BACKUP_KEY || '').trim() ? 'off' : backupReady() ? 'ok' : 'bad');
+
 // Копия на оставшееся время. force — ручной запуск (делает копию, не глядя на давность последней). → объект для ответа: только числа и слова.
 async function backupStep(t0, force) {
-  if (!backupReady()) return { state: 'off' };
+  const ks = keyState();
+  if (ks === 'off') return { state: 'off' };
+  if (ks === 'bad') { console.error('backup failed: BACKUP_KEY задан, но негоден'); return { state: 'error', kind: 'config' }; }
   const budgetMs = Math.min(BACKUP_BUDGET_MS, TOTAL_MS - (Date.now() - t0) - BACKUP_TAIL_MS);
   if (budgetMs < BACKUP_MIN_MS) return { state: 'skipped', reason: 'time' };
   const t1 = Date.now();
@@ -55,10 +61,12 @@ async function backupStep(t0, force) {
 
 // Состояние копий для сухого прогона: без расшифровки и без записи.
 async function backupInfo() {
-  if (!backupReady()) return { state: 'off' };
+  const ks = keyState();
+  if (ks === 'off') return { state: 'off' };
+  if (ks === 'bad') return { state: 'error', kind: 'config' };
   try {
     const st = await backupStatus();
-    return { state: 'on', copies: st.copies, last: st.lastAt ? new Date(st.lastAt).toISOString() : null, running: st.running, due: !st.running && (!st.lastAt || Date.now() - st.lastAt >= DUE_GAP_MS) };
+    return { state: 'on', blob: !!process.env.BLOB_READ_WRITE_TOKEN, copies: st.copies, last: st.lastAt ? new Date(st.lastAt).toISOString() : null, running: st.running, due: !st.running && (!st.lastAt || Date.now() - st.lastAt >= DUE_GAP_MS) };
   } catch (e) {
     console.error('backup status failed', e && (e.kind || e.name), e && e.message);
     return { state: 'error', kind: (e && (e.kind || e.name)) || 'failed' };
