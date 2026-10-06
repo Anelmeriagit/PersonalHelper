@@ -10,7 +10,7 @@
 //
 // Что удаляется (все ключи с префиксом DB_PREFIX, только если после «вид:» стоит id аккаунта из 32 hex):
 //   rem:<id>  — личные напоминания;  bot:<id> — состояние бота (псевдонимы, ожидающие запросы);  doc:<id> — документ кэшбэков (месяцы и свои категории);
-//   Blob bot/state.json — общее состояние бота старой схемы (нужны BLOB_READ_WRITE_TOKEN и пакет @vercel/blob: npm i --no-save @vercel/blob).
+//   Blob bot/state.json — общее состояние бота старой схемы (нужны BLOB_READ_WRITE_TOKEN и пакет @vercel/blob: npm i).
 // Не трогаются: аккаунты (acc, nick, users), агент (agent), WiFi (wifi), привязка Telegram (tg, tgu, tgp, tgt), справочник банков (он в коде, не в базе).
 // Переменные окружения: KV_REST_API_URL, KV_REST_API_TOKEN (запасные UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN), DB_PREFIX, BLOB_READ_WRITE_TOKEN.
 // В вывод идут только числа и начало id (8 символов): ни адресов, ни токенов, ни содержимого записей.
@@ -82,10 +82,10 @@ export async function backfillPlan() {
   return { add, have, skip };
 }
 
-// Blob старой схемы: общий bot/state.json. Модуль @vercel/blob в проект не входит: подключается, только если поставлен вручную (--no-save).
+// Blob старой схемы: общий bot/state.json. Модуль @vercel/blob подключается при первом обращении: если пакет не установлен (npm i), шаг Blob пропускается.
 async function blobPlan(io, log) {
   const mod = await io.blob();
-  if (!mod) { log('  Blob: пропущено, пакет @vercel/blob не установлен (npm i --no-save @vercel/blob)'); return { state: 'nopkg', mod: null, targets: [] }; }
+  if (!mod) { log('  Blob: пропущено, пакет @vercel/blob не установлен (выполните npm i)'); return { state: 'nopkg', mod: null, targets: [] }; }
   if (!io.blobToken()) { log('  Blob: пропущено, не задана переменная BLOB_READ_WRITE_TOKEN'); return { state: 'notoken', mod, targets: [] }; }
   const r = await mod.list({ prefix: '' });
   const all = (r && r.blobs) || [];

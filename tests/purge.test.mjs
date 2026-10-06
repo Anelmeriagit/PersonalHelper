@@ -170,7 +170,7 @@ test('Blob: нет пакета или токена — шаг пропущен,
   const noPkg = mkIo({ blob: async () => null });
   const r1 = await P.run({ apply: true, yes: true, only: ['rem', 'blob'] }, noPkg.io);
   assert.deepEqual(r1.skipped, ['Blob']);
-  assert.match(noPkg.text(), /npm i --no-save @vercel\/blob/);
+  assert.match(noPkg.text(), /выполните npm i/);
   assert.equal(__raw('rem:' + A), undefined);
   const noTok = mkIo({ blobToken: () => '' });
   const r2 = await P.run({ apply: true, yes: true, only: ['blob'] }, noTok.io);

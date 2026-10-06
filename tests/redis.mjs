@@ -2,7 +2,7 @@
 // Подключается через tests/register.mjs: подменяет globalThis.fetch только для адреса KV_REST_API_URL,
 // остальные запросы идут в прежний fetch. Код в api/ менять не нужно.
 // Поддержано то, что использует код проекта: GET, SET (NX, EX, PX), DEL, EXISTS, INCR, DECR, EXPIRE, PEXPIRE, PTTL,
-// HGET, HMGET, HSET, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и три скрипта EVAL (по первой строке «-- cas», «-- hit» и «-- take», см. api/_db.js).
+// HGET, HGETALL, HMGET, HSET, TYPE, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и три скрипта EVAL (по первой строке «-- cas», «-- hit» и «-- take», см. api/_db.js).
 // Сами Lua-скрипты здесь НЕ исполняются: заглушка повторяет их смысл на JS. Реальный Redis проверяется отдельно (notes/CHECKLIST.md).
 process.env.KV_REST_API_URL = process.env.KV_REST_API_URL || 'https://redis.test';
 process.env.KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN || 'test-redis-token';
@@ -14,10 +14,15 @@ let failMode = null;     // null | 'network' | 'http' | 'write' (сбой тол
 let failMatch = null;    // если задано: сбой только у команд, чей ключ содержит эту строку (например 'doc:')
 let calls = 0;
 
-export function __reset() { store.clear(); failMode = null; failMatch = null; calls = 0; }
+let afterHook = null; // { name, fn }: один раз после команды с этим именем выполнить fn (ключ пропал между SCAN и чтением)
+export function __reset() { store.clear(); failMode = null; failMatch = null; calls = 0; afterHook = null; }
+export function __after(name, fn) { afterHook = { name: String(name).toUpperCase(), fn }; }
+export function __drop(k) { store.delete(k); }
 export function __fail(mode, match) { failMode = mode || null; failMatch = match || null; }
 export function __keys() { return [...store.keys()].sort(); }
 export function __calls() { return calls; }
+// Ключ другого типа Redis (list, zset), которого код проекта не использует: для проверки копии, которая такие типы пропускает.
+export function __putOther(k, t) { store.set(k, { t, v: [], exp: null }); }
 export function __raw(k) { const e = store.get(k); return e ? (e.t === 'h' ? Object.fromEntries(e.v) : e.t === 'set' ? [...e.v].sort() : e.v) : undefined; }
 
 const rerr = (msg) => { const e = new Error(msg); e.redis = true; return e; };
@@ -121,6 +126,8 @@ function exec(args) {
     }
     case 'PTTL': { const e = live(a[0]); return !e ? -2 : e.exp === null ? -1 : e.exp - Date.now(); }
     case 'HGET': { const e = hash(a[0], false); return e && e.v.has(a[1]) ? e.v.get(a[1]) : null; }
+    case 'HGETALL': { const e = hash(a[0], false); return e ? [...e.v].flat() : []; } // как Upstash REST: плоский массив [поле, значение, ...]
+    case 'TYPE': { const e = live(a[0]); return !e ? 'none' : e.t === 's' ? 'string' : e.t === 'h' ? 'hash' : e.t; }
     case 'HMGET': { const e = hash(a[0], false); return a.slice(1).map((f) => (e && e.v.has(f) ? e.v.get(f) : null)); }
     case 'HSET': {
       const h = hash(a[0], true);
@@ -182,7 +189,7 @@ globalThis.fetch = async function fetchWithRedis(url, opts = {}) {
   if (auth !== 'Bearer ' + GOOD_TOKEN) return json({ error: 'WRONGPASS invalid or missing auth token' }, 401);
   const path = u.slice(base.length).replace(/\/+$/, '');
   const body = JSON.parse(opts.body);
-  const run = (c) => { try { return { result: exec(c) }; } catch (e) { if (e.redis) return { error: e.message }; throw e; } };
+  const run = (c) => { try { const res = { result: exec(c) }; if (afterHook && afterHook.name === String(c[0]).toUpperCase()) { const f = afterHook.fn; afterHook = null; f(); } return res; } catch (e) { if (e.redis) return { error: e.message }; throw e; } };
   if (path === '') { const r = run(body); return r.error ? json(r, 400) : json(r); }
   if (path === '/pipeline') return json(body.map(run));
   return json({ error: 'ERR неизвестный путь заглушки: ' + path }, 404);
