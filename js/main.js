@@ -2,22 +2,24 @@
    Каждый раздел живёт в своём модуле: cashback/, reminders/, wifi.js, agent/. */
 import {$} from './util.js';
 import {S,api,onAuthFail} from './api.js';
-import {dlgConfirm} from './dialogs.js';
+import {dlgConfirm,dlgAlert} from './dialogs.js';
 import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onHidden as cbHidden,discardAll,loggedOut,startSession,syncEditPressed,finishBoot} from './cashback/index.js';
 import {initReminders,remLoad} from './reminders/index.js';
 import {initWifi,wifiLoad,wifiClear} from './wifi.js';
 import {initAgent,agClear,agLeave,agVisible,agOnPage} from './agent/index.js';
 import {initTheme} from './theme-switch.js';
 import {initTg,tgLoad,tgClear} from './tglink.js';
+import {initWelcome} from './welcome.js';
+import {initAccount,accShow,accSetName} from './account.js';
 
-var editBtn=$('editBtn'),outBtn=$('outBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
+var editBtn=$('editBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
 
 /* ---------- страницы ---------- */
 var PAGES={main:{stage:$('stage'),nav:$('navMain')},rem:{stage:$('remStage'),nav:$('navRem')},wifi:{stage:$('wifiStage'),nav:$('navWifi')},agent:{stage:$('agentStage'),nav:$('navAgent')}};
 var HASH={'#reminders':'rem','#wifi':'wifi','#agent':'agent'};
 function pageFromHash(){return HASH[location.hash]||'main'}
 S.page=pageFromHash();
-function ui(on){mainNav.hidden=!on;editBtn.hidden=!on||S.page!=='main';outBtn.hidden=!on;if(!on)setStatus('')}
+function ui(on){mainNav.hidden=!on;editBtn.hidden=!on||S.page!=='main';accShow(on);if(!on)setStatus('')}
 function applyPage(){var prev=S.page;S.page=pageFromHash();
   Object.keys(PAGES).forEach(function(k){var p=PAGES[k],on=k===S.page;
     p.stage.hidden=!S.loggedIn||!on;p.nav.classList.toggle('on',on);
@@ -58,12 +60,12 @@ function authForm(mode,keep,nick){var reg=mode==='reg';
     api('POST','/api/auth',{action:reg?'register':'login',user:u,pass:pw}).then(function(r){return r.json().then(function(j){
       if(r.ok)boot();else{le.textContent=j.error||'Ошибка входа';btn.disabled=false}})}).catch(function(){le.textContent='Нет связи с сервером';btn.disabled=false})});
   $('u').focus()}
-outBtn.addEventListener('click',function(){(hasUnsaved()?dlgConfirm('Есть несохранённые изменения. Выйти без сохранения?'):Promise.resolve(true)).then(function(ok){if(!ok)return;discardAll();api('POST','/api/auth',{action:'logout'}).then(showLogin,showLogin)})});
+function logout(){(hasUnsaved()?dlgConfirm('Есть несохранённые изменения. Выйти без сохранения?'):Promise.resolve(true)).then(function(ok){if(!ok)return;discardAll();api('POST','/api/auth',{action:'logout'}).then(showLogin,showLogin)})}
 function boot(){api('GET','/api/data').then(function(r){
   if(r.status===401){showLogin();return}
   if(!r.ok)throw 0;
   return r.json().then(function(j){
-    var kept=startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui(true);
+    accSetName(j&&j.name);var kept=startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui(true);
     if(kept)syncEditPressed();
     applyPage();finishBoot(kept)})
 }).catch(function(){loginRoot.innerHTML='<p class="empty">Не удалось загрузить данные. Обновите страницу.</p>'})}
@@ -82,5 +84,6 @@ window.addEventListener('hashchange',applyPage);
 document.addEventListener('error',function(e){var t=e.target,b=t&&t.tagName==='IMG'&&t.parentNode;if(b&&(b.classList.contains('badge')||b.classList.contains('mb'))){b.classList.add('nologo');t.remove()}},true);
 
 onAuthFail(showLogin);
-initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);
+initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
+initAccount({logout:logout,tg:function(){tgLoad();if(S.page==='rem')remLoad()},gone:function(){discardAll();showLogin();dlgAlert('Аккаунт удалён.')}});
 boot();
