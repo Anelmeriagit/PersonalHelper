@@ -19,6 +19,7 @@ export const qr = { size: 21, rows: qrRows };
 export const routes = {
   'GET /api/data': () => ({
     user: 'test',
+    name: '', // отображаемое имя; пусто: в шапке «Helper User»
     data: {
       months: {
         [mskMonth()]: [
@@ -50,7 +51,13 @@ export const routes = {
   'GET /api/wifi': () => ({ configured: true, ssid: 'TestNet', password: 'test-password', security: 'WPA', hidden: false, qr: { size: 21, rows: qrRows } }),
   'PUT /api/wifi': (body) => ({ configured: true, ssid: body && body.ssid, password: (body && body.password) || '', security: (body && body.security) || 'WPA', hidden: !!(body && body.hidden), qr: { size: 21, rows: qrRows } }),
   'DELETE /api/wifi': () => ({ configured: false }),
-  'POST /api/auth': () => ({ ok: true }), // вход, регистрация и выход (action в теле)
+  // вход, регистрация, выход; me / rename / delete — меню и окно «Настройки аккаунта» (форма ответов в notes/account.md)
+  'POST /api/auth': (body) => {
+    const a = body && body.action;
+    if (a === 'me') return { id: '0123456789abcdef0123456789abcdef', name: '', email: '', tg: { linked: false } };
+    if (a === 'rename') return { name: String(body.name || '') };
+    return { ok: true };
+  },
   'GET /api/tglink': () => ({ linked: false }),
   'POST /api/tglink': () => ({ url: 'https://t.me/TestBot?start=AAAAAAAAAAAAAAAAAAAAAA', ttl: 600 }),
   'DELETE /api/tglink': () => ({ linked: false }),

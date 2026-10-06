@@ -282,3 +282,42 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .tgb a.btn{display:inline-flex;align-items:center;text-decoration:none}
 .tgb .lnk{font-size:.9rem;padding:.6rem .5rem}
 .tgb .rmsg{margin-top:.5rem}
+/* окно приветствия (js/welcome.js) */
+.wlc{overflow:auto}
+.wlc h2{margin:0 0 .6rem;font-size:1.2rem;line-height:1.3;text-wrap:balance}
+.wlc p{margin:0 0 .6rem;font-size:.95rem;line-height:1.45}
+.wlc p:last-of-type{margin-bottom:0}
+.wlc .acts{margin-top:1rem}
+
+/* этап 5: шапка аккаунта (вход через Google, меню пользователя), окно «Настройки аккаунта» */
+.gbtn{display:inline-flex;align-items:center;gap:.55rem;min-height:44px;padding:0 .9rem 0 .7rem;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);font:inherit;font-size:.9rem;font-weight:600;text-decoration:none;white-space:nowrap}
+.gbtn:hover{border-color:var(--accent);color:var(--accent)}
+.gbtn svg{width:18px;height:18px;flex:none}
+.umw{position:relative;z-index:30}
+.ubtn{display:inline-flex;align-items:center;gap:.4rem;min-height:44px;max-width:100%;padding:0 .6rem 0 .8rem;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--text);font:inherit;font-weight:600;cursor:pointer}
+.ubtn:hover,.ubtn[aria-expanded="true"]{border-color:var(--accent);color:var(--accent)}
+.ubtn .un{max-width:9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ubtn svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.ubtn[aria-expanded="true"] svg{transform:rotate(180deg)}
+.umenu{position:absolute;right:0;top:calc(100% + 6px);width:max-content;min-width:13rem;max-width:calc(100vw - 2rem);padding:.35rem;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.umenu button{display:block;width:100%;min-height:44px;padding:.5rem .75rem;border:0;border-radius:10px;background:none;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.umenu button:hover,.umenu button:focus-visible{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+#acctDlg{width:min(92vw,480px);max-height:90vh;overflow:auto}
+.ah{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
+.ah h2{margin:0;font-size:1.15rem}
+.ar{padding:.75rem 0;border-bottom:1px solid var(--line)}
+.al{display:block;color:var(--muted);font-size:.85rem;margin-bottom:.25rem}
+.av{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+.vn{min-width:0;overflow-wrap:anywhere;font-weight:600}
+.mut{color:var(--muted);font-weight:400}
+.vid{font:.85rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere;user-select:all}
+.av .btn{flex:none;min-height:44px}
+.ar input{margin-bottom:.4rem}
+.ar .acts{justify-content:flex-end}
+.ahint{margin:0 0 .5rem;color:var(--muted);font-size:.85rem}
+.dz{margin-top:1.25rem;padding:1rem;border:1px solid var(--err);border-radius:14px;background:color-mix(in srgb,var(--err) 10%,var(--surface))}
+.dz .done{width:100%;margin:0;padding:.75rem}
+.dz p{margin:.6rem 0 0;font-size:.85rem;color:var(--muted)}
+#delDlg label{display:block;font-weight:600;font-size:.9rem;margin:0 0 .3rem}
+#delDlg h2{margin:0 0 .75rem;font-size:1.15rem}
+.vn .sub{display:block;font-size:.85rem}
