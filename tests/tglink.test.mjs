@@ -4,7 +4,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __reset, __fail, __keys, __raw, __calls } from './redis.mjs';
-import { mockReq, mockRes, setEnv, fakeClock, linkUser } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, fakeClock, linkUser, mkAccount } from './helpers.mjs';
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -16,7 +16,7 @@ const hook = (await import('../api/telegram.js')).default;
 
 beforeEach(() => { __reset(); setEnv(); process.env.TELEGRAM_BOT_TOKEN = 'test-token'; });
 
-const mkAcc = async (nick) => (await acc.createAccount(nick, 'pass-12345', 100)).id;
+const mkAcc = (name) => mkAccount(acc, name);
 const cookieOf = (id) => ({ cookie: lib.makeCookie(id).split(';')[0] });
 async function call(h, method, id, body) {
   const res = mockRes();
@@ -90,7 +90,7 @@ test('полный путь: ссылка → /start → привязано; п�
   const tok = tokenOf((await call(link, 'POST', id)).body.url);
   const res = await send(U1, '/start ' + tok);
   assert.equal(res.statusCode, 200);
-  assert.equal(texts(calls).pop(), 'Готово: Telegram привязан к аккаунту «ivan».');
+  assert.equal(texts(calls).pop(), 'Готово: Telegram привязан к вашему аккаунту.');
   const g = (await call(link, 'GET', id)).body;
   assert.deepEqual(g, { linked: true, username: 'Ivan_P' });
   assert.equal(__raw('tgu:5551'), id);
@@ -223,12 +223,12 @@ test('чужой без токена: /start даёт подсказку, ост
   assert.equal(texts(calls).length, 1);
 });
 
-test('привязанный без токена: /start приветствует по нику, а не просит привязку', async (t) => {
+test('привязанный без токена: /start приветствует привязанного, а не просит привязку', async (t) => {
   const calls = mockTg(t);
   await linkUser(acc, 'ivan', U1);
   await send(U1, '/start');
   assert.equal(texts(calls).length, 1);
-  assert.match(texts(calls)[0], /^Привет, ivan! Telegram привязан/);
+  assert.match(texts(calls)[0], /^Привет! Telegram привязан к вашему аккаунту/);
 });
 
 test('не более 5 новых ссылок за 10 минут на аккаунт', async (t) => {

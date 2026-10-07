@@ -142,11 +142,11 @@ test('/cashback отвечает один раз по документу сво�
   assert.notEqual(out[0], out[1]);
 });
 
-test('/start у привязанного: приветствие по нику; у не привязанного: подсказка', async (t) => {
+test('/start у привязанного: приветствие; у не привязанного: подсказка', async (t) => {
   const calls = mockTg(t);
   await send(msg(U1, '/start'));
   assert.equal(calls.length, 1);
-  assert.match(calls[0].body.text, /^Привет, ivan! Telegram привязан/);
+  assert.match(calls[0].body.text, /^Привет! Telegram привязан/);
   await send(msg(STRANGER, '/start'));
   assert.match(texts(calls)[1], /Привязать Telegram/);
 });

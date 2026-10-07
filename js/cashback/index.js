@@ -3,7 +3,8 @@ import {$,esc,ls,lset,nrm} from '../util.js';
 import {clock} from '../time.js';
 import {api,S,authFail,fresh,stamp} from '../api.js';
 import {dlgAlert,dlgConfirm,dlgPrompt} from '../dialogs.js';
-import {C,empty,blank,list,setPart,getPart,peek,norm,allCats,eachRow,prune,partName,changedParts,hasUnsaved} from './state.js';
+import {guestGetCb,guestSetCb} from '../local.js';
+import {C,empty,blank,list,setPart,getPart,peek,norm,allCats,eachRow,prune,pruneOf,partName,changedParts,hasUnsaved} from './state.js';
 import {render,syncView} from './view.js';
 
 export {hasUnsaved};
@@ -76,15 +77,17 @@ export function onVisible(){tick();if(S.page==='main')refresh()}
 export function onPage(){refresh()}
 export function onHidden(){leaving()}
 export function discardAll(){C.dirty={};C.conflict=null;C.edit=false}
-/* сессия закончилась: несохранённое оставляем в памяти вкладки (keep), остальное сбрасываем */
-export function loggedOut(keep){C.flight=false;
-  if(keep){C.kept=true}else{C.kept=false;C.data=empty();C.dirty={};C.conflict=null;C.rev={};C.edit=false;editBtn.setAttribute('aria-pressed','false');showWarn()}}
-/* вход: возвращает true, если в памяти остались несохранённые правки (данные с сервера тогда не затираем) */
-export function startSession(j){var kept=C.kept;if(kept)C.kept=false;else{C.data=norm(j.data);C.rev=j.rev||{};stamp('cb')}C.ck=clock();return kept}
-export function syncEditPressed(){editBtn.setAttribute('aria-pressed',C.edit)}
-export function finishBoot(kept){
-  if(kept){render();if(C.edit)st.textContent='●';else if(Object.keys(C.dirty).length)flush();return}
-  stage.classList.add('first');render();setTimeout(function(){stage.classList.remove('first')},600)}
+/* вход в раздел: данные пришли с сервера (аккаунт) или из браузера (гость), j — ответ GET /api/data */
+export function startSession(j){C.data=norm(j.data);C.rev=j.rev||{};stamp('cb');C.ck=clock()}
+export function finishBoot(){stage.classList.add('first');render();setTimeout(function(){stage.classList.remove('first')},600)}
+/* копия данных из памяти вместе с несохранёнными правками (пустые строки отброшены, как при сохранении правки): нужна, когда сессия закончилась и сервер уже недоступен */
+export function cbSnapshot(){var d=JSON.parse(JSON.stringify(C.data));pruneOf(d);return d}
+/* выход из аккаунта или конец сессии: данные аккаунта (snap, если есть) заменяют гостевые, раздел перечитывает их из браузера; режим правки закрывается */
+export function toGuest(snap){clearTimeout(timer);C.flight=false;C.edit=false;editBtn.setAttribute('aria-pressed','false');
+  if(snap)guestSetCb(snap);
+  var g=guestGetCb();C.data=norm(g.data);C.rev=g.rev;C.dirty={};C.dirtyBefore={};C.conflict=null;C.snap='';C.ck=clock();stamp('cb');
+  st.textContent='';showWarn();render()}
+export var cbNote=note;
 
 export function initCashback(){
   warn.addEventListener('click',function(e){var w=e.target.dataset.w;if(!w||!C.conflict)return;

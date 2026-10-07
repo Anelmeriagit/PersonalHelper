@@ -14,7 +14,7 @@ export default async function handler(req, res) {
       const acc = await getAcc(user);
       if (!acc) return res.status(401).json({ error: 'auth' });
       const { doc } = await loadDoc(user);
-      return res.status(200).json({ user: acc.nick || '', name: acc.name || '', data: pub(doc), rev: doc.rev });
+      return res.status(200).json({ name: acc.name || '', data: pub(doc), rev: doc.rev });
     }
     if (req.method === 'PUT') {
       if (!String(req.headers['content-type'] || '').includes('application/json')) return res.status(415).end();

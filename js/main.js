@@ -1,9 +1,9 @@
-/* Точка входа: каркас страницы (вход и выход, переключение разделов, события вкладки).
+/* Точка входа: каркас страницы (гость и аккаунт, выход, переключение разделов, события вкладки).
    Каждый раздел живёт в своём модуле: cashback/, reminders/, wifi.js, agent/. */
 import {$} from './util.js';
-import {S,api,onAuthFail,fresh} from './api.js';
+import {S,api,net,onAuthFail,fresh} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
-import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,loggedOut,startSession,syncEditPressed,finishBoot} from './cashback/index.js';
+import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote} from './cashback/index.js';
 import {initReminders,remLoad} from './reminders/index.js';
 import {initWifi,wifiLoad,wifiClear} from './wifi.js';
 import {initAgent,agClear,agLeave,agVisible,agOnPage} from './agent/index.js';
@@ -19,66 +19,54 @@ var PAGES={main:{stage:$('stage'),nav:$('navMain')},rem:{stage:$('remStage'),nav
 var HASH={'#reminders':'rem','#wifi':'wifi','#agent':'agent'};
 function pageFromHash(){return HASH[location.hash]||'main'}
 S.page=pageFromHash();
-function ui(on){mainNav.hidden=!on;editBtn.hidden=!on||S.page!=='main';accShow(on);if(!on)setStatus('')}
+function ui(){mainNav.hidden=false;editBtn.hidden=S.page!=='main';accShow(S.acct)}
 function applyPage(){var prev=S.page;S.page=pageFromHash();
   Object.keys(PAGES).forEach(function(k){var p=PAGES[k],on=k===S.page;
     p.stage.hidden=!S.loggedIn||!on;p.nav.classList.toggle('on',on);
     if(on)p.nav.setAttribute('aria-current','page');else p.nav.removeAttribute('aria-current')});
+  $('remAcct').hidden=!S.acct;$('remGuest').hidden=S.acct;$('wifiGuest').hidden=S.acct;$('agentGuest').hidden=S.acct;
   document.body.classList.toggle('pw',S.page==='wifi');
   editBtn.hidden=!S.loggedIn||S.page!=='main';
   if(prev!==S.page)window.scrollTo(0,0);
   if(S.page!=='wifi')wifiClear();
   if(S.page!=='rem')tgClear();
   /* переход на раздел: данные грузятся всегда (REFRESH_MS ограничивает только возврат на вкладку); привязка Telegram приходит в ответе remLoad */
-  if(S.loggedIn&&S.page==='rem')remLoad();
-  if(S.loggedIn&&S.page==='wifi')wifiLoad();
+  if(S.acct&&S.page==='rem')remLoad();
+  if(S.acct&&S.page==='wifi')wifiLoad();
   if(S.loggedIn&&S.page==='main'&&prev!=='main')cbPage();
   agOnPage()}
 
-/* ---------- вход, регистрация и выход ---------- */
-var NICK_RE=/^[a-z0-9][a-z0-9_.-]{2,23}$/;
-function showLogin(){var keep=hasUnsaved();stopSave();ui(false);
-  Object.keys(PAGES).forEach(function(k){PAGES[k].stage.hidden=true});
-  wifiClear();agClear();tgClear();S.loggedIn=false;S.at={};loggedOut(keep);
-  authForm('login',keep,'')}
-/* mode: 'login' | 'reg'. Переключатель внизу формы меняет режим и сохраняет введённый никнейм. */
-function authForm(mode,keep,nick){var reg=mode==='reg';
-  loginRoot.innerHTML='<form class="login" id="lf" novalidate><h2>'+(reg?'Регистрация':'Вход')+'</h2>'+(keep?'<p class="err" role="status">Сессия истекла. Войдите снова: несохранённые изменения остались в этой вкладке.</p>':'')+
-    '<div class="f"><label for="u">Никнейм</label><input id="u" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24" required>'+(reg?'<p class="hint">3–24 символа: латинские буквы, цифры, _ . -</p>':'')+'</div>'+
-    '<div class="f"><label for="pw">Пароль</label><input id="pw" type="password" autocomplete="'+(reg?'new-password':'current-password')+'" maxlength="200" required>'+(reg?'<p class="hint">Не короче 8 символов</p>':'')+'</div>'+
-    (reg?'<div class="f"><label for="pw2">Повторите пароль</label><input id="pw2" type="password" autocomplete="new-password" maxlength="200" required></div>':'')+
-    '<p class="err" id="le" role="alert"></p><button class="done" type="submit">'+(reg?'Создать аккаунт':'Войти')+'</button>'+
-    '<p class="alt"><button class="lnk" id="am" type="button">'+(reg?'Уже есть аккаунт? Войти':'Нет аккаунта? Регистрация')+'</button></p></form>';
-  $('u').value=nick||'';
-  $('am').addEventListener('click',function(){authForm(reg?'login':'reg',false,$('u').value.trim())});
-  $('lf').addEventListener('submit',function(ev){ev.preventDefault();
-    var u=$('u').value.trim(),pw=$('pw').value,le=$('le'),btn=$('lf').querySelector('.done');
-    if(!u||!pw){le.textContent='Введите никнейм и пароль';return}
-    if(reg){
-      if(!NICK_RE.test(u.toLowerCase())){le.textContent='Никнейм: 3–24 символа, латинские буквы, цифры, _ . -';return}
-      if(pw.length<8){le.textContent='Пароль не короче 8 символов';return}
-      if(pw!==$('pw2').value){le.textContent='Пароли не совпадают';return}}
-    le.textContent='';btn.disabled=true;
-    api('POST','/api/auth',{action:reg?'register':'login',user:u,pass:pw}).then(function(r){return r.json().then(function(j){
-      if(r.ok)boot();else{le.textContent=j.error||'Ошибка входа';btn.disabled=false}})}).catch(function(){le.textContent='Нет связи с сервером';btn.disabled=false})});
-  $('u').focus()}
-function logout(){(hasUnsaved()?dlgConfirm('Есть несохранённые изменения. Выйти без сохранения?'):Promise.resolve(true)).then(function(ok){if(!ok)return;discardAll();api('POST','/api/auth',{action:'logout'}).then(showLogin,showLogin)})}
-function boot(){api('GET','/api/data').then(function(r){
-  if(r.status===401){showLogin();return}
+/* ---------- аккаунт и гость ----------
+   Без аккаунта сайт открывается в гостевом режиме: разделы работают, данные лежат в браузере (js/local.js), на сервер не уходят.
+   Вход только через Google (кнопка в шапке: обычная ссылка, после возврата сайт открывается заново). */
+var GUEST_END='Сессия закончилась: вы в гостевом режиме. Правки сохранены в этом браузере. Чтобы вернуться в аккаунт, войдите через Google.';
+/* кнопка «Войти через Google» в предложениях гостю (копия кнопки из шапки) */
+function gButtons(){Array.prototype.forEach.call(document.querySelectorAll('[data-gbtn]'),function(box){
+  var b=$('gBtn').cloneNode(true);b.removeAttribute('id');b.hidden=false;box.appendChild(b)})}
+/* открыть разделы: j — ответ GET /api/data (с сервера или из браузера) */
+function openApp(j){startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui();applyPage();finishBoot()}
+function openAcct(j){S.acct=true;accSetName(j&&j.name);openApp(j)}
+function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(openApp)}
+/* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые (null: гостевые остаются как были) */
+function toGuestMode(snap,notice){S.acct=false;S.at={};wifiClear();agClear();tgClear();toGuest(snap);ui();applyPage();if(notice)cbNote(notice)}
+function boot(){net('GET','/api/data').then(function(r){
+  if(r.status===401)return openGuest();
   if(!r.ok)throw 0;
-  return r.json().then(function(j){
-    accSetName(j&&j.name);var kept=startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui(true);
-    if(kept)syncEditPressed();
-    applyPage();finishBoot(kept)})
-}).catch(function(){loginRoot.innerHTML='<p class="empty">Не удалось загрузить данные. Обновите страницу.</p>'})}
+  return r.json().then(openAcct)
+}).catch(function(){loginRoot.innerHTML='<p class=\"empty\">Не удалось загрузить данные. Обновите страницу.</p>'})}
+function logout(){(hasUnsaved()?dlgConfirm('Есть несохранённые изменения. Выйти без сохранения?'):Promise.resolve(true)).then(function(ok){if(!ok)return;discardAll();
+  /* данные аккаунта остаются в браузере и становятся гостевыми: свежая копия берётся до выхода, пока сессия жива */
+  api('GET','/api/data').then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(j){
+    function leave(){toGuestMode(j&&j.data?{months:j.data.months,custom:j.data.custom}:null)}
+    api('POST','/api/auth',{action:'logout'}).then(leave,leave)})})}
 
 /* ---------- события вкладки ---------- */
 document.addEventListener('visibilitychange',function(){
   if(document.visibilityState==='visible'){
     /* возврат на вкладку: каждый раздел обновляется не чаще раза в REFRESH_MS (api.js); ожидающая привязка Telegram проверяется сразу */
     cbVisible();
-    if(S.loggedIn&&S.page==='rem'){if(!fresh('rem'))remLoad();tgVisible()}
-    if(S.loggedIn&&S.page==='wifi'&&!fresh('wifi'))wifiLoad();
+    if(S.acct&&S.page==='rem'){if(!fresh('rem'))remLoad();tgVisible()}
+    if(S.acct&&S.page==='wifi'&&!fresh('wifi'))wifiLoad();
     agVisible()
   }else{cbHidden();agLeave()}});
 window.addEventListener('pagehide',function(){cbHidden();agLeave()});
@@ -92,8 +80,8 @@ function googleBack(){var m=/[?&]gerr=([^&#]*)/.exec(location.search);if(!m)retu
   history.replaceState(null,'',location.pathname+location.hash);
   if(Object.prototype.hasOwnProperty.call(GERR,m[1]))dlgAlert(GERR[m[1]])}
 
-onAuthFail(showLogin);
+onAuthFail(function(){if(S.acct)toGuestMode(cbSnapshot(),GUEST_END)});
 initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
-initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();showLogin();dlgAlert('Аккаунт удалён.')}});
-boot();
+initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')}});
+gButtons();boot();
 googleBack();

@@ -10,7 +10,7 @@ export var CATS=['АЗС','Авто и автосервис','Активный �
 export var PCTS=['0.5','1','1.5','2','3','4','5','6','7','8','10','12','15','20','25','30'];
 
 export function empty(){return{months:{},custom:[]}}
-export var C={data:empty(),rev:{},dirty:{},edit:false,flight:false,conflict:null,showNext:false,ck:clock(),histOpen:false,histMo:null,hCache:'',snap:'',dirtyBefore:{},kept:false,compact:ls('view')==='compact'};
+export var C={data:empty(),rev:{},dirty:{},edit:false,flight:false,conflict:null,showNext:false,ck:clock(),histOpen:false,histMo:null,hCache:'',snap:'',dirtyBefore:{},compact:ls('view')==='compact'};
 
 export function blank(){return{bank:'',items:[{cat:'',pct:''}]}}
 export function peek(mo){return C.data.months[mo]||[]}

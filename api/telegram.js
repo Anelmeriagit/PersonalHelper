@@ -1,5 +1,5 @@
 import { loadDoc } from './_lib.js';
-import { bindTelegram, accountOfTelegram, nickOf, TOKEN_RE } from './_acc.js';
+import { bindTelegram, accountOfTelegram, TOKEN_RE } from './_acc.js';
 import { tg, readBot, mutateBot, webhookSecret, safeEq, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
 import { mskNow } from './_rem.js';
 import { resolveShop, disp } from './_shops.js';
@@ -27,7 +27,7 @@ async function onBind(m, token) {
   catch (e) { console.error(e); return say('Что-то пошло не так. Попробуйте ещё раз чуть позже.'); }
   if (r.error === 'busy') return say('Этот Telegram уже привязан к другому аккаунту. Отвяжите его там на сайте или откройте ссылку из другого Telegram.' + NEW_LINK);
   if (r.error) return say('Ссылка недействительна или устарела (она живёт 10 минут).' + NEW_LINK);
-  return say(r.nick ? 'Готово: Telegram привязан к аккаунту «' + r.nick + '».' : 'Готово: Telegram привязан к вашему аккаунту.');
+  return say('Готово: Telegram привязан к вашему аккаунту.');
 }
 
 // uid — id аккаунта, к которому привязан этот Telegram (accountOfTelegram). Документ кэшбэков, псевдонимы и ожидающие запросы — этого аккаунта.
@@ -42,8 +42,7 @@ async function onMessage(m) {
     return;
   }
   if (sm) {
-    const nick = await nickOf(uid);
-    await tg('sendMessage', { chat_id: m.chat.id, text: 'Привет' + (nick ? ', ' + nick : '') + '! Telegram привязан к вашему аккаунту: напоминания будут приходить сюда. Список кэшбэков — в меню слева от поля ввода.' });
+    await tg('sendMessage', { chat_id: m.chat.id, text: 'Привет! Telegram привязан к вашему аккаунту: напоминания будут приходить сюда. Список кэшбэков — в меню слева от поля ввода.' });
     return;
   }
   if (/^\/cashback(\s|@|$)/i.test(String(m.text || ''))) {

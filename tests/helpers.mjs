@@ -1,12 +1,8 @@
-export const TEST_USER = 'Test';
-export const TEST_PASS = 'secret-pass';
-
 export function setEnv() {
   delete process.env.AUTH_USER; // с этапа 3b бот читает документ привязанного аккаунта, переменная не нужна
   process.env.SESSION_SECRET = 'test-session-secret-0123456789abcdef';
   process.env.SESSION_VERSION = '1';
   process.env.DB_PREFIX = '';
-  delete process.env.REG_OPEN;
   delete process.env.MAX_USERS;
 }
 
@@ -40,10 +36,16 @@ export async function seedDocForce(lib, user, doc) {
   return lib.writeDoc(user, doc, etag);
 }
 
+// Создаёт аккаунт Google (как делает вход через Google; sub = 'sub-' + имя) и возвращает его id.
+// acc — модуль api/_acc.js (импортируют в тесте после setEnv).
+export async function mkAccount(acc, name) {
+  return (await acc.googleAccount('sub-' + name, '', 100)).id;
+}
+
 // Создаёт аккаунт и привязывает к нему Telegram (как делает сайт + /start <токен>). from — объект Telegram from, chat по умолчанию from.id * 100 + 1.
 // acc — модуль api/_acc.js (импортируют в тесте после setEnv). → id аккаунта.
-export async function linkUser(acc, nick, from, chat = from.id * 100 + 1) {
-  const { id } = await acc.createAccount(nick, 'pass-12345', 100);
+export async function linkUser(acc, name, from, chat = from.id * 100 + 1) {
+  const id = await mkAccount(acc, name);
   const { token } = await acc.createLinkToken(id);
   const r = await acc.bindTelegram(token, from, chat);
   if (r.error) throw new Error('linkUser: ' + r.error);

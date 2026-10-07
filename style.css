@@ -338,3 +338,11 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
   body:has(input:focus,select:focus,textarea:focus) .nav{display:none}
 }
 
+/* гостевой режим: предложение войти через Google вместо разделов, которым нужен аккаунт */
+.gst{max-width:640px;margin-inline:auto;text-align:center}
+.gst[hidden]{display:none}
+.gst .et{margin:0 0 .5rem}
+.gst p{margin:0 0 .75rem;color:var(--muted);font-size:.95rem;line-height:1.45}
+.gst .gst-act{margin:0}
+/* узкий экран: в шапке у гостя «Войти» (полная подпись в aria-label), иначе шапка шире экрана; в предложениях гостю подпись полная */
+@media(max-width:480px){.gbtn .gx{display:none}.gst .gbtn .gx{display:inline}}

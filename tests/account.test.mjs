@@ -11,7 +11,7 @@ const data = (await import('../api/data.js')).default;
 const acc = await import('../api/_acc.js');
 const lib = await import('../api/_lib.js');
 
-beforeEach(() => { __reset(); setEnv(); process.env.REG_OPEN = '1'; });
+beforeEach(() => { __reset(); setEnv(); });
 
 const cookieOf = (res) => String(res.headers['set-cookie']).split(';')[0];
 async function call(fn, { method = 'POST', body, cookie } = {}) {
@@ -19,11 +19,9 @@ async function call(fn, { method = 'POST', body, cookie } = {}) {
   await fn(mockReq({ method, headers: cookie ? { cookie, 'x-real-ip': '10.0.0.9' } : { 'x-real-ip': '10.0.0.9' }, body }), res);
   return res;
 }
-async function signUp(nick) {
-  const r = await call(auth, { body: { action: 'register', user: nick, pass: 'correct-horse' } });
-  assert.equal(r.statusCode, 200);
-  const cookie = cookieOf(r);
-  return { cookie, id: lib.session({ headers: { cookie } }) };
+async function signUp(name) {
+  const { id } = await acc.googleAccount('sub-' + name, '', 100);
+  return { cookie: lib.makeCookie(id).split(';')[0], id };
 }
 const post = (cookie, body) => call(auth, { cookie, body });
 const keysOf = (id) => __keys().filter((k) => k.includes(id));
@@ -34,7 +32,7 @@ test('me без сессии и с чужой подписью: 401', async () =
   assert.equal((await post('cb_session=abc.def', { action: 'me' })).statusCode, 401);
 });
 
-test('me: id, пустое имя и email у аккаунта с паролем, Telegram не привязан; пароля в ответе нет', async () => {
+test('me: id, пустое имя и пустой email (у аккаунта Google без подтверждённой почты), Telegram не привязан', async () => {
   const { cookie, id } = await signUp('anna');
   const r = await post(cookie, { action: 'me' });
   assert.equal(r.statusCode, 200);
@@ -60,16 +58,16 @@ test('rename: пробелы схлопываются, управляющие с
   assert.equal((await post(cookie, { action: 'me' })).body.name, 'Анна Кузнецова');
   const g = await call(data, { method: 'GET', cookie });
   assert.equal(g.body.name, 'Анна Кузнецова');
-  assert.equal(g.body.user, 'anna', 'никнейм для входа не меняется');
+  assert.ok(!('user' in g.body), 'никнейма в ответе нет');
   r = await post(cookie, { action: 'rename', name: 'ж'.repeat(40) });
   assert.equal(r.body.name, 'ж'.repeat(32));
   r = await post(cookie, { action: 'rename', name: '😀'.repeat(40) });
   assert.equal(Array.from(r.body.name).length, 32, 'считаются символы, а не половинки суррогатов');
   assert.ok(!/[\ud800-\udfff]/.test(r.body.name.replace(/[\ud83d][\ude00]/g, '')), 'нет оборванных половинок');
   const stored = JSON.parse(__raw('acc:' + id));
-  assert.equal(stored.nick, 'anna');
+  assert.equal(stored.gsub, 'sub-anna', 'указатель на аккаунт Google сохранён');
   assert.ok(!('id' in stored), 'id в записи не хранится');
-  assert.match(stored.pw, /^[0-9a-f]{32}:[0-9a-f]{128}$/, 'никнейм и хэш пароля сохранены');
+  assert.ok(!('nick' in stored) && !('pw' in stored), 'ни никнейма, ни пароля');
 });
 
 test('rename: пустое имя и имя из одних пробелов сбрасывают поле; не строка: 400', async () => {
@@ -152,7 +150,7 @@ test('delete: слово в любом регистре и с пробелами
   assert.deepEqual([r.statusCode, r.body], [200, { ok: true }]);
   assert.match(r.headers['set-cookie'], /Max-Age=0/);
   assert.deepEqual(keysOf(a.id), [], 'ни одного ключа аккаунта');
-  assert.equal(__raw('nick:anna'), undefined);
+  assert.equal(__raw('gid:sub-anna'), undefined);
   assert.equal(__raw('tgu:42'), undefined);
   assert.ok(!(__raw('tgs') || []).includes(a.id));
   assert.equal(__raw('users'), '2');
@@ -160,10 +158,28 @@ test('delete: слово в любом регистре и с пробелами
   assert.equal(keysOf(tA).length, keepV);
   assert.ok((__raw('tgs') || []).includes(tA), 'Telegram чужого аккаунта привязан');
   assert.equal(__raw('tgu:41'), tA);
-  // сессия мертва, никнейм свободен, тот же Telegram привязывается заново
+  // сессия мертва; тот же Google-аккаунт при новом входе создаётся заново, с другим id
   assert.equal((await call(data, { method: 'GET', cookie: a.cookie })).statusCode, 401);
   assert.equal((await post(a.cookie, { action: 'me' })).statusCode, 401);
-  assert.equal((await call(auth, { body: { action: 'register', user: 'anna', pass: 'another-pass' } })).statusCode, 200);
+  const again = await acc.googleAccount('sub-anna', '', 100);
+  assert.equal(again.created, true);
+  assert.notEqual(again.id, a.id);
+});
+
+test('delete: устаревший аккаунт с никнеймом и паролем (до отказа от входа по паролю): ключ nick тоже убирается, чужой nick остаётся', async () => {
+  const { cmd } = await import('../api/_db.js');
+  const id = 'e'.repeat(32), other = 'f'.repeat(32);
+  await cmd('SET', 'acc:' + id, JSON.stringify({ nick: 'old', pw: 'x:y', at: 1 }));
+  await cmd('SET', 'nick:old', id);
+  await cmd('SET', 'acc:' + other, JSON.stringify({ nick: 'two', pw: 'x:y', at: 1 }));
+  await cmd('SET', 'nick:two', id); // указывает не на свой аккаунт
+  await cmd('SET', 'users', '2');
+  assert.equal(await acc.deleteAccount(id), true);
+  assert.equal(__raw('nick:old'), undefined);
+  assert.equal(__raw('acc:' + id), undefined);
+  assert.equal(__raw('users'), '1');
+  assert.equal(await acc.deleteAccount(other), true);
+  assert.equal(__raw('nick:two'), id, 'чужой указатель не трогаем');
 });
 
 test('delete: id берётся из cookie, поле id в теле не работает', async () => {
@@ -190,14 +206,7 @@ test('delete: сбой посередине: запись acc осталась, 
   assert.equal(__raw('users'), '0', 'счётчик не ушёл в минус');
 });
 
-test('delete и me не требуют REG_OPEN', async () => {
-  const { cookie } = await signUp('anna');
-  delete process.env.REG_OPEN;
-  assert.equal((await post(cookie, { action: 'me' })).statusCode, 200);
-  assert.equal((await post(cookie, { action: 'delete', confirm: 'удалить' })).statusCode, 200);
-});
-
-test('действия с сессией на ненастроенном сервере: 500, как у входа', async () => {
+test('действия с сессией на ненастроенном сервере: 500', async () => {
   const { cookie } = await signUp('anna');
   const s = process.env.SESSION_SECRET;
   delete process.env.SESSION_SECRET;

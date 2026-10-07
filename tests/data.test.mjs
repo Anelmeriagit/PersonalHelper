@@ -7,16 +7,14 @@ import { mockReq, mockRes, setEnv } from './helpers.mjs';
 
 setEnv();
 const lib = await import('../api/_lib.js');
-const auth = (await import('../api/auth.js')).default;
+const acc = await import('../api/_acc.js');
 const data = (await import('../api/data.js')).default;
 
-beforeEach(() => { __reset(); setEnv(); process.env.REG_OPEN = '1'; });
+beforeEach(() => { __reset(); setEnv(); });
 
-async function signup(nick) {
-  const res = mockRes();
-  await auth(mockReq({ method: 'POST', headers: { 'x-real-ip': '1.1.1.1' }, body: { action: 'register', user: nick, pass: 'correct-horse' } }), res);
-  assert.equal(res.statusCode, 200);
-  return String(res.headers['set-cookie']).split(';')[0];
+async function signup(name) {
+  const { id } = await acc.googleAccount('sub-' + name, '', 100);
+  return lib.makeCookie(id).split(';')[0];
 }
 async function call(method, cookie, body, ct = 'application/json') {
   const res = mockRes();
@@ -35,11 +33,11 @@ test('без сессии 401; cookie несуществующего аккау�
   assert.equal((await call('GET', ghost)).statusCode, 401);
 });
 
-test('GET нового аккаунта: ник, пустые данные', async () => {
+test('GET нового аккаунта: пустое имя, пустые данные', async () => {
   const c = await signup('anna');
   const r = await call('GET', c);
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { user: 'anna', name: '', data: { months: {}, custom: [] }, rev: {} });
+  assert.deepEqual(r.body, { name: '', data: { months: {}, custom: [] }, rev: {} });
   assert.equal(r.headers['cache-control'], 'no-store');
 });
 
@@ -115,7 +113,7 @@ test('проверки запроса: тип содержимого, имя ч�
   assert.equal((await call('DELETE', c)).statusCode, 405);
 });
 
-test('документ в Redis: ключ doc:<id>, пароль и ник туда не попадают', async () => {
+test('документ в Redis: ключ doc:<id>, имя и почта туда не попадают', async () => {
   const c = await signup('qwerty1');
   await call('PUT', c, { parts: { [month]: { base: 0, value: block('АЗС', '5') } } });
   const id = lib.session({ headers: { cookie: c } });

@@ -1,72 +1,25 @@
-// Аккаунты: один человек на аккаунт. Ключи Redis (с префиксом DB_PREFIX, см. _db.js):
-//   nick:<никнейм>  → id          (уникальность никнейма, SET NX)
-//   acc:<id>        → JSON {nick, pw:"соль:scrypt", at}
-//   users           → счётчик аккаунтов (лимит MAX_USERS)
-// Запись acc:<id> может нести отображаемое имя `name` (этап 5; нет поля = не задано).
-// Вход через Google (этап 5, часть 3):
+// Аккаунты: один человек на аккаунт, вход только через Google. Ключи Redis (с префиксом DB_PREFIX, см. _db.js):
 //   gid:<sub>       → id          (аккаунт Google по неизменному идентификатору sub; SET NX)
-//   acc:<id>        → JSON {gsub, email?, at} без nick и pw (по паролю такой аккаунт не войдёт); email только подтверждённый Google
+//   acc:<id>        → JSON {gsub, email?, name?, at}; email только подтверждённый Google, name — отображаемое имя (нет поля = не задано)
+//   users           → счётчик аккаунтов (лимит MAX_USERS)
+// Устаревшее (до отказа от входа по паролю): acc:<id> с полями nick и pw, ключ nick:<никнейм>. Код их больше не создаёт и не читает;
+// deleteAccount убирает ключ nick:<никнейм> такого аккаунта.
 // Привязка Telegram (этап 3a):
 //   tgt:<хеш токена> → id аккаунта (одноразовая ссылка t.me/<бот>?start=<токен>, живёт LINK_TTL секунд; сам токен не хранится)
 //   tgp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
 //   tg:<id>          → JSON {tid, chat, un, at}: привязанный Telegram аккаунта
 //   tgu:<tid>        → id аккаунта (обратный поиск: один Telegram привязан к одному аккаунту)
 //   tgs              → множество id аккаунтов с привязанным Telegram (обход для cron, этап 3b); ведут bindTelegram и unlinkTelegram
-// Пароль нигде не хранится и не логируется, только scrypt-хэш.
 import crypto from 'node:crypto';
-import { promisify } from 'node:util';
 import { key, cmd, setNx, del, take } from './_db.js';
 
-const scrypt = promisify(crypto.scrypt);
-
 export const ID_RE = /^[0-9a-f]{32}$/;
-export const NICK_RE = /^[a-z0-9][a-z0-9_.-]{2,23}$/;
-export const PASS_MIN = 8;
-export const PASS_MAX = 200;
-export const normNick = (s) => String(s == null ? '' : s).trim().toLowerCase();
-
-export async function hashPw(pass) {
-  const salt = crypto.randomBytes(16);
-  const d = await scrypt(String(pass), salt, 64);
-  return salt.toString('hex') + ':' + d.toString('hex');
-}
-export async function checkPw(pass, stored) {
-  const [s, hx] = String(stored || ':').split(':');
-  if (!s || !hx) return false;
-  const calc = await scrypt(String(pass), Buffer.from(s, 'hex'), 64);
-  const exp = Buffer.from(hx, 'hex');
-  return exp.length === calc.length && crypto.timingSafeEqual(calc, exp);
-}
-// Для несуществующего никнейма проверка идёт по этому значению: время ответа не выдаёт, есть ли такой аккаунт.
-export const DUMMY_PW = '00'.repeat(16) + ':' + '00'.repeat(64);
 
 export async function getAcc(id) {
   if (!ID_RE.test(String(id))) return null;
   const raw = await cmd('GET', key('acc', id));
   if (!raw) return null;
   try { return { id, ...JSON.parse(raw) }; } catch { return null; }
-}
-export async function nickOf(id) { const a = await getAcc(id); return a ? a.nick : null; }
-
-export async function findByNick(nick) {
-  const id = await cmd('GET', key('nick', nick));
-  return id ? getAcc(id) : null;
-}
-
-// → { id } | { error: 'taken' | 'full' }
-export async function createAccount(nick, pass, maxUsers) {
-  if (await cmd('EXISTS', key('nick', nick))) return { error: 'taken' };
-  const rec = JSON.stringify({ nick, pw: await hashPw(pass), at: Date.now() });
-  const n = Number(await cmd('INCR', key('users')));
-  const back = () => cmd('DECR', key('users')).catch(() => {});
-  if (n > maxUsers) { await back(); return { error: 'full' }; }
-  const id = crypto.randomBytes(16).toString('hex');
-  try {
-    if (!(await setNx(key('acc', id), rec))) throw new Error('id занят');
-    // Сначала запись аккаунта, потом никнейм: сбой посередине не оставляет «занятый» никнейм без аккаунта.
-    if (!(await setNx(key('nick', nick), id))) { await del(key('acc', id)); await back(); return { error: 'taken' }; }
-  } catch (e) { await back(); throw e; }
-  return { id };
 }
 
 // Аккаунт Google по sub. → { id, created } | { error: 'full' }. Существующий аккаунт возвращается как есть (почту не обновляем:
@@ -115,7 +68,7 @@ export async function setName(id, name) {
   return (await cmd('SET', key('acc', id), JSON.stringify(rec), 'XX')) === 'OK' ? n : null;
 }
 
-// Полное удаление аккаунта: Telegram, все личные записи, никнейм, счётчик, в конце сама запись acc (пока она есть, повтор после сбоя
+// Полное удаление аккаунта: Telegram, все личные записи, устаревший никнейм, указатель Google, счётчик, в конце сама запись acc (пока она есть, повтор после сбоя
 // дочистит остальное: сессия остаётся рабочей). → true | false (аккаунта уже нет).
 export async function deleteAccount(id) {
   const acc = await getAcc(id);
@@ -163,7 +116,7 @@ export async function accountOfTelegram(tid) {
 }
 
 // Привязка по токену из /start. from — объект Telegram from, chat — id личного чата.
-// → { id, nick } | { error: 'bad' (нет такой ссылки или она устарела) | 'busy' (этот Telegram уже у другого аккаунта) }
+// → { id } | { error: 'bad' (нет такой ссылки или она устарела) | 'busy' (этот Telegram уже у другого аккаунта) }
 // Токен одноразовый: после попытки (даже неудачной по 'busy') нужна новая ссылка.
 export async function bindTelegram(token, from, chat) {
   if (!TOKEN_RE.test(String(token)) || !from || !from.id) return { error: 'bad' };
@@ -182,7 +135,7 @@ export async function bindTelegram(token, from, chat) {
   // Сначала в множество для cron, потом сама привязка: сбой посередине оставит id без tg:<id>, а cron такие пропускает.
   await cmd('SADD', key('tgs'), id);
   await cmd('SET', key('tg', id), JSON.stringify({ tid, chat: String(chat), un, at: Date.now() }));
-  return { id, nick: (await nickOf(id)) || '' };
+  return { id };
 }
 
 // Отвязка: убирает запись аккаунта и обратный поиск (только если он указывает на этот аккаунт). Идемпотентна.

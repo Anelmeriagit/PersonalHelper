@@ -2,10 +2,10 @@
 // Для каждой страницы × ширины 360/1280 × светлой/тёмной темы проверяет:
 //   нет нарушений CSP, нет ошибок JS и console.error, нет обращений к незамоканному API,
 //   нет горизонтальной прокрутки.
-// Экран входа и регистрации (--only=auth), кэшбэк для одного человека (--only=cashback), личная сеть WiFi (--only=wifi),
+// Гостевой режим: сайт без входа, данные в браузере (--only=guest), выход и конец сессии (--only=session), кэшбэк для одного человека (--only=cashback), личная сеть WiFi (--only=wifi),
 // блок «Telegram» (--only=tg), вкладка «Напоминания» (--only=rem), аккаунт: Google, меню, настройки, удаление (--only=acct) и окно приветствия (--only=welcome), расход команд Redis: возврат на вкладку, опрос привязки, пауза сохранения (--only=refresh) проверяются отдельными сценариями.
 // Во всех остальных сценариях флаг welcome=1 проставляется заранее, иначе окно приветствия перекрывало бы страницу.
-// Запуск: node tests/smoke.mjs [--root=<папка>] [--only=auth|cashback|wifi|tg|rem|acct|welcome|refresh]   (Playwright: npm i --no-save playwright && npx playwright install chromium)
+// Запуск: node tests/smoke.mjs [--root=<папка>] [--only=guest|session|cashback|wifi|tg|rem|acct|welcome|refresh]   (Playwright: npm i --no-save playwright && npx playwright install chromium)
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { start } from './serve.mjs';
@@ -67,74 +67,140 @@ for (const scheme of SCHEMES) {
   }
 }
 
-// ---------- экран входа и регистрации ----------
-for (const scheme of run('auth') ? SCHEMES : []) {
+// ---------- гость: сайт открывается без входа, данные кэшбэка лежат в браузере, на сервер ничего не уходит ----------
+const SETUP = (s) => {
+  try { localStorage.setItem('theme', s); localStorage.setItem('welcome', '1'); } catch { /* нет доступа */ }
+  window.__csp = [];
+  document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));
+};
+for (const scheme of run('guest') ? SCHEMES : []) {
   for (const vp of VIEWPORTS) {
     const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
-    await ctx.addInitScript((s) => {
-      try { localStorage.setItem('theme', s); localStorage.setItem('welcome', '1'); } catch { /* нет доступа */ }
-      window.__csp = [];
-      document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' ' + e.blockedURI));
-    }, scheme);
+    await ctx.addInitScript(SETUP, scheme);
     const page = await ctx.newPage();
     const problems = [];
-    const posts = [];
     page.on('pageerror', (e) => problems.push('JS: ' + e.message));
-    page.on('console', (m) => { if (m.type() === 'error' && !/status of 40[19]|status of 409/.test(m.text())) problems.push('console: ' + m.text()); });
+    page.on('console', (m) => { if (m.type() === 'error' && !/status of 401/.test(m.text())) problems.push('console: ' + m.text()); });
+    // без сессии сервер отвечает 401: это и есть гость; до сервера запрос не доходит, поэтому всё, что дошло до стенда, лишнее
     await page.route('**/api/data', (r) => r.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"auth"}' }));
-    await page.route('**/api/auth', (r) => {
-      posts.push(r.request().postDataJSON());
-      r.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'Этот никнейм уже занят' }) });
-    });
+    const calls0 = stand.apiCalls.length, unm0 = stand.unmocked.length;
     const check = (cond, msg) => { if (!cond) problems.push(msg); };
     const text = (sel) => page.locator(sel).first().innerText();
+    const vis = (sel) => page.locator(sel).first().isVisible();
     const noHScroll = async (where) => {
       const r = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
       check(r.sw <= r.iw, `${where}: горизонтальная прокрутка ${r.sw} > ${r.iw}`);
     };
-    const submit = () => page.locator('#lf .done').click();
     try {
       await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
-      await page.waitForSelector('#lf', { timeout: 5000 });
-      check((await text('#lf h2')) === 'Вход', 'вход: заголовок');
-      check(!(await page.locator('#mainNav').isVisible()), 'вход: навигация скрыта');
-      check(await page.locator('#themeBtn').isVisible(), 'вход: переключатель темы виден');
-      check(!(await page.locator('#uWrap').isVisible()) && !(await page.locator('#editBtn').isVisible()), 'вход: меню пользователя и кнопка правки скрыты');
-      check((await page.locator('#pw2').count()) === 0, 'вход: нет поля повтора пароля');
-      await noHScroll('вход');
+      await page.waitForSelector('#mainNav', { state: 'visible', timeout: 5000 });
+      check((await page.locator('#lf, #u, #pw').count()) === 0, 'гость: формы входа нет');
+      check((await vis('#gBtn')) && !(await vis('#uWrap')), 'гость: в шапке кнопка Google, меню пользователя скрыто');
+      check((await vis('#editBtn')) && (await vis('#themeBtn')), 'гость: кнопки правки и темы видны');
+      check(await vis('#stage'), 'гость: страница кэшбэка открыта без входа');
+      check((await page.locator('#bCur [data-act=add]').count()) === 1, 'гость: пустой месяц, есть «+ Добавить»');
+      await noHScroll('гость: главная');
 
-      await page.click('#am');
-      check((await text('#lf h2')) === 'Регистрация', 'регистрация: заголовок');
-      check((await page.locator('#pw2').count()) === 1, 'регистрация: есть поле повтора пароля');
-      check((await page.locator('#lf .hint').count()) === 2, 'регистрация: две подсказки');
-      const h = await page.locator('#am').evaluate((el) => el.getBoundingClientRect().height);
-      check(h >= 32, 'переключатель режима слишком мелкий: ' + Math.round(h) + ' px');
-      await noHScroll('регистрация');
+      // запись кэшбэка: сохраняется в браузере (localStorage), на сервер не уходит
+      await page.click('#bCur [data-act=add]');
+      await page.selectOption('#bCur select[data-k=bank]', 'otp');
+      await page.selectOption('#bCur select[data-k=cat]', 'АЗС');
+      await page.selectOption('#bCur select[data-k=pct]', '5');
+      await page.click('[data-act=save]');
+      await page.waitForFunction(() => /АЗС/.test(localStorage.getItem('g-cb') || ''), null, { timeout: 5000 });
+      check((await page.locator('#bCur .blk').count()) === 1, 'гость: после сохранения виден один блок');
+      await page.waitForFunction(() => document.getElementById('st').textContent === '✓', null, { timeout: 5000 });
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForSelector('#bCur .blk', { timeout: 5000 });
+      check(/АЗС/.test(await text('#bCur')) && /5%/.test(await text('#bCur')), 'гость: запись на месте после перезагрузки');
 
-      await page.fill('#u', 'ab'); await page.fill('#pw', 'password1'); await page.fill('#pw2', 'password1'); await submit();
-      check(/3–24/.test(await text('#le')), 'короткий никнейм: сообщение «' + (await text('#le')) + '»');
-      await page.fill('#u', 'anna_k'); await page.fill('#pw', 'short'); await page.fill('#pw2', 'short'); await submit();
-      check(/не короче 8/.test(await text('#le')), 'короткий пароль: сообщение');
-      await page.fill('#pw', 'password1'); await page.fill('#pw2', 'password2'); await submit();
-      check((await text('#le')) === 'Пароли не совпадают', 'разные пароли: сообщение');
-      check(posts.length === 0, 'до успешной проверки на клиенте запросов быть не должно');
+      // разделы, которым нужен аккаунт: предложение войти вместо содержимого
+      await page.goto(stand.url + '/#reminders', { waitUntil: 'load' });
+      await page.waitForSelector('#remGuest', { state: 'visible', timeout: 5000 });
+      check(!(await vis('#remAcct')) && !(await vis('#tgBox')), 'напоминания гостя: блоки аккаунта скрыты');
+      check((await page.locator('#remGuest .gbtn').count()) === 1 && (await page.getAttribute('#remGuest .gbtn', 'href')) === '/api/auth?action=google', 'напоминания гостя: кнопка Google ведёт на вход');
+      check((await page.locator('#remGuest .gbtn').evaluate((el) => el.getBoundingClientRect().height)) >= 40, 'напоминания гостя: кнопка слишком мелкая');
+      await noHScroll('напоминания гостя');
+      for (const [hash, id] of [['#wifi', 'wifiGuest'], ['#agent', 'agentGuest']]) {
+        await page.goto(stand.url + '/' + hash, { waitUntil: 'load' });
+        await page.waitForSelector('#' + id, { state: 'visible', timeout: 5000 });
+        await noHScroll('гость ' + hash);
+      }
+      await page.goto(stand.url + '/', { waitUntil: 'load' });
+      await page.waitForSelector('#mainNav', { state: 'visible', timeout: 5000 });
+      check(!(await vis('#remAcct')) && (await page.locator('#remGuest').isHidden()), 'на главной предложение войти не показано');
 
-      await page.fill('#u', '  Anna_K '); await page.fill('#pw2', 'password1'); await submit();
-      await page.waitForFunction(() => document.getElementById('le').textContent.length > 0 && !document.querySelector('#lf .done').disabled, null, { timeout: 5000 });
-      check((await text('#le')) === 'Этот никнейм уже занят', 'ошибка сервера показана');
-      check(posts.length === 1 && JSON.stringify(posts[0]) === JSON.stringify({ action: 'register', user: 'Anna_K', pass: 'password1' }), 'запрос регистрации: ' + JSON.stringify(posts[0]));
-
-      await page.click('#am');
-      check((await text('#lf h2')) === 'Вход', 'возврат ко входу');
-      check((await page.inputValue('#u')) === 'Anna_K', 'никнейм сохраняется при переключении');
-      await page.fill('#pw', 'password1'); await submit();
-      await page.waitForFunction(() => document.getElementById('le').textContent.length > 0, null, { timeout: 5000 });
-      check(posts.length === 2 && posts[1].action === 'login', 'запрос входа');
-      await noHScroll('вход после ошибки');
+      check(stand.apiCalls.length === calls0, 'гость: на сервер ушли запросы: ' + stand.apiCalls.slice(calls0).join(', '));
+      check(stand.unmocked.length === unm0, 'нет заглушки API: ' + stand.unmocked.slice(unm0).join(', '));
       const csp = await page.evaluate(() => window.__csp);
       check(!csp.length, 'CSP: ' + csp.join('; '));
     } catch (e) { problems.push('сценарий: ' + e.message.split('\n')[0]); }
-    console.log(`${problems.length ? 'FAIL' : 'ok  '} ${scheme.padEnd(5)} ${String(vp.width).padStart(4)} px  вход/регистрация${problems.length ? '\n       ' + problems.join('\n       ') : ''}`);
+    console.log(`${problems.length ? 'FAIL' : 'ok  '} ${scheme.padEnd(5)} ${String(vp.width).padStart(4)} px  гостевой режим${problems.length ? '\n       ' + problems.join('\n       ') : ''}`);
+    if (problems.length) failures++;
+    await ctx.close();
+  }
+}
+
+// ---------- из аккаунта в гостя: конец сессии (401) и выход; данные аккаунта заменяют гостевые ----------
+for (const scheme of run('session') ? SCHEMES : []) {
+  for (const vp of VIEWPORTS) {
+    const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+    await ctx.addInitScript(SETUP, scheme);
+    const page = await ctx.newPage();
+    const problems = [];
+    const posts = [];
+    page.on('pageerror', (e) => problems.push('JS: ' + e.message));
+    page.on('console', (m) => { if (m.type() === 'error' && !/status of 401/.test(m.text())) problems.push('console: ' + m.text()); });
+    await page.route('**/api/auth', (r) => { posts.push(r.request().postDataJSON()); r.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }); });
+    const check = (cond, msg) => { if (!cond) problems.push(msg); };
+    const vis = (sel) => page.locator(sel).first().isVisible();
+    const local = () => page.evaluate(() => localStorage.getItem('g-cb') || '');
+    try {
+      // 1. в браузере уже есть гостевые данные (до входа)
+      await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
+      await page.evaluate(() => localStorage.setItem('g-cb', JSON.stringify({ months: {}, custom: ['Моя гостевая'], rev: {} })));
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+      check(!(await vis('#gBtn')), 'аккаунт: кнопки Google в шапке нет');
+
+      // 2. сессия заканчивается во время правки: несохранённое остаётся, но уже в гостевых данных
+      await page.route('**/api/data', (r) => (r.request().method() === 'PUT' ? r.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"auth"}' }) : r.fallback()));
+      await page.click('#editBtn');
+      await page.click('[data-act=addb]');
+      await page.selectOption('#bCur .blk:last-of-type select[data-k=bank]', 'vtb');
+      await page.selectOption('#bCur .blk:last-of-type select[data-k=cat]', 'Аптеки');
+      await page.selectOption('#bCur .blk:last-of-type select[data-k=pct]', '3');
+      await page.click('[data-act=save]');
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 6000 });
+      check(!(await vis('#uWrap')) && (await vis('#mainNav')), '401: гость, навигация осталась');
+      check((await page.locator('#lf').count()) === 0, '401: экрана входа нет');
+      check(/гостевом режиме/.test(await page.locator('#warn').innerText()), '401: объяснение про гостевой режим');
+      check((await page.locator('#bCur .blk').count()) === 4, '401: на странице данные аккаунта с правкой (4 банка)');
+      const l1 = await local();
+      check(/Аптеки/.test(l1) && /vtb/.test(l1) && /Маркетплейсы/.test(l1), '401: правка и данные аккаунта в гостевом хранилище');
+      check(!/Моя гостевая/.test(l1), '401: прежние гостевые данные заменены');
+      check(await vis('#editBtn'), '401: кнопка правки доступна гостю');
+      await page.goto('about:blank');
+      await page.goto(stand.url + '/', { waitUntil: 'load' });
+      await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 }); // стенд снова отвечает как аккаунт
+
+      // 3. выход: свежие данные аккаунта заменяют гостевые
+      await page.unroute('**/api/data');
+      await page.evaluate(() => localStorage.setItem('g-cb', JSON.stringify({ months: {}, custom: ['Ещё гостевая'], rev: {} })));
+      await page.goto('about:blank');
+      await page.goto(stand.url + '/', { waitUntil: 'load' });
+      await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+      await page.click('#uBtn'); await page.click('#uMenu [data-u=logout]');
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
+      check(posts.filter((x) => x.action === 'logout').length === 1, 'выход: запрос logout');
+      const l2 = await local();
+      check(/Маркетплейсы/.test(l2) && !/Ещё гостевая/.test(l2), 'выход: данные аккаунта заменили гостевые: ' + l2.slice(0, 80));
+      check((await page.locator('#bCur .blk').count()) === 3 && (await vis('#mainNav')), 'выход: на странице данные аккаунта, навигация на месте');
+      check((await page.locator('#lf').count()) === 0, 'выход: экрана входа нет');
+      const csp = await page.evaluate(() => window.__csp);
+      check(!csp.length, 'CSP: ' + csp.join('; '));
+    } catch (e) { problems.push('сценарий: ' + e.message.split('\n')[0]); }
+    console.log(`${problems.length ? 'FAIL' : 'ok  '} ${scheme.padEnd(5)} ${String(vp.width).padStart(4)} px  из аккаунта в гостя${problems.length ? '\n       ' + problems.join('\n       ') : ''}`);
     if (problems.length) failures++;
     await ctx.close();
   }
@@ -408,11 +474,11 @@ for (const scheme of run('tg') ? SCHEMES : []) {
       check((await text('#tgBody .tgn b')) === '@<img src=x onerror=1>', 'имя показано текстом');
       await noHScroll('длинное имя');
 
-      // 10. 401 от /api/tglink ведёт на экран входа
+      // 10. 401 от /api/tglink: сессии нет, сайт открывается гостем
       st.auth = true;
       await page.reload({ waitUntil: 'load' });
-      await page.waitForSelector('#lf', { timeout: 5000 });
-      check(!(await page.locator('#mainNav').isVisible()), '401: навигация скрыта, виден экран входа');
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
+      check(await page.locator('#mainNav').isVisible() && (await page.locator('#lf').count()) === 0, '401: гость, навигация видна, экрана входа нет');
       const csp = await page.evaluate(() => window.__csp);
       check(!csp.length, 'CSP: ' + csp.join('; '));
     } catch (e) { problems.push('сценарий: ' + e.message.split('\n')[0]); }
@@ -563,11 +629,11 @@ for (const scheme of run('acct') ? SCHEMES : []) {
       // --- не вошли: кнопка Google в шапке справа ---
       await page.route('**/api/data', (r) => json(r, { error: 'auth' }, 401), { times: 1 });
       await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
-      await page.waitForSelector('#lf', { timeout: 5000 });
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
       check(await vis('#gBtn'), 'без входа: кнопка Google видна');
       check(!(await vis('#uWrap')), 'без входа: меню пользователя скрыто');
       check((await page.getAttribute('#gBtn', 'href')) === '/api/auth?action=google', 'ссылка кнопки Google: ' + (await page.getAttribute('#gBtn', 'href')));
-      check(/Войти через Google/.test(await text('#gBtn')), 'текст кнопки Google');
+      check(/Войти через Google/.test(await page.locator('#gBtn').textContent()) && (await page.getAttribute('#gBtn', 'aria-label')) === 'Войти через Google', 'текст кнопки Google');
       const gb = await page.locator('#gBtn').boundingBox(), tb = await page.locator('#themeBtn').boundingBox();
       check(gb && tb && gb.x + gb.width <= tb.x && gb.x + gb.width <= vp.width && gb.height >= 44, 'кнопка Google слева от переключателя темы, не выходит за экран, высота ≥ 44 px');
       check(gb && gb.x > vp.width / 2 - gb.width, 'кнопка Google в правой части шапки');
@@ -688,7 +754,7 @@ for (const scheme of run('acct') ? SCHEMES : []) {
       await noHScroll('окно удаления');
       const before = posts.length;
       await page.click('#delGo');
-      await page.waitForSelector('#lf', { timeout: 5000 });
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
       check(JSON.stringify(posts[before]) === JSON.stringify({ action: 'delete', confirm: 'удалить' }), 'запрос delete: ' + JSON.stringify(posts[before]));
       check(!(await isOpen('#acctDlg')) && !(await isOpen('#delDlg')), 'после удаления окна закрыты');
       await page.waitForSelector('#dlg[open]', { timeout: 5000 });
@@ -700,14 +766,14 @@ for (const scheme of run('acct') ? SCHEMES : []) {
       await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
       await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
       await page.click('#uBtn'); await page.click('#uMenu [data-u=logout]');
-      await page.waitForSelector('#lf', { timeout: 5000 });
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
       check(posts.filter((x) => x.action === 'logout').length === 1, 'запрос logout');
       check(await vis('#gBtn'), 'после выхода кнопка Google');
       // --- возврат от Google с ошибкой: окно с текстом по коду, адрес очищается, из адреса ничего не выводится ---
       for (const [q, re, label] of [['denied', /Вход через Google отменён/, 'denied'], ['state', /Нажмите «Войти через Google» ещё раз/, 'state'], ['full', /лимит пользователей/, 'full'], ['%3Cb%3Ex%3C%2Fb%3E', null, 'неизвестный код']]) {
         await page.route('**/api/data', (r) => json(r, { error: 'auth' }, 401), { times: 1 });
         await page.goto(stand.url + '/?gerr=' + q + '#wifi', { waitUntil: 'load', timeout: 15000 });
-        await page.waitForSelector('#lf', { timeout: 5000 });
+        await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
         if (re) {
           await page.waitForSelector('#dlg[open]', { timeout: 5000 });
           check(re.test(await text('#dlgMsg')), 'сообщение после возврата от Google (' + label + '): ' + (await text('#dlgMsg')));
@@ -751,12 +817,11 @@ for (const scheme of run('welcome') ? SCHEMES : []) {
       const flag = () => page.evaluate(() => localStorage.getItem('welcome'));
       // событие close у <dialog> приходит чуть позже самого закрытия: флаг и фокус ждём, а не читаем сразу
       const flagSet = () => page.waitForFunction(() => localStorage.getItem('welcome') === '1', null, { timeout: 2000 }).then(() => true, () => false);
-      const focusU = () => page.waitForFunction(() => document.activeElement && document.activeElement.id === 'u', null, { timeout: 2000 }).then(() => true, () => false);
       const noHScroll = async (where) => {
         const r = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
         check(r.sw <= r.iw, `${where}: горизонтальная прокрутка ${r.sw} > ${r.iw}`);
       };
-      const ready = () => (loggedIn ? page.waitForSelector('#mainNav', { state: 'visible', timeout: 5000 }) : page.waitForSelector('#lf', { timeout: 5000 }));
+      const ready = () => page.waitForSelector('#mainNav', { state: 'visible', timeout: 5000 });
       try {
         await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
         await ready();
@@ -775,7 +840,6 @@ for (const scheme of run('welcome') ? SCHEMES : []) {
         await page.click('#welcome .done');
         check(!(await isOpen()), 'кнопка не закрыла окно');
         check(await flagSet(), 'после закрытия кнопкой флаг welcome не поставлен');
-        if (!loggedIn) check(await focusU(), 'после закрытия фокус не вернулся в поле никнейма');
         await noHScroll('после закрытия');
 
         await page.reload({ waitUntil: 'load' });
@@ -796,7 +860,7 @@ for (const scheme of run('welcome') ? SCHEMES : []) {
         check(!csp.length, 'CSP: ' + csp.join('; '));
         check(stand.unmocked.length === before, 'нет заглушки API: ' + stand.unmocked.slice(before).join(', '));
       } catch (e) { problems.push('сценарий: ' + e.message.split('\n')[0]); }
-      console.log(`${problems.length ? 'FAIL' : 'ok  '} ${scheme.padEnd(5)} ${String(vp.width).padStart(4)} px ${String(vp.height).padStart(4)} высота  окно приветствия, ${loggedIn ? 'вошедший' : 'экран входа'}${problems.length ? '\n       ' + problems.join('\n       ') : ''}`);
+      console.log(`${problems.length ? 'FAIL' : 'ok  '} ${scheme.padEnd(5)} ${String(vp.width).padStart(4)} px ${String(vp.height).padStart(4)} высота  окно приветствия, ${loggedIn ? 'вошедший' : 'гость'}${problems.length ? '\n       ' + problems.join('\n       ') : ''}`);
       if (problems.length) failures++;
       await ctx.close();
     }

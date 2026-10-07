@@ -4,7 +4,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __reset, __fail, __keys, __raw, __cmds, __cmdLog } from './redis.mjs';
-import { mockReq, mockRes, setEnv } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, mkAccount } from './helpers.mjs';
 
 setEnv();
 const lib = await import('../api/_lib.js');
@@ -18,7 +18,7 @@ beforeEach(() => { __reset(); setEnv(); });
 
 const NOON = Date.parse('2026-10-10T09:00:00Z'); // 12:00 МСК
 const AT = (t, iso = '2026-10-10T09:00:00Z') => t.mock.timers.enable({ apis: ['Date'], now: Date.parse(iso) });
-const mkAcc = async (nick) => (await acc.createAccount(nick, 'pass-12345', 100)).id;
+const mkAcc = (name) => mkAccount(acc, name);
 const cookieOf = (id) => ({ cookie: lib.makeCookie(id).split(';')[0] });
 async function call(h, method, id, body, query) {
   const res = mockRes();

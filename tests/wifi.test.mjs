@@ -7,17 +7,15 @@ import { mockReq, mockRes, setEnv } from './helpers.mjs';
 
 setEnv();
 const lib = await import('../api/_lib.js');
-const auth = (await import('../api/auth.js')).default;
+const acc = await import('../api/_acc.js');
 const wifiMod = await import('../api/wifi.js');
 const wifi = wifiMod.default;
 
-beforeEach(() => { __reset(); setEnv(); process.env.REG_OPEN = '1'; });
+beforeEach(() => { __reset(); setEnv(); });
 
-async function signup(nick) {
-  const res = mockRes();
-  await auth(mockReq({ method: 'POST', headers: { 'x-real-ip': '1.1.1.1' }, body: { action: 'register', user: nick, pass: 'correct-horse' } }), res);
-  assert.equal(res.statusCode, 200);
-  return String(res.headers['set-cookie']).split(';')[0];
+async function signup(name) {
+  const { id } = await acc.googleAccount('sub-' + name, '', 100);
+  return lib.makeCookie(id).split(';')[0];
 }
 async function call(method, cookie, body, ct = 'application/json') {
   const res = mockRes();

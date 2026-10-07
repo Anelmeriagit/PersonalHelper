@@ -231,11 +231,6 @@ test('MAX_USERS: новый аккаунт сверх предела — full, �
   assert.equal(loc(await flow({ idOver: { sub: 's1' } })), '/');
 });
 
-test('вход через Google не зависит от REG_OPEN', async () => {
-  delete process.env.REG_OPEN;
-  assert.equal(loc(await flow()), '/');
-});
-
 test('лимит с одного адреса: 20 возвратов в час, 21-й — rate; другой адрес не задет', async () => {
   for (let i = 0; i < 20; i++) { reply = null; assert.equal(loc(await flow({ ip: '10.9.9.9' })), '/'); }
   reply = null; assert.equal(loc(await flow({ ip: '10.9.9.9' })), '/?gerr=rate');
@@ -278,11 +273,11 @@ test('удаление не трогает gid, который указывае�
   assert.equal(__raw('gid:s1'), 'd'.repeat(32));
 });
 
-test('Telegram к аккаунту Google: привязка работает, ника нет', async () => {
+test('Telegram к аккаунту Google: привязка работает', async () => {
   const { id } = await acc.googleAccount('s1', '', 100);
   const { token } = await acc.createLinkToken(id);
   const r = await acc.bindTelegram(token, { id: 4242, username: 'u_tg' }, 4243);
-  assert.deepEqual(r, { id, nick: '' });
+  assert.deepEqual(r, { id });
   assert.equal(await acc.accountOfTelegram(4242), id);
 });
 

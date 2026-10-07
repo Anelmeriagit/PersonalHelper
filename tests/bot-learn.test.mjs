@@ -347,7 +347,7 @@ test('/cashback и /start работают; старые кнопки напом
   assert.deepEqual(calls.map((c) => c.method), ['answerCallbackQuery']);
   strip(calls);
   await send(msg(U1, '/start'));
-  assert.match(calls[0].body.text, /^Привет, ivan!/);
+  assert.match(calls[0].body.text, /^Привет! Telegram привязан/);
   const st = await state();
   assert.deepEqual([st.alias, st.pending], [{}, {}]);
 });
