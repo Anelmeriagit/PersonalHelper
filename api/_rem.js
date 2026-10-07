@@ -118,9 +118,12 @@ export function publicRecurring(rem) {
     .sort((a, b) => cmp((a.next || '9') + slotKey(a), (b.next || '9') + slotKey(b)));
 }
 
-// Ответ всех эндпоинтов напоминаний: { linked, custom, recurring }. linked — привязан ли Telegram к аккаунту.
+// Ответ всех эндпоинтов напоминаний: { linked, username?, custom, recurring }. linked — привязан ли Telegram к аккаунту;
+// username (без @, может быть пустым) есть только у привязанного и берётся из той же записи tg:<id>, что и linked (одна команда Redis):
+// блок «Telegram» на сайте показывает @имя из этого ответа и не делает отдельный GET /api/tglink.
 export async function pubRem(id, rem) {
-  return { linked: !!(await getLink(id)), custom: publicCustom(rem), recurring: publicRecurring(rem) };
+  const l = await getLink(id);
+  return { linked: !!l, ...(l ? { username: l.un || '' } : {}), custom: publicCustom(rem), recurring: publicRecurring(rem) };
 }
 
 /* ---------- расписание ---------- */

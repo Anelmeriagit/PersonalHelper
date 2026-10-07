@@ -19,8 +19,9 @@ const hex = (n) => n.toString(16).padStart(32, '0');
 try {
   for (let i = 1; i <= 30; i++) { await db.cmd('HSET', db.key('doc', hex(i)), 'd', JSON.stringify({ n: i, t: 'Ёж "и" \\ ' + 'x'.repeat(200) }), 'v', String(i)); await db.cmd('SET', db.key('nick', 'user' + i), hex(i)); }
   await db.cmd('SADD', db.key('tgs'), hex(1), hex(2));
-  await db.cmd('SET', db.key('tgt', 'abc'), hex(1), 'EX', 600);
-  const expectKeys = 62;
+  await db.cmd('SET', db.key('tgt', 'abc'), hex(1), 'EX', 600); // временный вид: в копию не попадает
+  await db.cmd('SET', db.key('misc', 'ttl'), hex(1), 'EX', 600); // неизвестный вид: читается через TYPE и PTTL, срок жизни сохраняется
+  const expectKeys = 62; // 30 doc + 30 nick + tgs + misc
 
   const r1 = await B.runBackup({ partBytes: 3000, count: 10 });
   ok(r1.state === 'done' && r1.keys === expectKeys && r1.parts > 1, 'копия сделана: ' + r1.parts + ' частей, ' + r1.keys + ' ключей из ' + expectKeys);
@@ -41,7 +42,8 @@ try {
   const kr = (...a) => rpx + ':' + a.join(':');
   const d7 = await db.getDoc(kr('doc', hex(7)));
   ok(d7.doc && d7.doc.n === 7 && d7.v === 7, 'восстановление из Blob: документ совпадает (версия и содержимое)');
-  ok((await db.cmd('SMEMBERS', kr('tgs'))).length === 2 && (await db.cmd('PTTL', kr('tgt', 'abc'))) > 0, 'восстановлены множество и срок жизни');
+  ok((await db.cmd('SMEMBERS', kr('tgs'))).length === 2 && (await db.cmd('PTTL', kr('misc', 'ttl'))) > 0, 'восстановлены множество и срок жизни');
+  ok(Number(await db.cmd('EXISTS', kr('tgt', 'abc'))) === 0, 'временный ключ tgt в копию не попал');
 } catch (e) { console.log('FAIL исключение:', e.name, e.message); bad++; }
 finally {
   try { // всё созданное удалить: Redis по префиксу, Blob по папке

@@ -2,6 +2,7 @@
 //   nick:<никнейм>  → id          (уникальность никнейма, SET NX)
 //   acc:<id>        → JSON {nick, pw:"соль:scrypt", at}
 //   users           → счётчик аккаунтов (лимит MAX_USERS)
+// Запись acc:<id> может нести отображаемое имя `name` (этап 5; нет поля = не задано) и `email` (аккаунты Google, ниже).
 // Привязка Telegram (этап 3a):
 //   tgt:<хеш токена> → id аккаунта (одноразовая ссылка t.me/<бот>?start=<токен>, живёт LINK_TTL секунд; сам токен не хранится)
 //   tgp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
@@ -63,6 +64,34 @@ export async function createAccount(nick, pass, maxUsers) {
     if (!(await setNx(key('nick', nick), id))) { await del(key('acc', id)); await back(); return { error: 'taken' }; }
   } catch (e) { await back(); throw e; }
   return { id };
+}
+
+// Отображаемое имя: без управляющих символов, пробелы схлопнуты и обрезаны, не больше NAME_MAX символов (по символам, не по байтам).
+export const NAME_MAX = 32;
+export function cleanName(s) {
+  const t = String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/\s+/g, ' ').trim();
+  return Array.from(t).slice(0, NAME_MAX).join('').trim();
+}
+// → отображаемое имя после записи ('' = сброшено) | null, если аккаунта уже нет. SET ... XX: удалённый аккаунт заново не создаётся.
+export async function setName(id, name) {
+  const acc = await getAcc(id);
+  if (!acc) return null;
+  const { id: _id, ...rec } = acc;
+  const n = cleanName(name);
+  if (n) rec.name = n; else delete rec.name;
+  return (await cmd('SET', key('acc', id), JSON.stringify(rec), 'XX')) === 'OK' ? n : null;
+}
+
+// Полное удаление аккаунта: Telegram, все личные записи, никнейм, счётчик, в конце сама запись acc (пока она есть, повтор после сбоя
+// дочистит остальное: сессия остаётся рабочей). → true | false (аккаунта уже нет).
+export async function deleteAccount(id) {
+  const acc = await getAcc(id);
+  if (!acc) return false;
+  await unlinkTelegram(id);
+  await del(key('doc', id), key('rem', id), key('agent', id), key('wifi', id), key('bot', id), key('rl', 'tgl', id));
+  if (acc.nick && (await cmd('GET', key('nick', acc.nick))) === id) await del(key('nick', acc.nick));
+  if (Number(await del(key('acc', id))) > 0) await cmd('DECR', key('users')).catch(() => {});
+  return true;
 }
 
 /* ---------- привязка Telegram ---------- */

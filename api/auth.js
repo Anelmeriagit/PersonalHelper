@@ -1,9 +1,10 @@
 // POST /api/auth  { action: 'login' | 'register' | 'logout', user, pass }
+//   с сессией (этап 5): { action: 'me' } → {id, name, email, tg}; { action: 'rename', name } → {name}; { action: 'delete', confirm: 'удалить' } → {ok}
 // Заменяет login.js и logout.js (одна функция вместо двух: лимит 12 функций на Hobby).
 import crypto from 'node:crypto';
-import { makeCookie, clearCookie } from './_lib.js';
+import { makeCookie, clearCookie, session } from './_lib.js';
 import { dbReady, key, hit, count } from './_db.js';
-import { NICK_RE, PASS_MIN, PASS_MAX, normNick, checkPw, findByNick, createAccount, DUMMY_PW } from './_acc.js';
+import { NICK_RE, PASS_MIN, PASS_MAX, normNick, checkPw, findByNick, createAccount, DUMMY_PW, getAcc, getLink, setName, deleteAccount } from './_acc.js';
 
 const WIN = 15 * 60 * 1000;          // окно лимита входа
 const LOGIN_IP_MAX = 10;             // неудачных входов с одного адреса за окно
@@ -52,6 +53,34 @@ async function register(req, res, body) {
   return res.status(200).json({ ok: true });
 }
 
+const DEL_WORD = 'удалить';
+
+// Действия с сессией: id аккаунта берётся только из cookie, не из тела запроса.
+async function mine(req, res, body) {
+  const id = session(req);
+  const acc = id ? await getAcc(id) : null;
+  if (!acc) return res.status(401).json({ error: 'auth' });
+  if (body.action === 'me') {
+    const l = await getLink(id);
+    return res.status(200).json({
+      id, name: acc.name || '', email: acc.email || '',
+      tg: l ? { linked: true, id: String(l.tid), username: l.un || '' } : { linked: false },
+    });
+  }
+  if (body.action === 'rename') {
+    if (typeof body.name !== 'string') return res.status(400).json({ error: 'Имя должно быть строкой' });
+    const name = await setName(id, body.name);
+    if (name === null) return res.status(401).json({ error: 'auth' });
+    return res.status(200).json({ name });
+  }
+  if (String(body.confirm == null ? '' : body.confirm).trim().toLowerCase() !== DEL_WORD) {
+    return res.status(400).json({ error: `Для удаления введите слово «${DEL_WORD}»` });
+  }
+  await deleteAccount(id);
+  res.setHeader('Set-Cookie', clearCookie);
+  return res.status(200).json({ ok: true });
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).end();
@@ -63,13 +92,13 @@ export default async function handler(req, res) {
     res.setHeader('Set-Cookie', clearCookie);
     return res.status(200).json({ ok: true });
   }
-  if (body.action !== 'login' && body.action !== 'register') return res.status(400).json({ error: 'bad request' });
+  if (!['login', 'register', 'me', 'rename', 'delete'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
   if (String(process.env.SESSION_SECRET || '').length < 32 || !dbReady()) {
     console.error('auth: не заданы SESSION_SECRET (≥32 символов) или KV_REST_API_URL / KV_REST_API_TOKEN');
     return res.status(500).json({ error: 'Сервер не настроен' });
   }
   try {
-    return await (body.action === 'login' ? login : register)(req, res, body);
+    return await (body.action === 'login' ? login : body.action === 'register' ? register : mine)(req, res, body);
   } catch (e) {
     console.error('auth', e && e.name, e && e.message);
     return res.status(503).json({ error: 'Сервис временно недоступен. Попробуйте позже.' });

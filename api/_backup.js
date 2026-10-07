@@ -2,8 +2,10 @@
 // Запуск из cron (4.3) и восстановление (4.4) строятся на этих функциях. Единственное место в api/, где используется Blob (приватный, всё зашифровано).
 // Переменная: BACKUP_KEY — 64 шестнадцатеричных символа (32 байта). Значение нигде не хранится и не логируется.
 //
-// Что копируется: все ключи с префиксом DB_PREFIX (в бою пустой). Типы string, hash и set: другие типы код проекта не использует,
-// их копия пропускает и считает в stats.other. Оставшееся время жизни ключа (PTTL) сохраняется.
+// Что копируется: ключи с префиксом DB_PREFIX (в бою пустой). Типы string, hash и set: другие типы код проекта не использует,
+// их копия пропускает и считает в stats.other. Известные виды ключей (KNOWN) читаются сразу по типу, без TYPE и PTTL (срока жизни у них нет):
+// одна команда на ключ. Временные виды (TEMP: rl, tgt, tgp) не копируются, считаются в stats.temp. Неизвестные виды читаются как раньше:
+// TYPE и PTTL, оставшееся время жизни (PTTL) сохраняется.
 // В записях ключ хранится БЕЗ префикса: копию боевой базы можно проверить в тестовом префиксе («t:»), см. restoreCmds.
 // При пустом префиксе пропускаются чужие ключи тестового проекта (SKIP_PREFIXES), иначе они попали бы в боевую копию.
 //
@@ -150,7 +152,7 @@ const wrongType = (e) => !!e && (e.kind === 'cmd' || e.kind === 'http') && /WRON
 // Если тип ключа сменился между TYPE и чтением, пачка падает с WRONGTYPE: тогда читаем по одному, такой ключ считаем changed.
 export async function readRecs(keys, types, pttls) {
   const p = prefix();
-  const recs = [], st = { copied: 0, gone: 0, changed: 0 };
+  const recs = [], st = { copied: 0, gone: 0, changed: 0 }, wrong = [];
   const items = keys.map((k, i) => ({ k, type: types[i], pttl: pttls[i] }));
   const raws = new Array(items.length).fill(undefined);
   try {
@@ -163,21 +165,30 @@ export async function readRecs(keys, types, pttls) {
     }
   }
   items.forEach((x, i) => {
-    if (raws[i] === undefined) { st.changed++; return; }
+    if (raws[i] === undefined) { st.changed++; wrong.push(x.k); return; }
     const r = toRec(x.k.slice(p.length), x.type, raws[i], x.pttl);
     if (r) { recs.push(r); st.copied++; } else st.gone++;
   });
-  return { recs, st };
+  return { recs, st, wrong }; // wrong — ключи, у которых тип оказался другим (тех же, что учтены в st.changed)
 }
 
+// Вид ключа — первый отрезок имени без префикса: «doc:<id>» → «doc», «tgs» → «tgs».
+const kindOf = (rel) => { const i = rel.indexOf(':'); return i < 0 ? rel : rel.slice(0, i); };
+// Известные виды ключей проекта и их типы Redis (см. notes/backup.md). Срока жизни у них нет, поэтому TYPE и PTTL не нужны.
+// Map, а не объект: вид «constructor» или «__proto__» не должен совпасть со свойством прототипа.
+export const KNOWN = new Map([['acc', 'string'], ['nick', 'string'], ['tg', 'string'], ['tgu', 'string'], ['users', 'string'],
+  ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['tgs', 'set']]);
+// Временные ключи (счётчики лимитов, одноразовые ссылки привязки): не копируются, число идёт в stats.temp.
+export const TEMP = new Set(['rl', 'tgt', 'tgp']);
+
 // Один шаг обхода: SCAN от курсора → записи найденных ключей. Вызывать, пока done не станет true; курсор — строка, его можно
-// сохранить и продолжить позже (4.2). → {recs, cursor, done, stats:{scanned, copied, gone, changed, foreign, other:{тип: число}}}
+// сохранить и продолжить позже (4.2). → {recs, cursor, done, stats:{scanned, copied, gone, changed, foreign, temp, other:{тип: число}}}
 export async function readBatch(cursor, opts) {
   const count = Math.max(1, Math.min(1000, Number(opts && opts.count) || 200));
   const p = prefix();
   const r = await cmd('SCAN', String(cursor || '0'), 'MATCH', globEsc(p) + '*', 'COUNT', count);
   const next = String(r[0]);
-  const stats = { scanned: 0, copied: 0, gone: 0, changed: 0, foreign: 0, other: {} };
+  const stats = zeroStats();
   const found = [...new Set(r[1] || [])];
   stats.scanned = found.length;
   const keys = found.filter((k) => {
@@ -186,10 +197,23 @@ export async function readBatch(cursor, opts) {
     return mine;
   }).sort();
   const recs = [];
-  if (keys.length) {
-    const meta = await pipe(keys.flatMap((k) => [['TYPE', k], ['PTTL', k]]));
+  let known = [], unknown = [];
+  for (const k of keys) {
+    const kind = kindOf(k.slice(p.length));
+    if (TEMP.has(kind)) stats.temp++;
+    else if (KNOWN.has(kind)) known.push(k);
+    else unknown.push(k);
+  }
+  if (known.length) { // тип известен по виду ключа: одна команда на ключ
+    const got = await readRecs(known, known.map((k) => KNOWN.get(kindOf(k.slice(p.length)))), known.map(() => -1));
+    recs.push(...got.recs);
+    stats.copied += got.st.copied; stats.gone += got.st.gone;
+    unknown = unknown.concat(got.wrong); // тип оказался другим: такой ключ идёт прежним путём (TYPE, PTTL)
+  }
+  if (unknown.length) {
+    const meta = await pipe(unknown.flatMap((k) => [['TYPE', k], ['PTTL', k]]));
     const rk = [], rt = [], rp = [];
-    keys.forEach((k, i) => {
+    unknown.forEach((k, i) => {
       const type = String(meta[2 * i]), pttl = Number(meta[2 * i + 1]);
       if (type === 'none' || pttl === -2) stats.gone++;
       else if (!READ[type]) stats.other[type] = (stats.other[type] || 0) + 1;
@@ -201,6 +225,7 @@ export async function readBatch(cursor, opts) {
       stats.copied += got.st.copied; stats.gone += got.st.gone; stats.changed += got.st.changed;
     }
   }
+  recs.sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
   return { recs, cursor: next, done: next === '0', stats };
 }
 
@@ -218,7 +243,7 @@ export const KEEP = 7;               // сколько полных копий �
 export const PART_BYTES = 1024 * 1024; // сколько записей (в байтах открытого текста) собирать в одну часть
 export const BUDGET_MS = 22000;      // сколько времени работать за вызов (maxDuration функции 30 с)
 export const LEASE_MS = 45000;       // замок: ход копии моложе этого срока считается занятым другим запуском
-export const STALE_MS = 20 * 3600 * 1000; // ход старше этого срока не продолжается: копия должна быть из одного дня
+export const STALE_MS = 3 * 24 * 3600 * 1000; // ход старше этого срока не продолжается; до тех пор незаконченная копия доделывается ближайшими запусками cron
 const MANIFEST_V = 1;
 
 const partPath = (snap, n) => dir() + snap + '/p' + n + '.bin';
@@ -277,9 +302,9 @@ const snapOf = (path) => { const d = dir(); if (!path.startsWith(d)) return null
 function sumStats(a, b) {
   const o = { ...a.other };
   for (const [t, n] of Object.entries(b.other || {})) o[t] = (o[t] || 0) + n;
-  return { scanned: a.scanned + b.scanned, copied: a.copied + b.copied, gone: a.gone + b.gone, changed: a.changed + b.changed, foreign: a.foreign + b.foreign, other: o };
+  return { scanned: a.scanned + b.scanned, copied: a.copied + b.copied, gone: a.gone + b.gone, changed: a.changed + b.changed, foreign: a.foreign + b.foreign, temp: (a.temp || 0) + (b.temp || 0), other: o }; // temp: в ходе, начатом до 5-й части, поля ещё нет
 }
-const zeroStats = () => ({ scanned: 0, copied: 0, gone: 0, changed: 0, foreign: 0, other: {} });
+const zeroStats = () => ({ scanned: 0, copied: 0, gone: 0, changed: 0, foreign: 0, temp: 0, other: {} });
 
 async function readProgress() {
   const g = await bget(progPath());
@@ -313,7 +338,7 @@ export async function runBackup(opts) {
     cur = null;
   }
   if (cur && now() - cur.p.upd < LEASE_MS) return { state: 'busy' };
-  if (cur && now() - cur.p.at > STALE_MS) { // устаревший ход: копия должна быть из одного дня
+  if (cur && now() - cur.p.at > STALE_MS) { // устаревший ход (больше STALE_MS): не склеиваем копию из слишком разных дней
     await bdel((await blist(dir() + cur.p.snap + '/')));
     await bdel([{ pathname: progPath() }]);
     cur = null;
@@ -438,7 +463,7 @@ export async function verifyBackup(snap) {
 }
 
 /* ====================== запуск по расписанию (этап 4.3) ====================== */
-export const DUE_GAP_MS = 20 * 3600 * 1000; // новая копия нужна, если последней полной больше этого срока (cron зовёт копию в оба слота: сбой утром доделывается вечером)
+export const DUE_GAP_MS = 7 * 24 * 3600 * 1000; // новая копия нужна, если последней полной больше этого срока (раз в неделю; cron зовёт копию в оба слота каждые сутки, поэтому незаконченная доделывается)
 // Время копии из её номера («20261005t180000-ab12» → мс UTC).
 export function snapTime(snap) {
   const m = /^(\d{4})(\d{2})(\d{2})t(\d{2})(\d{2})(\d{2})-/.exec(String(snap));

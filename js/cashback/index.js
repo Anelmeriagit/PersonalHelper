@@ -1,17 +1,19 @@
 /* Кэшбэк: сохранение с версиями и конфликтами, режим редактирования, события страницы */
 import {$,esc,ls,lset,nrm} from '../util.js';
 import {clock} from '../time.js';
-import {api,S,authFail} from '../api.js';
+import {api,S,authFail,fresh,stamp} from '../api.js';
 import {dlgAlert,dlgConfirm,dlgPrompt} from '../dialogs.js';
 import {C,empty,blank,list,setPart,getPart,peek,norm,allCats,eachRow,prune,partName,changedParts,hasUnsaved} from './state.js';
 import {render,syncView} from './view.js';
 
 export {hasUnsaved};
-var stage=$('stage'),st=$('st'),editBtn=$('editBtn'),warn=$('warn'),vsw=$('vsw'),timer=0;
+var stage=$('stage'),st=$('st'),editBtn=$('editBtn'),warn=$('warn'),vsw=$('vsw'),timer=0,loading=false;
+/* Пауза между правкой и сохранением: чем она длиннее, тем меньше записей в Redis (каждая запись = чтение + запись). При уходе со вкладки сохраняется сразу (leaving) */
+var SAVE_MS=1800;
 
 /* ---------- сохранение с версиями ---------- */
 function save(parts){if(C.edit){st.textContent='●';return}
-  (parts||[]).forEach(function(k){C.dirty[k]=1});clearTimeout(timer);st.textContent='…';timer=setTimeout(flush,400)}
+  (parts||[]).forEach(function(k){C.dirty[k]=1});clearTimeout(timer);st.textContent='…';timer=setTimeout(flush,SAVE_MS)}
 function flush(ka){
   if(C.flight||C.conflict)return;
   var ks=Object.keys(C.dirty);if(!ks.length)return;
@@ -25,20 +27,22 @@ function flush(ka){
     if(r.status===409&&j.error==='conflict'){C.conflict={parts:j.parts||ks,data:j.data,rev:j.rev};back();showWarn();st.textContent='!';return}
     if(!r.ok){back();st.textContent='Ошибка';return}
     ks.forEach(function(k){C.rev[k]=j.rev[k]});
-    if(Object.keys(C.dirty).length)flush();else st.textContent='✓'})
+    if(Object.keys(C.dirty).length)flush(document.visibilityState==='hidden');else st.textContent='✓'})
   }).catch(function(){C.flight=false;back();st.textContent='Ошибка'})}
 function showWarn(){var c=C.conflict;if(!c){warn.hidden=true;warn.innerHTML='';return}
   warn.hidden=false;
   warn.innerHTML='<p>Не сохранено: «'+c.parts.map(function(k){return esc(partName(k))}).join('», «')+'» изменили на другом устройстве.</p>'+
     '<div class="acts"><button class="btn" data-w="load" type="button">Загрузить актуальную версию</button><button class="btn" data-w="mine" type="button">Перезаписать моей</button></div>'}
 function note(msg){warn.hidden=false;warn.innerHTML='<p>'+esc(msg)+'</p>';setTimeout(function(){if(!C.conflict){warn.hidden=true;warn.innerHTML=''}},6000)}
-function reload(){api('GET','/api/data').then(function(r){if(r.status===401){authFail();return}if(!r.ok)return;return r.json().then(function(j){if(C.edit||C.conflict||Object.keys(C.dirty).length)return;C.data=norm(j.data);C.rev=j.rev||{};render()})}).catch(function(){})}
-function refresh(){
+function reload(){api('GET','/api/data').then(function(r){if(r.status===401){authFail();return}if(!r.ok)return;return r.json().then(function(j){if(C.edit||C.conflict||Object.keys(C.dirty).length)return;C.data=norm(j.data);C.rev=j.rev||{};stamp('cb');render()})}).catch(function(){})}
+/* Обновление с сервера. Без force не чаще раза в REFRESH_MS (api.js); force — смена месяца. Не трогает данные, пока есть несохранённые правки. */
+function refresh(force){
   function busy(){return C.edit||C.flight||C.conflict||Object.keys(C.dirty).length}
-  if(!S.loggedIn||busy())return;
-  api('GET','/api/data').then(function(r){if(r.status===401){authFail();return}if(!r.ok)return;
-    return r.json().then(function(j){if(busy())return;
-      if(JSON.stringify(j.rev)!==JSON.stringify(C.rev)){C.data=norm(j.data);C.rev=j.rev;render()}})}).catch(function(){})}
+  if(!S.loggedIn||loading||busy()||(!force&&fresh('cb')))return;
+  loading=true;
+  api('GET','/api/data').then(function(r){loading=false;if(r.status===401){authFail();return}if(!r.ok)return;
+    return r.json().then(function(j){if(busy())return;stamp('cb');
+      if(JSON.stringify(j.rev)!==JSON.stringify(C.rev)){C.data=norm(j.data);C.rev=j.rev;render()}})}).catch(function(){loading=false})}
 
 /* ---------- свои категории ---------- */
 function validCat(v){return v&&v.length<=40&&!/[<>"'`&\\\u0000-\u001f]/.test(v)}
@@ -61,20 +65,22 @@ function discardEdit(){(changedParts().length?dlgConfirm('Выйти без со
 
 /* ---------- события ---------- */
 function tick(){var n=clock();if(n.cur===C.ck.cur&&n.late===C.ck.late&&n.day===C.ck.day)return;
-  var rolled=n.cur!==C.ck.cur;C.ck=n;if(S.loggedIn){render();if(rolled)refresh()}}
+  var rolled=n.cur!==C.ck.cur;C.ck=n;if(S.loggedIn){render();if(rolled)refresh(true)}}
 function leaving(){if(!S.loggedIn||C.flight||C.conflict||!Object.keys(C.dirty).length)return;clearTimeout(timer);flush(true)}
 
 /* ---------- связь с общим каркасом (main.js) ---------- */
 export function setStatus(t){st.textContent=t}
 export function stopSave(){clearTimeout(timer)}
-export function onVisible(){tick();refresh()}
+export function onVisible(){tick();if(S.page==='main')refresh()}
+/* переход на страницу «Кэшбэк» с другой страницы: обновить, если данные старше REFRESH_MS */
+export function onPage(){refresh()}
 export function onHidden(){leaving()}
 export function discardAll(){C.dirty={};C.conflict=null;C.edit=false}
 /* сессия закончилась: несохранённое оставляем в памяти вкладки (keep), остальное сбрасываем */
 export function loggedOut(keep){C.flight=false;
   if(keep){C.kept=true}else{C.kept=false;C.data=empty();C.dirty={};C.conflict=null;C.rev={};C.edit=false;editBtn.setAttribute('aria-pressed','false');showWarn()}}
 /* вход: возвращает true, если в памяти остались несохранённые правки (данные с сервера тогда не затираем) */
-export function startSession(j){var kept=C.kept;if(kept)C.kept=false;else{C.data=norm(j.data);C.rev=j.rev||{}}C.ck=clock();return kept}
+export function startSession(j){var kept=C.kept;if(kept)C.kept=false;else{C.data=norm(j.data);C.rev=j.rev||{};stamp('cb')}C.ck=clock();return kept}
 export function syncEditPressed(){editBtn.setAttribute('aria-pressed',C.edit)}
 export function finishBoot(kept){
   if(kept){render();if(C.edit)st.textContent='●';else if(Object.keys(C.dirty).length)flush();return}

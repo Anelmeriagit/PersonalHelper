@@ -1,8 +1,8 @@
 /* «Агент»: пары «приложение — время сброса», порядок меняется перетаскиванием. Загрузка и автосохранение страницы */
 import {$,esc,opts,IC,nrm} from '../util.js';
-import {api,S,authFail} from '../api.js';
+import {api,S,authFail,fresh,stamp} from '../api.js';
 import {dlgAlert,dlgPrompt} from '../dialogs.js';
-import {A,AG_APPS,AG_MAX,agId,agTwo,agNote,agRow,agCopy,agNextAt} from './state.js';
+import {A,AG_APPS,AG_MAX,AG_SAVE_MS,agId,agTwo,agNote,agRow,agCopy,agNextAt} from './state.js';
 import {agNotifHtml,agMarks,agCheck,agFetchN,agMerge,agToggleNotify,initNotify} from './notify.js';
 import {initDrag} from './drag.js';
 
@@ -34,28 +34,33 @@ function agRender(){if(!A.ag){agBody.innerHTML='';return}
     '<button class="addbtn" type="button" data-ag="add"'+(A.ag.rows.length>=AG_MAX?' disabled':'')+'>+ Добавить строку</button>';agMarks()}
 export function agLoad(){if(A.busy)return;A.busy=true;
   api('GET','/api/agent').then(function(r){A.busy=false;if(r.status===401){authFail();return}if(!r.ok)throw 0;
-    return r.json().then(function(j){if(!S.loggedIn)return;A.n=agCopy(j.rows);A.nAt=Date.now();
+    return r.json().then(function(j){if(!S.loggedIn)return;A.n=agCopy(j.rows);A.nAt=Date.now();stamp('ag');
       if(S.page!=='agent'||A.timer||A.saving||A.drag){agCheck();return}
       A.ag={rows:agCopy(j.rows)};var mig=false;
       A.ag.rows.forEach(function(r){if(r.h!==null&&r.m!==null&&!r.at){r.at=agNextAt(r.h,r.m);mig=true}});
       agRender();if(mig)agSchedule();agCheck()})
   }).catch(function(){A.busy=false;if(S.loggedIn&&S.page==='agent'&&!A.ag)agBody.innerHTML='<p class="empty">Не удалось загрузить данные. Проверьте соединение и откройте страницу снова.</p>'})}
-function agSchedule(){agNote('…',true);clearTimeout(A.timer);A.timer=setTimeout(function(){agFlush(false)},400)}
+function agSchedule(){agNote('…',true);clearTimeout(A.timer);A.timer=setTimeout(function(){agFlush(false)},AG_SAVE_MS)}
 function agFlush(ka){clearTimeout(A.timer);A.timer=0;if(!A.ag)return;if(A.saving){A.again=true;return}A.saving=true;
   api('PUT','/api/agent',{rows:A.ag.rows},ka).then(function(r){A.saving=false;if(r.status===401){authFail();return}if(!r.ok)throw 0;
     return r.json().catch(function(){return null}).then(function(j){agMerge(j);
-      if(A.again){A.again=false;agFlush(false)}else agNote('Сохранено ✓')})
+      if(A.again){A.again=false;agFlush(document.visibilityState==='hidden')}else agNote('Сохранено ✓')})
   }).catch(function(){A.saving=false;A.again=false;agNote('Не удалось сохранить. Проверьте соединение и измените строку ещё раз.',true)})}
-export function agLeave(){if(A.timer&&S.loggedIn)agFlush(true)}
+/* уход со вкладки: ждущая отправка уходит сразу (keepalive); если сейчас идёт сохранение, а за ним правка (A.again), её отправит цепочка в agFlush */
+export function agLeave(){if((A.timer||A.again)&&S.loggedIn)agFlush(true)}
 
-/* вкладка снова видна: перечитать строки (если страница открыта и ничего не сохраняется), проверить сброс */
+/* вкладка снова видна: не чаще раза в REFRESH_MS (api.js). На странице «Агент» перечитать строки (если ничего не сохраняется и не тянут), на других страницах
+   обновить строки для уведомлений (agFetchN, если уведомления включены); проверить сброс */
 export function agVisible(){
-  if(S.loggedIn&&S.page==='agent'&&!A.timer&&!A.saving&&!A.drag)agLoad();
-  if(S.loggedIn){agCheck();agFetchN()}}
-/* страница переключилась: загрузить строки и обновить данные для уведомлений */
+  if(!S.loggedIn)return;
+  if(S.page==='agent'){if(!A.timer&&!A.saving&&!A.drag&&!fresh('ag'))agLoad()}
+  else agFetchN();
+  agCheck()}
+/* страница переключилась: на «Агенте» загрузить строки всегда (они же обновляют данные для уведомлений), на других страницах обновить данные уведомлений не чаще раза в REFRESH_MS */
 export function agOnPage(){
-  if(S.loggedIn&&S.page==='agent'&&!A.drag)agLoad();
-  if(S.loggedIn)agFetchN()}
+  if(!S.loggedIn)return;
+  if(S.page==='agent'){if(!A.drag)agLoad()}
+  else agFetchN()}
 
 export function initAgent(){
   A.render=agRender;

@@ -1,13 +1,15 @@
 /* Привязка Telegram: блок «Telegram» на странице «Напоминания».
-   Три состояния: не привязан -> ссылка выдана (ждём «Запустить» в Telegram) -> привязан. Сервер: api/tglink.js. */
+   Три состояния: не привязан -> ссылка выдана (ждём «Запустить» в Telegram) -> привязан. Сервер: api/tglink.js.
+   Состояние «привязан / не привязан» и @имя приходят в ответе GET /api/reminders (tgApply вызывает reminders/index.js), поэтому при входе на страницу
+   отдельного запроса нет. GET /api/tglink нужен только опросу привязки, пока показана ссылка. */
 import {$,esc} from './util.js';
 import {api,authFail} from './api.js';
 import {dlgConfirm} from './dialogs.js';
 
-var T={st:null,url:'',until:0,timer:0,busy:false,gen:0},changed=function(){};
+var T={st:null,url:'',until:0,timer:0,busy:false,gen:0,polling:false,n:0},changed=function(){};
 
 function msg(t){var m=$('tgMsg');if(m)m.textContent=t||''}
-function stop(){if(T.timer){clearInterval(T.timer);T.timer=0}}
+function stop(){if(T.timer){clearTimeout(T.timer);T.timer=0}}
 
 function render(){var b=$('tgBody');if(!b)return;
   if(!T.st){b.innerHTML='';return}
@@ -21,24 +23,35 @@ function render(){var b=$('tgBody');if(!b)return;
   b.innerHTML='<p class="tgn">Привяжите Telegram, чтобы бот присылал вам напоминания.</p>'+
     '<button class="addbtn" type="button" data-t="link">Привязать Telegram</button>'}
 
-/* Пока показана ссылка, раз в 4 секунды спрашиваем, нажали ли «Запустить» (только когда вкладка видна). */
-function arm(){stop();var g=T.gen;
-  T.timer=setInterval(function(){
-    if(document.visibilityState!=='visible')return;
-    if(Date.now()>T.until){stop();T.url='';render();msg('Ссылка устарела. Получите новую.');return}
-    api('GET','/api/tglink').then(function(r){if(r.status===401){authFail();return null}return r.ok?r.json():null}).then(function(j){
-      if(g!==T.gen||!j||!j.linked)return;
-      T.st=j;T.url='';stop();render();msg('Telegram привязан');changed()}).catch(function(){})},4000)}
+/* Опрос привязки: пока показана ссылка, спрашиваем сервер, нажали ли «Запустить». Паузы растут: 4 с (первые 5 раз), 8 с (следующие 5), дальше 15 с.
+   Вкладка скрыта: запросов нет. При возврате на вкладку одна проверка сразу (tgVisible). Через 10 минут (срок ссылки) опрос прекращается. */
+var POLL_STEPS=[4000,8000,15000],POLL_EACH=5;
+function pause(n){return POLL_STEPS[Math.min(POLL_STEPS.length-1,Math.floor(n/POLL_EACH))]}
+function expire(){stop();T.url='';render();msg('Ссылка устарела. Получите новую.')}
+function poll(g){if(T.polling)return;T.polling=true;
+  api('GET','/api/tglink').then(function(r){T.polling=false;if(r.status===401){authFail();return null}return r.ok?r.json():null}).then(function(j){
+    if(g!==T.gen||!j||!j.linked)return;
+    T.st=j;T.url='';stop();render();msg('Telegram привязан');changed()}).catch(function(){T.polling=false})}
+function arm(){stop();T.n=0;var g=T.gen;
+  (function next(){T.timer=setTimeout(function(){T.timer=0;
+    if(g!==T.gen||!T.url)return;
+    if(Date.now()>T.until){expire();return}
+    if(document.visibilityState==='visible')poll(g);
+    next()},pause(T.n++))})()}
 
-export function tgLoad(){var g=++T.gen;
-  api('GET','/api/tglink').then(function(r){
-    if(r.status===401){authFail();return}
-    if(!r.ok)throw 0;
-    return r.json().then(function(j){
-      if(g!==T.gen)return;
-      T.st=j;if(j.linked){T.url='';stop()}
-      render();if(!j.linked&&T.url)arm()})
-  }).catch(function(){if(g===T.gen)msg('Не удалось проверить привязку')})}
+/* Вкладка браузера снова видна: если ждём «Запустить», проверить привязку сразу (человек как раз вернулся из Telegram) */
+export function tgVisible(){if(!T.url||!T.timer)return;
+  if(Date.now()>T.until){expire();return}
+  poll(T.gen)}
+
+/* Состояние привязки из ответа GET /api/reminders ({linked, username?}). Показанную ссылку не трогает, пока не привязали; без изменений не перерисовывает. */
+export function tgApply(j){if(!j||typeof j.linked!=='boolean')return;
+  var was=T.st;
+  if(j.linked){var un=typeof j.username==='string'?j.username:'',pend=!!T.url;
+    if(was&&was.linked&&was.username===un&&!pend)return;
+    T.st={linked:true,username:un};T.url='';stop();render();if(pend)msg('Telegram привязан');return}
+  if(T.url||(was&&!was.linked))return;
+  T.st={linked:false};render()}
 
 export function tgClear(){stop();T.gen++;T.st=null;T.url='';T.busy=false;render();msg('')}
 

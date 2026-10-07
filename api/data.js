@@ -1,5 +1,5 @@
 import { session, renewCookie, loadDoc, writeDoc, clean, isPrecond, PART_RE, curMonth, shiftMonth } from './_lib.js';
-import { nickOf } from './_acc.js';
+import { getAcc } from './_acc.js';
 
 const pub = (doc) => ({ months: doc.months, custom: doc.custom });
 
@@ -11,10 +11,10 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const rc = renewCookie(req);
       if (rc) res.setHeader('Set-Cookie', rc);
-      const nick = await nickOf(user);
-      if (!nick) return res.status(401).json({ error: 'auth' });
+      const acc = await getAcc(user);
+      if (!acc) return res.status(401).json({ error: 'auth' });
       const { doc } = await loadDoc(user);
-      return res.status(200).json({ user: nick, data: pub(doc), rev: doc.rev });
+      return res.status(200).json({ user: acc.nick || '', name: acc.name || '', data: pub(doc), rev: doc.rev });
     }
     if (req.method === 'PUT') {
       if (!String(req.headers['content-type'] || '').includes('application/json')) return res.status(415).end();

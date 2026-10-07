@@ -1,7 +1,9 @@
 /* «Агент»: константы, общее состояние A и чистые помощники (время, копирование строк) */
 import {$} from '../util.js';
 
-export var AG_APPS=[{id:'app',t:'App'},{id:'opera',t:'Opera'},{id:'mozilla',t:'Mozilla'},{id:'edge',t:'Edge'}],AG_MAX=12,AG_GRACE=30*60000;
+export var AG_APPS=[{id:'app',t:'App'},{id:'opera',t:'Opera'},{id:'mozilla',t:'Mozilla'},{id:'edge',t:'Edge'}],AG_MAX=12,AG_GRACE=30*60000,
+/* пауза между правкой и сохранением (меньше записей в Redis); при уходе со вкладки сохраняется сразу (agLeave) */
+AG_SAVE_MS=1800;
 /* ag — загруженные строки страницы; n — строки для уведомлений вне страницы «Агент»; render — отрисовка страницы (задаёт index.js) */
 export var A={ag:null,timer:0,saving:false,again:false,noteT:0,drag:null,busy:false,cu:[],n:null,nAt:0,nBusy:false,wake:0,sw:false,fm:null,render:null};
 var agMsg=$('agMsg');

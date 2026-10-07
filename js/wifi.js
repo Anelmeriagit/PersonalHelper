@@ -1,6 +1,6 @@
 /* WiFi: личная сеть пользователя (ввод и правка), QR-код для подключения, показ и копирование пароля, печатная страница */
 import {$,esc} from './util.js';
-import {api,S,authFail} from './api.js';
+import {api,S,authFail,stamp} from './api.js';
 import {dlgConfirm} from './dialogs.js';
 
 var wifiBody=$('wifiBody'),wifiMsg=$('wifiMsg'),wf=null,wfShow=false,wfPrintPass=true,wfBusy=false,wfTimer=0,wfForm=false,wfSaving=false;
@@ -49,7 +49,7 @@ function wifiSave(){if(wfSaving)return;var err=$('wfErr'),sec=$('wfSec').value,b
     if(r.status===401){authFail();return}
     if(r.status===400){err.textContent=wfError(j.error,sec);btn.disabled=false;return}
     if(!r.ok){err.textContent='Не удалось сохранить. Попробуйте ещё раз';btn.disabled=false;return}
-    wf=j;wfForm=false;wfShow=false;wifiRender();wifiNote('Сохранено')})
+    wf=j;stamp('wifi');wfForm=false;wfShow=false;wifiRender();wifiNote('Сохранено')})
   }).catch(function(){wfSaving=false;err.textContent='Нет связи с сервером';btn.disabled=false})}
 function wifiDelete(){dlgConfirm('Удалить данные сети? Показ и QR-код пропадут, пока вы не введёте сеть заново.').then(function(ok){if(!ok)return;
   api('DELETE','/api/wifi').then(function(r){if(r.status===401){authFail();return}if(!r.ok){wifiNote('Не удалось удалить');return}
@@ -59,7 +59,7 @@ export function wifiLoad(){
   api('GET','/api/wifi').then(function(r){
     if(r.status===401){wfBusy=false;authFail();return}
     if(!r.ok)throw 0;
-    return r.json().then(function(j){wfBusy=false;if(!S.loggedIn||S.page!=='wifi')return;wf=j;if(wfForm&&$('wForm'))return;wfForm=false;wifiRender()})
+    return r.json().then(function(j){wfBusy=false;if(!S.loggedIn||S.page!=='wifi')return;stamp('wifi');wf=j;if(wfForm&&$('wForm'))return;wfForm=false;wifiRender()})
   }).catch(function(){wfBusy=false;if(S.loggedIn&&S.page==='wifi'&&!wf)wifiBody.innerHTML='<p class="empty">Не удалось загрузить данные. Проверьте соединение и откройте вкладку снова.</p>'})}
 export function wifiCopy(){var t=wf&&wf.password;if(!t)return;
   function fb(){var ta=document.createElement('textarea'),done=false;ta.value=t;ta.setAttribute('readonly','');ta.className='wcp';document.body.appendChild(ta);ta.select();

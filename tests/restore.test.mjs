@@ -28,6 +28,12 @@ async function seed(n = 6) {
   await db.cmd('SET', 'tgt:abcd', hex(1), 'PX', 600000);
   await db.cmd('SET', 'rl:ip:1.2.3.4', '3', 'PX', 900000);
 }
+// Копия прежнего вида (до части 2 сокращения команд Redis): временные ключи rl, tgt, tgp лежат в ней со сроком жизни.
+// Получается тем же кодом, если на время убрать их из списка временных: они идут прежним путём (TYPE, PTTL).
+async function makeOldBackup(at = T0) {
+  const gone = ['rl', 'tgt', 'tgp'].filter((k) => B.TEMP.delete(k));
+  try { return await makeBackup(at); } finally { gone.forEach((k) => B.TEMP.add(k)); }
+}
 const dumpAll = () => JSON.stringify(__keys().map((k) => [k, __raw(k)]));
 async function makeBackup(at = T0) { const r = await B.runBackup({ now: () => at }); assert.equal(r.state, 'done'); return r; }
 function mkIo(over = {}) {
@@ -48,7 +54,7 @@ test('--list: копии с датой, числом ключей и часте�
   try { await run({ list: true }, m.io); } finally { [process.env.KV_REST_API_URL, process.env.KV_REST_API_TOKEN] = saved; }
   assert.match(m.text(), /Копий в хранилище: 2/);
   assert.ok(m.text().indexOf(b.snap) < m.text().indexOf(a.snap), 'новые первыми');
-  assert.match(m.text(), /2026-10-06 12:00:00 UTC, ключей 15, частей 1/);
+  assert.match(m.text(), /2026-10-06 12:00:00 UTC, ключей 13, частей 1/);
   process.env.BACKUP_KEY = KEY2;
   const m2 = mkIo();
   await run({ list: true }, m2.io);
@@ -61,7 +67,7 @@ test('--verify: хорошая копия проходит; испорченна
   const m = mkIo();
   const r = await run({ verify: true }, m.io);
   assert.equal(r.ok, true);
-  assert.match(m.text(), new RegExp('Копия ' + a.snap + ': частей 1, ключей 15, проверка пройдена'));
+  assert.match(m.text(), new RegExp('Копия ' + a.snap + ': частей 1, ключей 13, проверка пройдена'));
   const p = 'backup/' + a.snap + '/p0.bin';
   const c = Buffer.from(__read(p)); c[c.length - 1] ^= 1; __write(p, c);
   const m2 = mkIo();
@@ -72,9 +78,9 @@ test('--verify: хорошая копия проходит; испорченна
 });
 
 /* ---------- сухой прогон ---------- */
-test('сухой прогон по умолчанию: считает создаваемые и перезаписываемые, пропускает rl и tgt, ничего не пишет', async () => {
+test('сухой прогон по умолчанию (копия прежнего вида с rl и tgt): считает создаваемые и перезаписываемые, пропускает rl и tgt, ничего не пишет', async () => {
   await seed();
-  await makeBackup();
+  await makeOldBackup();
   await db.cmd('DEL', 'doc:' + hex(1), 'doc:' + hex(2)); // два ключа пропали, остальные 13 существуют
   const before = dumpAll();
   const m = mkIo();
@@ -89,9 +95,9 @@ test('сухой прогон по умолчанию: считает созда
   assert.doesNotMatch(m.text(), /Магазин|user1|[0-9a-f]{32}/);
 });
 
-test('--all включает временные ключи в план', async () => {
+test('--all включает временные ключи в план (копия прежнего вида)', async () => {
   await seed();
-  await makeBackup();
+  await makeOldBackup();
   const r = await run({ all: true }, mkIo().io);
   assert.deepEqual([r.plan.total, r.plan.skipped], [15, 0]);
   const r2 = await run({ skip: ['doc'] }, mkIo().io);
@@ -152,14 +158,30 @@ test('--to=t: восстановление в другой префикс, бо�
   assert.equal(process.env.DB_PREFIX, envPrefix, 'DB_PREFIX процесса возвращён');
 });
 
-test('--all: временные ключи возвращаются со сроком жизни; сверка принимает срок', async () => {
+test('--all: временные ключи копии прежнего вида возвращаются со сроком жизни; сверка принимает срок', async () => {
   await seed();
-  await makeBackup();
+  await makeOldBackup();
   for (const k of __keys()) await db.cmd('DEL', k);
   const r = await run({ apply: true, yes: true, all: true }, mkIo().io);
   assert.deepEqual([r.ok, r.restored, r.mismatches], [true, 15, 0]);
   const ttl = await db.cmd('PTTL', 'tgt:abcd');
   assert.ok(ttl > 0 && ttl <= 600000);
+});
+
+test('копия нового вида (без rl и tgt): сухой прогон считает 13 ключей, временных нет; восстановление даёт те же данные и не трогает чужие временные', async () => {
+  await seed();
+  await makeBackup();
+  const m = mkIo();
+  const r = await run({}, m.io);
+  assert.deepEqual([r.plan.total, r.plan.skipped], [13, 0]);
+  assert.doesNotMatch(m.text(), /пропущено временных/);
+  const keep = [__raw('tgt:abcd'), __raw('rl:ip:1.2.3.4')];
+  for (const k of __keys()) if (!/^(tgt|rl):/.test(k)) await db.cmd('DEL', k); // «авария»: данные пропали, временные остались
+  const a = await run({ apply: true, yes: true }, mkIo().io);
+  assert.deepEqual([a.ok, a.restored, a.mismatches], [true, 13, 0]);
+  assert.deepEqual([__raw('tgt:abcd'), __raw('rl:ip:1.2.3.4')], keep);
+  assert.equal(__raw('doc:' + hex(3)).v, '3');
+  assert.deepEqual(__raw('tgs'), [hex(1), hex(2)]);
 });
 
 /* ---------- защита ---------- */

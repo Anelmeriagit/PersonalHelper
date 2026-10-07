@@ -3,7 +3,7 @@
 // Время в тестах фиксируется через t.mock.timers (Date): 2026-10-10 12:00 по Москве, суббота.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __reset, __fail, __keys, __raw } from './redis.mjs';
+import { __reset, __fail, __keys, __raw, __cmds, __cmdLog } from './redis.mjs';
 import { mockReq, mockRes, setEnv } from './helpers.mjs';
 
 setEnv();
@@ -330,4 +330,49 @@ test('mutateRem: ошибка внутри fn ничего не пишет; бе
   const r2 = await rem.mutateRem(id, () => ({ err: 'x' }));
   assert.equal(r2.err, 'x');
   assert.ok(!__keys().some((k) => k.startsWith('rem:')));
+});
+
+/* ---------- username в ответе и число команд Redis (сокращение расхода Upstash) ---------- */
+test('GET /api/reminders у привязанного отдаёт username без @, у не привязанного поля username нет', async () => {
+  const id = await mkAcc('ivan');
+  assert.ok(!('username' in (await get(id)).body), 'не привязан: без username');
+  const { token } = await acc.createLinkToken(id);
+  await acc.bindTelegram(token, { id: 77, username: 'ivan_k' }, 77);
+  const r = await get(id);
+  assert.equal(r.body.linked, true);
+  assert.equal(r.body.username, 'ivan_k');
+  await acc.unlinkTelegram(id);
+  assert.ok(!('username' in (await get(id)).body), 'после отвязки username пропадает');
+});
+
+test('привязка без username: linked true, username пустая строка', async () => {
+  const id = await mkAcc('ivan');
+  const { token } = await acc.createLinkToken(id);
+  await acc.bindTelegram(token, { id: 78 }, 78);
+  const r = await get(id);
+  assert.equal(r.body.linked, true);
+  assert.equal(r.body.username, '');
+});
+
+test('GET /api/reminders: две команды Redis, запись tg:<id> читается один раз', async () => {
+  const id = await mkAcc('ivan');
+  const { token } = await acc.createLinkToken(id);
+  await acc.bindTelegram(token, { id: 77, username: 'ivan_k' }, 77);
+  __cmdLog(true);
+  const r = await get(id);
+  assert.equal(r.statusCode, 200);
+  const log = __cmdLog();
+  assert.equal(log.length, 2, 'команды: ' + log.join(' | '));
+  assert.equal(log.filter((c) => c === 'GET tg:' + id).length, 1, 'tg:<id> читается один раз: ' + log.join(' | '));
+  assert.equal(log.filter((c) => c === 'HMGET rem:' + id).length, 1);
+  assert.equal(__cmds(), 2);
+});
+
+test('POST /api/custom тоже отдаёт username (клиент заменяет rem целиком, блок Telegram не теряет имя)', async () => {
+  const id = await mkAcc('ivan');
+  const { token } = await acc.createLinkToken(id);
+  await acc.bindTelegram(token, { id: 77, username: 'ivan_k' }, 77);
+  const r = await post(custom, id, { date: '2026-10-12', slot: 'day', text: 'позвонить' });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.username, 'ivan_k');
 });

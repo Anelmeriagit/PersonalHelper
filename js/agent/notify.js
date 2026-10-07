@@ -2,7 +2,7 @@
    У строки есть `at` — момент сброса в мс (считает сервер, см. api/agent.js). Уведомление показывает сам сайт,
    пока он открыт (вкладка или установленное приложение): на тарифе Hobby сервер по таймеру ничего не отправит. */
 import {$} from '../util.js';
-import {api,S,authFail} from '../api.js';
+import {api,S,authFail,fresh,stamp} from '../api.js';
 import {A,AG_GRACE,agTwo,agRow,agCopy,agDay,agUntil,agName} from './state.js';
 
 var agBody=$('agBody');
@@ -44,12 +44,12 @@ export function agToggleNotify(){
 /* отметки «уже показано» хранятся на устройстве: после перезагрузки страницы то же уведомление не повторится */
 function agFired(){if(!A.fm){try{A.fm=JSON.parse(localStorage.getItem('agFired')||'{}')}catch(e){A.fm=null}if(!A.fm||typeof A.fm!=='object')A.fm={}}return A.fm}
 function agFiredSave(){try{localStorage.setItem('agFired',JSON.stringify(A.fm))}catch(e){}}
-/* строки для уведомлений вне страницы «Агент»: берём при открытии и при возврате на вкладку, не чаще раза в минуту */
+/* строки для уведомлений вне страницы «Агент»: берём при открытии и при возврате на вкладку, не чаще раза в REFRESH_MS (api.js) */
 export function agFetchN(force){if(!S.loggedIn||A.nBusy||!agActive())return;agSwReg();
-  if(!force&&A.n&&Date.now()-A.nAt<60000){agCheck();return}
+  if(!force&&A.n&&fresh('ag')){agCheck();return}
   A.nBusy=true;
   api('GET','/api/agent').then(function(r){A.nBusy=false;if(r.status===401){authFail();return}if(!r.ok)throw 0;
-    return r.json().then(function(j){if(!S.loggedIn)return;A.nAt=Date.now();if(!(A.ag&&S.page==='agent'))A.n=agCopy(j.rows);agCheck()})
+    return r.json().then(function(j){if(!S.loggedIn)return;A.nAt=Date.now();stamp('ag');if(!(A.ag&&S.page==='agent'))A.n=agCopy(j.rows);agCheck()})
   }).catch(function(){A.nBusy=false})}
 /* проверка: наступившее время — показать (если не старше получаса) и запомнить; следующий запуск — точно ко времени ближайшего сброса */
 export function agCheck(){var rows=agSrc(),now=Date.now(),f,wake=0,ch=false,seen={},i,r;

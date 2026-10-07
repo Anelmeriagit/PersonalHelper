@@ -1,7 +1,7 @@
 // Заглушка Upstash Redis REST для проверок: хранилище в памяти.
 // Подключается через tests/register.mjs: подменяет globalThis.fetch только для адреса KV_REST_API_URL,
 // остальные запросы идут в прежний fetch. Код в api/ менять не нужно.
-// Поддержано то, что использует код проекта: GET, SET (NX, EX, PX), DEL, EXISTS, INCR, DECR, EXPIRE, PEXPIRE, PTTL,
+// Поддержано то, что использует код проекта: GET, SET (NX, XX, EX, PX), DEL, EXISTS, INCR, DECR, EXPIRE, PEXPIRE, PTTL,
 // HGET, HGETALL, HMGET, HSET, TYPE, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и три скрипта EVAL (по первой строке «-- cas», «-- hit» и «-- take», см. api/_db.js).
 // Сами Lua-скрипты здесь НЕ исполняются: заглушка повторяет их смысл на JS. Реальный Redis проверяется отдельно (notes/CHECKLIST.md).
 process.env.KV_REST_API_URL = process.env.KV_REST_API_URL || 'https://redis.test';
@@ -13,14 +13,18 @@ const store = new Map(); // ключ -> { t: 's' | 'h', v, exp: мс | null }
 let failMode = null;     // null | 'network' | 'http' | 'write' (сбой только у команд записи)
 let failMatch = null;    // если задано: сбой только у команд, чей ключ содержит эту строку (например 'doc:')
 let calls = 0;
+let cmdLog = []; // каждая команда Redis отдельно (так считает Upstash: команда в pipeline = одна команда), в виде «ИМЯ ключ»
 
 let afterHook = null; // { name, fn }: один раз после команды с этим именем выполнить fn (ключ пропал между SCAN и чтением)
-export function __reset() { store.clear(); failMode = null; failMatch = null; calls = 0; afterHook = null; }
+export function __reset() { store.clear(); failMode = null; failMatch = null; calls = 0; cmdLog = []; afterHook = null; }
 export function __after(name, fn) { afterHook = { name: String(name).toUpperCase(), fn }; }
 export function __drop(k) { store.delete(k); }
 export function __fail(mode, match) { failMode = mode || null; failMatch = match || null; }
 export function __keys() { return [...store.keys()].sort(); }
 export function __calls() { return calls; }
+// Счёт команд, как в Upstash: число команд (в pipeline каждая считается), и их список. __cmdLog(true) сбрасывает журнал.
+export function __cmds() { return cmdLog.length; }
+export function __cmdLog(clear) { const l = cmdLog.slice(); if (clear) cmdLog = []; return l; }
 // Ключ другого типа Redis (list, zset), которого код проекта не использует: для проверки копии, которая такие типы пропускает.
 export function __putOther(k, t) { store.set(k, { t, v: [], exp: null }); }
 export function __raw(k) { const e = store.get(k); return e ? (e.t === 'h' ? Object.fromEntries(e.v) : e.t === 'set' ? [...e.v].sort() : e.v) : undefined; }
@@ -98,15 +102,16 @@ function exec(args) {
     case 'GET': { const e = str(a[0]); return e ? e.v : null; }
     case 'SET': {
       const [k, v, ...o] = a;
-      let nx = false, exp = null;
+      let nx = false, xx = false, exp = null;
       for (let i = 0; i < o.length; i++) {
         const f = String(o[i]).toUpperCase();
         if (f === 'NX') nx = true;
+        else if (f === 'XX') xx = true;
         else if (f === 'EX') exp = Date.now() + int(o[++i]) * 1000;
         else if (f === 'PX') exp = Date.now() + int(o[++i]);
         else throw rerr('ERR syntax error');
       }
-      if (nx && live(k)) return null;
+      if ((nx && live(k)) || (xx && !live(k))) return null;
       store.set(k, { t: 's', v: String(v), exp });
       return 'OK';
     }
@@ -181,6 +186,7 @@ globalThis.fetch = async function fetchWithRedis(url, opts = {}) {
   calls++;
   const body0 = JSON.parse(opts.body);
   const cmds0 = u.slice(base.length).replace(/\/+$/, '') === '/pipeline' ? body0 : [body0];
+  for (const c of cmds0) cmdLog.push(String(c[0]).toUpperCase() + ' ' + (String(c[0]).toUpperCase() === 'EVAL' ? String(c[3]) : String(c[1])));
   if (failMode && cmds0.some(hits)) {
     if (failMode === 'http') return json({ error: 'ERR simulated outage' }, 500);
     throw new TypeError('fetch failed'); // 'network' и 'write'

@@ -32,10 +32,12 @@ export const routes = {
     },
     rev: {},
   }),
-  'PUT /api/data': () => ({ ok: true }),
-  // Форма ответа этапа 3b: { linked: bool, custom, recurring }; PUT /api/reminders больше нет
+  // как настоящий сервер: новые версии изменённых частей (клиент записывает их в C.rev)
+  'PUT /api/data': (body) => ({ ok: true, rev: Object.fromEntries(Object.keys((body && body.parts) || {}).map((k) => [k, (((body.parts[k]) && body.parts[k].base) || 0) + 1])) }),
+  // Форма ответа: { linked: bool, username? (есть у привязанного), custom, recurring }; PUT /api/reminders больше нет
   'GET /api/reminders': () => ({
     linked: true,
+    username: 'ivan_k',
     custom: [{ id: 'aaaaaaaaaaaa', date: mskDay(3), slot: 'day', text: 'Позвонить <b>маме</b>', on: true, sent: false }],
     recurring: [{ id: 'bbbbbbbbbbbb', date: mskDay(2), every: 'week', slot: 'evening', text: 'Полить цветы', on: true, next: mskDay(2) }],
   }),

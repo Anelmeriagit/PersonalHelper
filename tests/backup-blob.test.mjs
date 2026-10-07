@@ -31,7 +31,8 @@ async function seed(n = 5) {
 function clock(start = T0) { let t = start; const f = () => t; f.advance = (ms) => { t += ms; }; f.set = (v) => { t = v; }; return f; }
 const redisState = () => JSON.stringify(__keys().map((k) => [k, __raw(k)]));
 const snapsIn = () => [...new Set(blobKeys().map((k) => /^backup\/([^/]+)\//.exec(k)).filter(Boolean).map((m) => m[1]))];
-const dbKeys = () => __keys().filter((k) => !k.startsWith('t:')).sort();
+// Временные ключи (tgt:, rl:, tgp:) в копию не попадают.
+const dbKeys = () => __keys().filter((k) => !k.startsWith('t:') && !/^(tgt|rl|tgp):/.test(k)).sort();
 
 async function allRecs(snap) {
   const man = await B.readManifest(snap);
@@ -47,7 +48,7 @@ test('копия маленькой базы: одна часть, манифе�
   const r = await B.runBackup({ now });
   assert.equal(r.state, 'done');
   assert.match(r.snap, /^20261005t180000-[0-9a-f]{4}$/);
-  assert.deepEqual([r.parts, r.keys, r.pruned], [1, 12, 0]);
+  assert.deepEqual([r.parts, r.keys, r.pruned], [1, 11, 0]);
   assert.equal(redisState(), before, 'копия ничего не пишет в Redis');
   assert.deepEqual(blobKeys(), ['backup/' + r.snap + '/manifest.bin', 'backup/' + r.snap + '/p0.bin']);
   for (const k of blobKeys()) {
@@ -57,7 +58,7 @@ test('копия маленькой базы: одна часть, манифе�
   }
   assert.deepEqual((await allRecs(r.snap)).map((x) => x.k).sort(), dbKeys());
   const v = await B.verifyBackup(r.snap);
-  assert.deepEqual([v.ok, v.parts, v.keys, v.problems], [true, 1, 12, []]);
+  assert.deepEqual([v.ok, v.parts, v.keys, v.problems], [true, 1, 11, []]);
   assert.deepEqual(JSON.stringify(r).includes(KEY1), false);
 });
 
@@ -66,12 +67,13 @@ test('манифест: время, число ключей, размеры, sha
   const now = clock();
   const r = await B.runBackup({ now });
   const m = await B.readManifest(r.snap);
-  assert.deepEqual([m.v, m.snap, m.at, m.keys, m.prefix, m.parts.length], [1, r.snap, T0, 12, '', 1]);
+  assert.deepEqual([m.v, m.snap, m.at, m.keys, m.prefix, m.parts.length], [1, r.snap, T0, 11, '', 1]);
   assert.match(m.parts[0].sha, /^[0-9a-f]{64}$/);
   assert.equal(m.parts[0].bytes, __read('backup/' + r.snap + '/p0.bin').length);
-  assert.equal(m.stats.copied, 12);
+  assert.equal(m.stats.copied, 11);
+  assert.equal(m.stats.temp, 1, 'временный ключ посчитан, не скопирован');
   const list = await B.listBackups();
-  assert.deepEqual(list.map((x) => [x.snap, x.complete, x.keys, x.parts]), [[r.snap, true, 12, 1]]);
+  assert.deepEqual(list.map((x) => [x.snap, x.complete, x.keys, x.parts]), [[r.snap, true, 11, 1]]);
 });
 
 test('части делятся по размеру: сумма записей сходится, каждая часть расшифровывается', async () => {
@@ -176,7 +178,7 @@ test('сбой записи манифеста: копия не считаетс
   const r = await B.runBackup({ now });
   assert.equal(r.state, 'done');
   assert.equal(__puts() - putsBefore, 2, 'записаны только продление хода и манифест, части заново не писались');
-  assert.equal((await B.verifyBackup(r.snap)).keys, 14);
+  assert.equal((await B.verifyBackup(r.snap)).keys, 13);
 });
 
 test('прошлый запуск записал манифест, но не убрал ход: ход убирается, новая копия начинается заново', async () => {
@@ -359,7 +361,7 @@ test('круг на уровне Blob: копия → стирание Redis →
   await seed();
   const r = await B.runBackup({ now: clock() });
   const before = {};
-  for (const k of __keys()) before[k] = JSON.stringify(__raw(k));
+  for (const k of __keys()) if (!/^(tgt|rl|tgp):/.test(k)) before[k] = JSON.stringify(__raw(k)); // временные в копию не входят
   for (const k of __keys()) await db.cmd('DEL', k);
   const man = await B.readManifest(r.snap);
   for (const info of man.parts) for (const rec of (await B.readPart(r.snap, man, info.n)).recs) await db.pipe(B.restoreCmds(rec));

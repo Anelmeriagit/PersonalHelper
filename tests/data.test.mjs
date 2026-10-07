@@ -39,7 +39,7 @@ test('GET нового аккаунта: ник, пустые данные', asy
   const c = await signup('anna');
   const r = await call('GET', c);
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { user: 'anna', data: { months: {}, custom: [] }, rev: {} });
+  assert.deepEqual(r.body, { user: 'anna', name: '', data: { months: {}, custom: [] }, rev: {} });
   assert.equal(r.headers['cache-control'], 'no-store');
 });
 

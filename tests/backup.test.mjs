@@ -3,7 +3,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { gzipSync } from 'node:zlib';
-import { __reset, __keys, __raw, __putOther, __after, __drop } from './redis.mjs';
+import { __reset, __keys, __raw, __putOther, __after, __drop, __cmdLog } from './redis.mjs';
 import { setEnv } from './helpers.mjs';
 
 setEnv();
@@ -25,14 +25,16 @@ async function seed() {
   await db.cmd('SADD', 'tgs', hex(1), hex(2));
   await db.cmd('SET', 'tgt:abcd', hex(1), 'PX', 600000);
   await db.cmd('SET', 'rl:ip:1.2.3.4', '3', 'PX', 900000);
+  await db.cmd('SET', 'misc:ttl', 'v', 'PX', 600000); // вид ключа неизвестен: читается через TYPE и PTTL, срок жизни сохраняется
 }
+const isTemp = (k) => /^(tgt|rl|tgp):/.test(k);
 async function readAll(count) {
-  const recs = []; const st = { scanned: 0, copied: 0, gone: 0, changed: 0, foreign: 0, other: {} };
+  const recs = []; const st = { scanned: 0, copied: 0, gone: 0, changed: 0, foreign: 0, temp: 0, other: {} };
   let cur = '0';
   do {
     const r = await B.readBatch(cur, { count });
     recs.push(...r.recs); cur = r.cursor;
-    for (const k of ['scanned', 'copied', 'gone', 'changed', 'foreign']) st[k] += r.stats[k];
+    for (const k of ['scanned', 'copied', 'gone', 'changed', 'foreign', 'temp']) st[k] += r.stats[k];
     for (const [t, n] of Object.entries(r.stats.other)) st.other[t] = (st.other[t] || 0) + n;
     if (r.done) break;
   } while (true);
@@ -140,16 +142,124 @@ test('readBatch: все типы с TTL, по одному ключу за ша�
   await seed();
   const { recs, st } = await readAll(1);
   const m = byKey(recs);
-  assert.deepEqual(Object.keys(m).sort(), ['agent:' + hex(1), 'doc:' + hex(1), 'empty:str', 'nick:anna', 'rl:ip:1.2.3.4', 'tgs', 'tgt:abcd']);
+  assert.deepEqual(Object.keys(m).sort(), ['agent:' + hex(1), 'doc:' + hex(1), 'empty:str', 'misc:ttl', 'nick:anna', 'tgs']);
   assert.deepEqual(m['doc:' + hex(1)], { k: 'doc:' + hex(1), t: 'h', v: [['d', '{"months":{"2026-10":[]}}'], ['v', '3']] });
   assert.deepEqual(m['agent:' + hex(1)].v[0], ['d', 'Привет, мир\nвторая строка']);
   assert.deepEqual(m.tgs, { k: 'tgs', t: 'e', v: [hex(1), hex(2)] });
   assert.equal(m['empty:str'].v, '');
   assert.equal(m['empty:str'].ttl, undefined);
-  assert.ok(m['tgt:abcd'].ttl > 590000 && m['tgt:abcd'].ttl <= 600000, 'TTL сохранён');
+  assert.ok(m['misc:ttl'].ttl > 590000 && m['misc:ttl'].ttl <= 600000, 'TTL неизвестного вида сохранён');
   assert.equal(m['nick:anna'].ttl, undefined);
-  assert.equal(st.copied, 7);
+  assert.equal(st.copied, 6);
+  assert.equal(st.temp, 2, 'rl и tgt не копируются, но посчитаны');
   assert.equal(recs.every(B.validRec), true);
+});
+
+/* ---------- расход команд (часть 2 сокращения команд Redis) ---------- */
+// Все известные виды ключей проекта, по одному ключу каждого, плюс временные.
+async function seedKnown() {
+  await db.cmd('SET', 'acc:' + hex(1), '{"nick":"anna"}');
+  await db.cmd('SET', 'nick:anna', hex(1));
+  await db.cmd('SET', 'tg:' + hex(1), '{"tid":"5","chat":"5"}');
+  await db.cmd('SET', 'tgu:5', hex(1));
+  await db.cmd('SET', 'users', '1');
+  for (const kind of ['doc', 'rem', 'agent', 'wifi', 'bot']) await db.cmd('HSET', kind + ':' + hex(1), 'd', '{}', 'v', '1');
+  await db.cmd('SADD', 'tgs', hex(1));
+  await db.cmd('SET', 'rl:li:ip:abc', '2', 'PX', 900000);
+  await db.cmd('SET', 'tgt:abcd', hex(1), 'PX', 600000);
+  await db.cmd('SET', 'tgp:' + hex(1), 'abcd', 'PX', 600000);
+}
+const names = (log) => log.map((c) => c.split(' ')[0]);
+
+test('известные виды ключей читаются одной командой на ключ: ни TYPE, ни PTTL; команд столько же, сколько ключей, плюс SCAN', async () => {
+  await seedKnown();
+  __cmdLog(true);
+  const { recs, st } = await readAll(1000);
+  const log = __cmdLog(true);
+  assert.equal(recs.length, 11, 'все 11 известных ключей скопированы');
+  assert.equal(st.copied, 11);
+  assert.deepEqual([st.temp, st.gone, st.changed, st.foreign], [3, 0, 0, 0], 'rl, tgt, tgp считаются, но не копируются');
+  assert.equal(names(log).includes('TYPE') || names(log).includes('PTTL'), false, 'TYPE/PTTL для известных ключей не нужны');
+  const c = (n) => names(log).filter((x) => x === n).length;
+  assert.deepEqual([c('SCAN'), c('GET'), c('HGETALL'), c('SMEMBERS')], [1, 5, 5, 1]);
+  assert.equal(log.length, 1 + 11, 'SCAN + по команде на ключ');
+  assert.equal(recs.some((r) => /^(rl|tgt|tgp)/.test(r.k)), false);
+  assert.equal(recs.every(B.validRec), true);
+});
+
+test('известные ключи: типы и значения те же, что при чтении через TYPE и PTTL (формат копии не изменился)', async () => {
+  await seedKnown();
+  const fast = byKey((await readAll(1000)).recs);
+  const known = [...B.KNOWN];
+  B.KNOWN.clear(); // «прежний путь»: всё неизвестное читается через TYPE и PTTL
+  let slow;
+  try { slow = byKey((await readAll(1000)).recs); } finally { for (const [k, v] of known) B.KNOWN.set(k, v); }
+  for (const k of Object.keys(slow).filter((x) => !/^(rl|tgt|tgp)/.test(x))) assert.deepEqual(fast[k], slow[k], k);
+  assert.deepEqual(Object.keys(fast).sort(), Object.keys(slow).filter((x) => !/^(rl|tgt|tgp)/.test(x)).sort());
+});
+
+test('известный ключ другого типа: читается прежним путём (TYPE, PTTL), попадает в копию с верным типом и сроком, не считается changed', async () => {
+  await seedKnown();
+  await db.cmd('DEL', 'doc:' + hex(1));
+  await db.cmd('SET', 'doc:' + hex(1), 'это строка, а не хэш', 'PX', 600000); // вид doc, но тип string и срок жизни
+  await db.cmd('DEL', 'tgs');
+  await db.cmd('HSET', 'tgs', 'f', 'x'); // вид tgs, но тип hash
+  __cmdLog(true);
+  const { recs, st } = await readAll(1000);
+  const log = names(__cmdLog(true));
+  const m = byKey(recs);
+  assert.deepEqual(m['doc:' + hex(1)].t, 's');
+  assert.equal(m['doc:' + hex(1)].v, 'это строка, а не хэш');
+  assert.ok(m['doc:' + hex(1)].ttl > 590000, 'срок жизни сохранён: ключ прошёл через PTTL');
+  assert.deepEqual(m.tgs, { k: 'tgs', t: 'h', v: [['f', 'x']] });
+  assert.equal(st.copied, 11);
+  assert.deepEqual([st.changed, st.gone], [0, 0]);
+  assert.equal(log.filter((x) => x === 'TYPE').length, 2, 'TYPE только у двух ключей с неверным типом');
+  assert.equal(log.filter((x) => x === 'PTTL').length, 2);
+  assert.equal(recs.every(B.validRec), true);
+});
+
+test('известный ключ пропал между SCAN и чтением: gone; пустой хэш и пустое множество не дают записи', async () => {
+  await seedKnown();
+  __after('SCAN', () => { __drop('nick:anna'); __drop('tgs'); });
+  const { recs, st } = await readAll(1000);
+  assert.equal(recs.some((r) => r.k === 'nick:anna' || r.k === 'tgs'), false);
+  assert.equal(st.gone, 2);
+  assert.equal(st.copied, 9);
+});
+
+test('вид ключа сравнивается целиком: «docx:», «tgsx», «constructor:» и «__proto__:» — неизвестные виды, читаются через TYPE и PTTL', async () => {
+  await db.cmd('HSET', 'docx:1', 'a', 'b');
+  await db.cmd('SET', 'tgsx', '1', 'PX', 600000);
+  await db.cmd('SET', 'constructor:1', '2');
+  await db.cmd('SET', '__proto__:1', '3');
+  await db.cmd('SET', 'rlx:1', '4');
+  __cmdLog(true);
+  const { recs, st } = await readAll(1000);
+  const log = names(__cmdLog(true));
+  assert.deepEqual(recs.map((r) => r.k).sort(), ['__proto__:1', 'constructor:1', 'docx:1', 'rlx:1', 'tgsx']);
+  assert.equal(st.temp, 0);
+  assert.equal(log.filter((x) => x === 'TYPE').length, 5);
+  assert.ok(byKey(recs).tgsx.ttl > 0, 'срок жизни неизвестного вида сохранён');
+});
+
+test('с префиксом «t:» виды определяются по имени без префикса: временные не копируются, известные читаются без TYPE', async () => {
+  process.env.DB_PREFIX = 't:';
+  await db.cmd('SET', db.key('nick', 'bob'), 'x');
+  await db.cmd('SET', db.key('rl', 'a'), '1', 'PX', 900000);
+  await db.cmd('HSET', db.key('doc', hex(2)), 'd', '{}', 'v', '1');
+  __cmdLog(true);
+  const { recs, st } = await readAll(1000);
+  assert.deepEqual(recs.map((r) => r.k), ['doc:' + hex(2), 'nick:bob'], 'записи отсортированы, без префикса');
+  assert.equal(st.temp, 1);
+  assert.equal(names(__cmdLog(true)).includes('TYPE'), false);
+});
+
+test('копия прежнего вида читается: запись с ttl и временные ключи в части проходят decodePart и restoreCmds', () => {
+  const old = [{ k: 'tgt:abcd', t: 's', v: hex(1), ttl: 590000 }, { k: 'rl:ip:1', t: 's', v: '3', ttl: 800000 }, { k: 'nick:anna', t: 's', v: hex(1) }];
+  const back = B.decodePart(B.encodePart({ snap: SNAP, n: 0, recs: old }), { snap: SNAP, n: 0 }).recs;
+  assert.deepEqual(back, old);
+  assert.deepEqual(B.restoreCmds(back[0], 't')[2], ['PEXPIRE', 't:tgt:abcd', 590000]);
 });
 
 test('readBatch: результат не зависит от размера шага; повторы ключей допустимы', async () => {
@@ -171,7 +281,7 @@ test('боевой префикс (пустой): ключи тестового 
   await db.cmd('SET', 'selftest123:x', '1');
   const { recs, st } = await readAll(2);
   assert.equal(recs.some((r) => r.k.startsWith('t:') || r.k.startsWith('selftest')), false);
-  assert.equal(recs.length, 7);
+  assert.equal(recs.length, 6);
   assert.equal(st.foreign, 3);
 });
 
@@ -199,7 +309,7 @@ test('типы, которых код не использует (list, zset), п
   const { recs, st } = await readAll(100);
   assert.equal(recs.some((r) => r.k === 'queue:1' || r.k === 'rank:1' || r.k === 'short'), false);
   assert.deepEqual(st.other, { list: 1, zset: 1 });
-  assert.equal(recs.length, 7);
+  assert.equal(recs.length, 6);
 });
 
 test('ключ пропал между SCAN и чтением: считается gone, остальные копируются', async () => {
@@ -209,7 +319,7 @@ test('ключ пропал между SCAN и чтением: считаетс�
   assert.equal(recs.some((r) => r.k === 'nick:anna'), false);
   assert.equal(st.gone, 1);
   assert.deepEqual(st.other, {});
-  assert.equal(recs.length, 6);
+  assert.equal(recs.length, 5);
   const g = await B.readRecs(['no:such'], ['string'], [-1]);
   assert.deepEqual(g.st, { copied: 0, gone: 1, changed: 0 });
 });
@@ -233,7 +343,7 @@ test('сбой Redis при обходе — ошибка наружу, а не 
 /* ---------- восстановление ---------- */
 test('круг: база → копия (части, шифр) → стирание → восстановление даёт то же самое', async () => {
   await seed();
-  const before = await dump('');
+  const before = Object.fromEntries(Object.entries(await dump('')).filter(([k]) => !isTemp(k))); // временные в копию не входят
   const { recs } = await readAll(2);
   const bufs = [recs.slice(0, 3), recs.slice(3)].map((part, n) => B.encodePart({ snap: SNAP, n, recs: part }));
   __reset();

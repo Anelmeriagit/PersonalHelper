@@ -65,7 +65,7 @@ test('вечерний и дневной слот делают копию; ра�
   assert.equal(B.verifyBackup && (await B.verifyBackup(r.body.backup.snap)).ok, true);
 });
 
-test('дневная копия есть: вечерний слот пропускает (skip); через сутки нужна новая; дважды в день копий не бывает', async (t) => {
+test('дневная копия есть: вечерний слот и следующие 6 суток пропускают (skip); через 7 суток нужна новая; чаще раза в неделю копий не бывает', async (t) => {
   mockTg(t);
   const clock = fakeClock(t);
   await mkUser('anna');
@@ -76,10 +76,50 @@ test('дневная копия есть: вечерний слот пропус
   assert.equal(eve.statusCode, 200);
   assert.equal(eve.body.backup.state, 'skip');
   assert.equal(completeSnaps().length, 1);
-  clock.advance(20 * 3600 * 1000 + 60000);
+  for (let d = 1; d <= 5; d++) { // сутки спустя, дневной и вечерний слоты: копия свежая, новой нет
+    clock.advance(24 * 3600 * 1000);
+    assert.equal((await run()).body.backup.state, 'skip', 'день ' + d);
+    assert.equal((await run({ slot: 'evening' })).body.backup.state, 'skip', 'вечер ' + d);
+  }
+  clock.advance(24 * 3600 * 1000); // с момента копии 6 суток 4 часа
+  assert.equal((await run()).body.backup.state, 'skip', 'меньше 7 суток');
+  assert.equal(completeSnaps().length, 1);
+  clock.advance(24 * 3600 * 1000);
   const next = await run();
-  assert.equal(next.body.backup.state, 'done');
+  assert.equal(next.body.backup.state, 'done', 'больше 7 суток: новая копия');
   assert.equal(completeSnaps().length, 2);
+});
+
+test('интервалы: новая копия раз в 7 суток, незаконченная живёт 3 суток', () => {
+  assert.equal(B.DUE_GAP_MS, 7 * 24 * 3600 * 1000);
+  assert.equal(B.STALE_MS, 3 * 24 * 3600 * 1000);
+  assert.equal(B.KEEP, 7);
+});
+
+test('незаконченная копия доделывается ближайшими запусками cron (тот же номер), а после 3 суток начинается заново', async (t) => {
+  mockTg(t);
+  const db = await import('../api/_db.js');
+  for (let i = 0; i < 40; i++) await db.cmd('HSET', 'doc:' + i.toString(16).padStart(32, '0'), 'd', 'x'.repeat(300), 'v', '1');
+  let now = Date.UTC(2026, 9, 5, 11, 0, 0);
+  let ticks = 0;
+  const slow = () => now + ++ticks * 300;
+  const part = await B.runBackup({ now: slow, budgetMs: 2500, count: 5, partBytes: 300 }); // день 0: не успела
+  assert.equal(part.state, 'partial');
+  now += 24 * 3600 * 1000 + 5000; // сутки спустя (меньше 3 суток): продолжается та же копия, а не новая
+  const next = await B.backupIfDue({ now: () => now, count: 5 });
+  assert.equal(next.state, 'done');
+  assert.equal(next.snap, part.snap);
+  assert.equal(completeSnaps().length, 1);
+  // вторая копия, снова не успевшая; ход старше 3 суток брошен, копия начинается с нуля
+  now += B.DUE_GAP_MS + 1000;
+  ticks = 0;
+  const p2 = await B.runBackup({ now: slow, budgetMs: 2500, count: 5, partBytes: 300 });
+  assert.equal(p2.state, 'partial');
+  now += B.STALE_MS + 5000;
+  const fresh = await B.backupIfDue({ now: () => now, count: 5 });
+  assert.notEqual(fresh.snap, p2.snap, 'старый ход брошен');
+  assert.equal(fresh.state, 'done');
+  assert.equal(snaps().includes(p2.snap), false, 'части брошенной копии удалены');
 });
 
 test('сбой копии днём: рассылка уже ушла, ответ 502 с kind; вечерний слот доделывает копию', async (t) => {
@@ -217,7 +257,9 @@ test('сухой прогон cron показывает состояние ко�
   assert.equal(d1.body.backup.copies, 1);
   assert.equal(d1.body.backup.due, false);
   assert.match(d1.body.backup.last, /^\d{4}-\d\d-\d\dT/);
-  clock.advance(24 * 3600 * 1000);
+  clock.advance(5 * 24 * 3600 * 1000);
+  assert.equal((await run({ dry: '1' })).body.backup.due, false, 'меньше 7 суток');
+  clock.advance(2 * 24 * 3600 * 1000);
   assert.equal((await run({ dry: '1' })).body.backup.due, true);
   delete process.env.BACKUP_KEY;
   assert.deepEqual((await run({ dry: '1' })).body.backup, { state: 'off' });
