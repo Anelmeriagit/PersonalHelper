@@ -73,6 +73,17 @@ test('POST выдаёт ссылку; в Redis лежит хеш токена, �
   assert.equal((await call(link, 'GET', id)).body.linked, false);
 });
 
+test('аккаунт Google без никнейма: после /start бот отвечает без пустых кавычек, привязка работает', async (t) => {
+  const calls = mockTg(t);
+  const { id } = await acc.googleAccount('g-sub-1', 'a@b.co', 100);
+  const tok = tokenOf((await call(link, 'POST', id)).body.url);
+  await send(U1, '/start ' + tok);
+  assert.equal(texts(calls).pop(), 'Готово: Telegram привязан к вашему аккаунту.');
+  assert.deepEqual((await call(link, 'GET', id)).body, { linked: true, username: 'Ivan_P' });
+  await send(U1, '/start');
+  assert.match(texts(calls).pop(), /^Привет! Telegram привязан/);
+});
+
 test('полный путь: ссылка → /start → привязано; повторное использование токена отвергается', async (t) => {
   const calls = mockTg(t);
   const id = await mkAcc('ivan');

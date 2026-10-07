@@ -27,7 +27,7 @@ async function onBind(m, token) {
   catch (e) { console.error(e); return say('Что-то пошло не так. Попробуйте ещё раз чуть позже.'); }
   if (r.error === 'busy') return say('Этот Telegram уже привязан к другому аккаунту. Отвяжите его там на сайте или откройте ссылку из другого Telegram.' + NEW_LINK);
   if (r.error) return say('Ссылка недействительна или устарела (она живёт 10 минут).' + NEW_LINK);
-  return say('Готово: Telegram привязан к аккаунту «' + r.nick + '».');
+  return say(r.nick ? 'Готово: Telegram привязан к аккаунту «' + r.nick + '».' : 'Готово: Telegram привязан к вашему аккаунту.');
 }
 
 // uid — id аккаунта, к которому привязан этот Telegram (accountOfTelegram). Документ кэшбэков, псевдонимы и ожидающие запросы — этого аккаунта.

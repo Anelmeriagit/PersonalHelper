@@ -176,7 +176,7 @@ export async function readRecs(keys, types, pttls) {
 const kindOf = (rel) => { const i = rel.indexOf(':'); return i < 0 ? rel : rel.slice(0, i); };
 // Известные виды ключей проекта и их типы Redis (см. notes/backup.md). Срока жизни у них нет, поэтому TYPE и PTTL не нужны.
 // Map, а не объект: вид «constructor» или «__proto__» не должен совпасть со свойством прототипа.
-export const KNOWN = new Map([['acc', 'string'], ['nick', 'string'], ['tg', 'string'], ['tgu', 'string'], ['users', 'string'],
+export const KNOWN = new Map([['acc', 'string'], ['nick', 'string'], ['tg', 'string'], ['tgu', 'string'], ['users', 'string'], ['gid', 'string'],
   ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['tgs', 'set']]);
 // Временные ключи (счётчики лимитов, одноразовые ссылки привязки): не копируются, число идёт в stats.temp.
 export const TEMP = new Set(['rl', 'tgt', 'tgp']);

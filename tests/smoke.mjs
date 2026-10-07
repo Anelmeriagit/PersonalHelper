@@ -703,6 +703,23 @@ for (const scheme of run('acct') ? SCHEMES : []) {
       await page.waitForSelector('#lf', { timeout: 5000 });
       check(posts.filter((x) => x.action === 'logout').length === 1, 'запрос logout');
       check(await vis('#gBtn'), 'после выхода кнопка Google');
+      // --- возврат от Google с ошибкой: окно с текстом по коду, адрес очищается, из адреса ничего не выводится ---
+      for (const [q, re, label] of [['denied', /Вход через Google отменён/, 'denied'], ['state', /Нажмите «Войти через Google» ещё раз/, 'state'], ['full', /лимит пользователей/, 'full'], ['%3Cb%3Ex%3C%2Fb%3E', null, 'неизвестный код']]) {
+        await page.route('**/api/data', (r) => json(r, { error: 'auth' }, 401), { times: 1 });
+        await page.goto(stand.url + '/?gerr=' + q + '#wifi', { waitUntil: 'load', timeout: 15000 });
+        await page.waitForSelector('#lf', { timeout: 5000 });
+        if (re) {
+          await page.waitForSelector('#dlg[open]', { timeout: 5000 });
+          check(re.test(await text('#dlgMsg')), 'сообщение после возврата от Google (' + label + '): ' + (await text('#dlgMsg')));
+          await page.click('#dlg .done');
+        } else {
+          check(!(await isOpen('#dlg')), 'неизвестный код: сообщения нет');
+        }
+        check((await page.locator('#dlgMsg b, #lf b').count()) === 0, 'код из адреса не создаёт разметку (' + label + ')');
+        check(!/gerr/.test(page.url()) && /#wifi$/.test(page.url()), 'адрес очищен от gerr, hash сохранён (' + label + '): ' + page.url());
+        check(await vis('#gBtn'), 'после возврата видна кнопка Google (' + label + ')');
+      }
+      await noHScroll('сообщение Google');
       const csp = await page.evaluate(() => window.__csp);
       check(!csp.length, 'CSP: ' + csp.join('; '));
     } catch (e) { problems.push('сценарий: ' + e.message.split('\n')[0]); }

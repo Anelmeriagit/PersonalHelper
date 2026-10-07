@@ -2,7 +2,10 @@
 //   nick:<никнейм>  → id          (уникальность никнейма, SET NX)
 //   acc:<id>        → JSON {nick, pw:"соль:scrypt", at}
 //   users           → счётчик аккаунтов (лимит MAX_USERS)
-// Запись acc:<id> может нести отображаемое имя `name` (этап 5; нет поля = не задано) и `email` (аккаунты Google, ниже).
+// Запись acc:<id> может нести отображаемое имя `name` (этап 5; нет поля = не задано).
+// Вход через Google (этап 5, часть 3):
+//   gid:<sub>       → id          (аккаунт Google по неизменному идентификатору sub; SET NX)
+//   acc:<id>        → JSON {gsub, email?, at} без nick и pw (по паролю такой аккаунт не войдёт); email только подтверждённый Google
 // Привязка Telegram (этап 3a):
 //   tgt:<хеш токена> → id аккаунта (одноразовая ссылка t.me/<бот>?start=<токен>, живёт LINK_TTL секунд; сам токен не хранится)
 //   tgp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
@@ -66,6 +69,36 @@ export async function createAccount(nick, pass, maxUsers) {
   return { id };
 }
 
+// Аккаунт Google по sub. → { id, created } | { error: 'full' }. Существующий аккаунт возвращается как есть (почту не обновляем:
+// запись acc читается и пишется целиком без CAS, лишняя запись при входе рискует затереть параллельную смену имени).
+// Параллельные первые входы с одним sub: SET NX на gid:<sub> выигрывает один, проигравший откатывает свою запись и берёт чужой id.
+export const SUB_RE = /^[0-9A-Za-z_.:-]{1,255}$/;
+export async function googleAccount(sub, email, maxUsers) {
+  if (!SUB_RE.test(String(sub))) throw new Error('bad sub');
+  const gk = key('gid', sub);
+  const live = async (id) => (id && ID_RE.test(String(id)) && (await getAcc(id))) ? String(id) : null;
+  const cur = await cmd('GET', gk);
+  const had = await live(cur);
+  if (had) return { id: had, created: false };
+  if (cur) await del(gk); // указатель есть, а аккаунта нет (сбой при удалении или создании): убираем и создаём заново; нет указателя — ничего не удаляем (его мог только что поставить параллельный вход)
+  const n = Number(await cmd('INCR', key('users')));
+  const back = () => cmd('DECR', key('users')).catch(() => {});
+  if (n > maxUsers) { await back(); return { error: 'full' }; }
+  const id = crypto.randomBytes(16).toString('hex');
+  const rec = { gsub: String(sub), at: Date.now() };
+  const em = cleanEmail(email);
+  if (em) rec.email = em;
+  try {
+    if (!(await setNx(key('acc', id), JSON.stringify(rec)))) throw new Error('id занят');
+    if (!(await setNx(gk, id))) { await del(key('acc', id)); const w = await live(await cmd('GET', gk)); if (w) { await back(); return { id: w, created: false }; } throw new Error('gid занят'); } // throw: счётчик откатит catch
+  } catch (e) { await back(); throw e; }
+  return { id, created: true };
+}
+export function cleanEmail(s) {
+  const t = String(s == null ? '' : s).trim();
+  return t.length <= 254 && /^[^\s@<>"'`&\\\u0000-\u001f]+@[^\s@<>"'`&\\\u0000-\u001f]+$/.test(t) ? t : '';
+}
+
 // Отображаемое имя: без управляющих символов, пробелы схлопнуты и обрезаны, не больше NAME_MAX символов (по символам, не по байтам).
 export const NAME_MAX = 32;
 export function cleanName(s) {
@@ -90,6 +123,7 @@ export async function deleteAccount(id) {
   await unlinkTelegram(id);
   await del(key('doc', id), key('rem', id), key('agent', id), key('wifi', id), key('bot', id), key('rl', 'tgl', id));
   if (acc.nick && (await cmd('GET', key('nick', acc.nick))) === id) await del(key('nick', acc.nick));
+  if (acc.gsub && SUB_RE.test(String(acc.gsub)) && (await cmd('GET', key('gid', acc.gsub))) === id) await del(key('gid', acc.gsub));
   if (Number(await del(key('acc', id))) > 0) await cmd('DECR', key('users')).catch(() => {});
   return true;
 }

@@ -10,8 +10,8 @@ export function setEnv() {
   delete process.env.MAX_USERS;
 }
 
-export function mockReq({ method = 'GET', headers = {}, body } = {}) {
-  return { method, headers, body };
+export function mockReq({ method = 'GET', headers = {}, body, query } = {}) {
+  return query ? { method, headers, body, query } : { method, headers, body };
 }
 
 export function mockRes() {

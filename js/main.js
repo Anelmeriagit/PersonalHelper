@@ -86,7 +86,14 @@ window.addEventListener('hashchange',applyPage);
 /* логотип не загрузился -> буква банка (без инлайнового onerror, чтобы работал строгий CSP) */
 document.addEventListener('error',function(e){var t=e.target,b=t&&t.tagName==='IMG'&&t.parentNode;if(b&&(b.classList.contains('badge')||b.classList.contains('mb'))){b.classList.add('nologo');t.remove()}},true);
 
+/* возврат со входа через Google: при отказе или ошибке сервер ведёт на /?gerr=<код>; текст берётся по коду из этого списка, из адреса ничего не выводится; параметр из адреса убирается всегда, для неизвестного кода сообщения нет */
+var GERR={off:'Вход через Google пока не настроен.',denied:'Вход через Google отменён.',state:'Вход не удался: время вышло. Нажмите «Войти через Google» ещё раз.',rate:'Слишком много попыток входа. Попробуйте позже.',full:'Достигнут лимит пользователей.',fail:'Не удалось войти через Google. Попробуйте позже.'};
+function googleBack(){var m=/[?&]gerr=([^&#]*)/.exec(location.search);if(!m)return;
+  history.replaceState(null,'',location.pathname+location.hash);
+  if(Object.prototype.hasOwnProperty.call(GERR,m[1]))dlgAlert(GERR[m[1]])}
+
 onAuthFail(showLogin);
 initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
 initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();showLogin();dlgAlert('Аккаунт удалён.')}});
 boot();
+googleBack();
