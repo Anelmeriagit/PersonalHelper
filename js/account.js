@@ -8,13 +8,15 @@ import {dlgConfirm,dlgAlert} from './dialogs.js';
 
 var DEF='Helper User',WORD='удалить',NAME_MAX=32;
 var TOKEN=/^[A-Za-z0-9_-]{22}$/,SENT='Ссылка отправлена. Она одноразовая и действует 24 часа.',COPIED='Ссылка скопирована. Отправьте её второму человеку: она одноразовая и действует 24 часа.',MANUAL='Скопируйте ссылку и отправьте её второму человеку: она одноразовая и действует 24 часа.';
-var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){}};
+var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){}};
 var uBtn,uMenu,acct,del;
 
 /* ---------- имя в шапке ---------- */
 function label(){return A.name||DEF}
 function paintName(){var a=$('uName'),b=$('acName');if(a)a.textContent=label();if(b)b.textContent=label()}
 export function accSetName(n){A.name=nrm(n).slice(0,NAME_MAX);paintName()}
+/* имя для показа («Helper User», если не задано): подпись своей колонки в кэшбэке соединённых аккаунтов */
+export function accName(){return label()}
 
 /* ---------- шапка: вошёл / не вошёл ---------- */
 export function accShow(on){$('uWrap').hidden=!on;$('gBtn').hidden=on;
@@ -79,7 +81,7 @@ function save(){var inp=$('acIn'),er=$('acErr');if(!inp||A.busy)return;
     A.busy=false;if(g!==A.gen)return;
     if(r.status===401){authFail();return}
     if(!r.ok||typeof j.name!=='string'){var e2=$('acErr');if(e2)e2.textContent=j.error||'Не получилось сохранить. Попробуйте позже.';return}
-    accSetName(j.name);A.edit=false;render();focusBtn('rename')})
+    accSetName(j.name);A.edit=false;render();focusBtn('rename');cb.name()})
   }).catch(function(){A.busy=false;var e3=$('acErr');if(g===A.gen&&e3)e3.textContent='Нет связи с сервером'})}
 
 function unlink(){
@@ -156,9 +158,9 @@ function doDelete(){var er=$('delErr'),go=$('delGo');if(A.busy||!delOk())return;
 function backdrop(d){d.addEventListener('click',function(e){if(e.target!==d)return;var r=d.getBoundingClientRect();
   if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()})}
 
-/* h: {logout, tg, gone, pair} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён», «связь с аккаунтом разорвана» */
+/* h: {logout, tg, gone, pair, name} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён», «связь с аккаунтом разорвана», «имя изменено» */
 export function initAccount(h){
-  cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;cb.pair=h.pair||cb.pair;
+  cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;cb.pair=h.pair||cb.pair;cb.name=h.name||cb.name;
   uBtn=$('uBtn');uMenu=$('uMenu');acct=$('acctDlg');del=$('delDlg');
   uBtn.addEventListener('click',function(){if(uMenu.hidden)menuOpen(false);else menuClose(false)});
   uBtn.addEventListener('keydown',function(e){if(e.key==='ArrowDown'&&uMenu.hidden){e.preventDefault();menuOpen(true)}});

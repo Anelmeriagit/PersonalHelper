@@ -2,7 +2,7 @@
 // Запуск: node --import ./tests/register.mjs --test "tests/*.test.mjs"
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { __reset, __fail, __raw } from './redis.mjs';
+import { __reset, __fail, __raw, __cmdLog } from './redis.mjs';
 import { mockReq, mockRes, setEnv, sessionCookie } from './helpers.mjs';
 
 setEnv();
@@ -37,7 +37,7 @@ test('GET нового аккаунта: id, пустое имя, пустые �
   assert.equal(r.statusCode, 200);
   assert.match(id, /^[0-9a-f]{32}$/);
   // id нужен сайту для метки «гостевые данные уже сливали» (js/merge.js); берётся из сессии, лишних команд Redis нет
-  assert.deepEqual(r.body, { id, name: '', data: { months: {}, custom: [] }, rev: {} });
+  assert.deepEqual(r.body, { id, name: '', data: { months: {}, custom: [] }, rev: {}, partner: { linked: false } });
   assert.equal(r.headers['cache-control'], 'no-store');
 });
 
@@ -169,4 +169,85 @@ test('в месяце банк не повторяется: второй бло�
   await call('PUT', c, { parts: { [month]: { base: 0, value: dup } } });
   const got = await call('GET', c);
   assert.deepEqual(got.body.data.months[month].map((b) => b.bank), ['otp', 'alfa']);
+});
+
+// ---------- кэшбэк партнёра (соединённые аккаунты): только на просмотр ----------
+async function pairUp(nameA, nameB, shownB) {
+  const a = (await acc.googleAccount('sub-' + nameA, '', 100)).id, b = (await acc.googleAccount('sub-' + nameB, '', 100)).id;
+  if (shownB) await acc.setName(b, shownB);
+  const t = await acc.createPairToken(a);
+  assert.ok(!(await acc.joinPair(t.token, b)).error);
+  return { a, b, ca: lib.makeCookie(a).split(';')[0], cb: lib.makeCookie(b).split(';')[0] };
+}
+
+test('GET партнёра: имя и месяцы соединённого аккаунта; id, версии и свои категории партнёра сайту не уходят', async () => {
+  const p = await pairUp('anna', 'boris', 'Борис');
+  await call('PUT', p.cb, { parts: { [month]: { base: 0, value: block('АЗС', '5') }, custom: { base: 0, value: ['Сад'] } } });
+  const got = await call('GET', p.ca);
+  assert.deepEqual(got.body.partner, { linked: true, name: 'Борис', data: { months: { [month]: block('АЗС', '5') } } });
+  assert.ok(!JSON.stringify(got.body).includes(p.b), 'id партнёра не отдаётся');
+  assert.deepEqual(got.body.data.months, {}, 'свой документ не смешивается с чужим');
+  const back = await call('GET', p.cb);   // связь двусторонняя
+  assert.equal(back.body.partner.linked, true);
+  assert.deepEqual(back.body.partner.data.months, {});
+});
+
+test('партнёр только на просмотр: PUT пишет только документ вызвавшего, документ партнёра не меняется', async () => {
+  const p = await pairUp('anna', 'boris');
+  await call('PUT', p.cb, { parts: { [month]: { base: 0, value: block('Книги', '3') } } });
+  const before = JSON.stringify(__raw('doc:' + p.b));
+  const r = await call('PUT', p.ca, { parts: { [month]: { base: 0, value: block('АЗС', '7') } } });
+  assert.equal(r.statusCode, 200);
+  assert.equal(JSON.stringify(__raw('doc:' + p.b)), before);
+  const got = await call('GET', p.ca);
+  assert.deepEqual(got.body.data.months[month], block('АЗС', '7'));
+  assert.deepEqual(got.body.partner.data.months[month], block('Книги', '3'));
+  // id партнёра в теле запроса ни на что не влияет
+  await call('PUT', p.ca, { parts: { [month]: { base: 1, value: block('АЗС', '8') } }, user: p.b, of: p.b });
+  assert.equal(JSON.stringify(__raw('doc:' + p.b)), before);
+});
+
+test('партнёр виден только при полной паре: половинка pair:<id> без ответной записи и после разрыва не считается', async () => {
+  const p = await pairUp('anna', 'boris');
+  await call('PUT', p.cb, { parts: { [month]: { base: 0, value: block('АЗС', '5') } } });
+  assert.equal((await call('GET', p.ca)).body.partner.linked, true);
+  await acc.unpair(p.a);
+  const got = await call('GET', p.ca);
+  assert.deepEqual(got.body.partner, { linked: false });
+  assert.ok(!JSON.stringify(got.body).includes('АЗС'));
+  assert.deepEqual((await call('GET', p.cb)).body.partner, { linked: false });
+});
+
+test('половинка pair:<id> (ответной записи нет): чужой документ не отдаётся', async () => {
+  const a = await signup('anna');
+  const b = await signup('boris');
+  const idA = (await acc.googleAccount('sub-anna', '', 100)).id, idB = (await acc.googleAccount('sub-boris', '', 100)).id;
+  await call('PUT', b, { parts: { [month]: { base: 0, value: block('АЗС', '5') } } });
+  const { cmd, key } = await import('../api/_db.js');
+  await cmd('SET', key('pair', idA), idB);
+  const got = await call('GET', a);
+  assert.deepEqual(got.body.partner, { linked: false });
+  assert.ok(!JSON.stringify(got.body).includes('АЗС'));
+});
+
+test('партнёр без документа: пустые месяцы; удалённый аккаунт партнёра: связи нет', async () => {
+  const p = await pairUp('anna', 'boris');
+  assert.deepEqual((await call('GET', p.ca)).body.partner, { linked: true, name: '', data: { months: {} } });
+  await acc.deleteAccount(p.b);
+  assert.deepEqual((await call('GET', p.ca)).body.partner, { linked: false });
+});
+
+test('расход команд GET: без связи одна лишняя команда (pair:<id>), со связью пара читается один раз', async () => {
+  const solo = await signup('solo');
+  await call('GET', solo);
+  __cmdLog(true);
+  await call('GET', solo);
+  const base = __cmdLog(true).length;
+  const p = await pairUp('anna', 'boris');
+  __cmdLog(true);
+  await call('GET', p.ca);
+  const paired = __cmdLog(true);
+  // GET acc:<я>, документ (HGETALL), pair:<я>, pair:<партнёр>, acc:<партнёр>, документ партнёра
+  assert.equal(paired.length, 6, JSON.stringify(paired));
+  assert.equal(base, 3, 'acc:<я>, документ, pair:<я>');
 });

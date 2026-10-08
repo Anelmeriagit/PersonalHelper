@@ -346,3 +346,19 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .gst .gst-act{margin:0}
 /* узкий экран: в шапке у гостя «Войти» (полная подпись в aria-label), иначе шапка шире экрана; в предложениях гостю подпись полная */
 @media(max-width:480px){.gbtn .gx{display:none}.gst .gbtn .gx{display:inline}}
+
+/* --- соединённые аккаунты: кэшбэк двух людей в две колонки (свой слева, партнёра справа, только просмотр) --- */
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem;align-items:start}
+.pc{min-width:0}
+.pn{margin:0 0 .6rem;font-size:1.05rem;text-align:center;overflow-wrap:anywhere}
+.pc .cols{grid-template-columns:minmax(0,1fr);gap:0}
+.pc .head{padding:.55rem .6rem;gap:.45rem}
+.pc .head h4{min-width:0;font-size:.95rem;overflow-wrap:anywhere}
+.pc .body{padding:.5rem}
+.pc .row{font-size:.8rem;gap:.3rem}
+.pc .row span:first-child{min-width:0;overflow-wrap:break-word}
+.pc .cmp{padding:.15rem .6rem}
+.pc .cc{flex-direction:column;gap:.1rem}
+.pc .cn{flex:none;padding-top:.1rem;font-size:.85rem;overflow-wrap:break-word}
+.pc .cgs{width:100%}
+@media(min-width:640px){.pair{gap:1.25rem}.pn{font-size:1.2rem}.pc .head{padding:.7rem .8rem;gap:.6rem}.pc .head h4{font-size:1.05rem}.pc .body{padding:.9rem}.pc .row{font-size:1rem;gap:.5rem}.pc .cmp{padding:.25rem .9rem}.pc .cn{font-size:1rem}}

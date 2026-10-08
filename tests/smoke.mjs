@@ -21,13 +21,14 @@ import { tg } from './smoke-tg.mjs';
 import { rem } from './smoke-rem.mjs';
 import { acct } from './smoke-acct.mjs';
 import { pair } from './smoke-pair.mjs';
+import { paircb } from './smoke-paircb.mjs';
 import { welcome } from './smoke-welcome.mjs';
 import { refresh } from './smoke-refresh.mjs';
 
 const arg = process.argv.find((a) => a.startsWith('--root='));
 const root = arg ? path.resolve(arg.slice(7)) : undefined;
 
-const SCENARIOS = { guest, session, merge, cashback, wifi, tg, rem, acct, pair, welcome, refresh };
+const SCENARIOS = { guest, session, merge, cashback, wifi, tg, rem, acct, pair, paircb, welcome, refresh };
 const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);
 if (ONLY && !SCENARIOS[ONLY]) {
   console.error('Неизвестный сценарий --only=' + ONLY + '. Доступны: ' + Object.keys(SCENARIOS).join(', '));

@@ -4,7 +4,7 @@ import {clock} from '../time.js';
 import {api,S,authFail,fresh,stamp} from '../api.js';
 import {dlgAlert,dlgConfirm,dlgPrompt} from '../dialogs.js';
 import {guestGetCb,guestSetCb} from '../local.js';
-import {C,empty,blank,list,setPart,getPart,peek,norm,allCats,eachRow,prune,pruneOf,partName,changedParts,hasUnsaved} from './state.js';
+import {C,empty,blank,list,setPart,getPart,peek,norm,normPartner,allCats,eachRow,prune,pruneOf,partName,changedParts,hasUnsaved} from './state.js';
 import {render,syncView} from './view.js';
 
 export {hasUnsaved};
@@ -35,7 +35,7 @@ function showWarn(){var c=C.conflict;if(!c){warn.hidden=true;warn.innerHTML='';r
   warn.innerHTML='<p>Не сохранено: «'+c.parts.map(function(k){return esc(partName(k))}).join('», «')+'» изменили на другом устройстве.</p>'+
     '<div class="acts"><button class="btn" data-w="load" type="button">Загрузить актуальную версию</button><button class="btn" data-w="mine" type="button">Перезаписать моей</button></div>'}
 function note(msg){warn.hidden=false;warn.innerHTML='<p>'+esc(msg)+'</p>';setTimeout(function(){if(!C.conflict){warn.hidden=true;warn.innerHTML=''}},6000)}
-function reload(){api('GET','/api/data').then(function(r){if(r.status===401){authFail();return}if(!r.ok)return;return r.json().then(function(j){if(C.edit||C.conflict||Object.keys(C.dirty).length)return;C.data=norm(j.data);C.rev=j.rev||{};stamp('cb');render()})}).catch(function(){})}
+function reload(){api('GET','/api/data').then(function(r){if(r.status===401){authFail();return}if(!r.ok)return;return r.json().then(function(j){if(C.edit||C.conflict||Object.keys(C.dirty).length)return;C.data=norm(j.data);C.rev=j.rev||{};C.partner=normPartner(j.partner);stamp('cb');render()})}).catch(function(){})}
 /* Обновление с сервера. Без force не чаще раза в REFRESH_MS (api.js); force — смена месяца. Не трогает данные, пока есть несохранённые правки. */
 function refresh(force){
   function busy(){return C.edit||C.flight||C.conflict||Object.keys(C.dirty).length}
@@ -43,7 +43,17 @@ function refresh(force){
   loading=true;
   api('GET','/api/data').then(function(r){loading=false;if(r.status===401){authFail();return}if(!r.ok)return;
     return r.json().then(function(j){if(busy())return;stamp('cb');
-      if(JSON.stringify(j.rev)!==JSON.stringify(C.rev)){C.data=norm(j.data);C.rev=j.rev;render()}})}).catch(function(){loading=false})}
+      /* свои данные и кэшбэк партнёра приходят одним ответом; перерисовка, если изменилось что-то из двух (партнёр сменил данные, имя или разорвал связь) */
+      var p=normPartner(j.partner),own=JSON.stringify(j.rev)!==JSON.stringify(C.rev),pc=JSON.stringify(p)!==JSON.stringify(C.partner);
+      if(own||pc){if(own){C.data=norm(j.data);C.rev=j.rev}C.partner=p;render()}})}).catch(function(){loading=false})}
+/* связь с аккаунтом появилась или пропала (настройки, ссылка): разрыв убирает колонку партнёра сразу, соединение подтягивает кэшбэк партнёра одним GET /api/data.
+   Своих данных этот ответ не трогает: идёт и в режиме правки, и при несохранённых правках (колонка партнёра в правке скрыта). */
+export function pairChanged(linked){if(!S.acct)return;
+  if(!linked){if(C.partner){C.partner=null;render()}return}
+  api('GET','/api/data').then(function(r){if(r.status===401){authFail();return}if(!r.ok)return;
+    return r.json().then(function(j){if(!S.acct)return;C.partner=normPartner(j.partner);render()})}).catch(function(){})}
+/* имя в настройках изменено: подпись своей колонки */
+export function nameChanged(){if(C.partner)render()}
 
 /* ---------- свои категории ---------- */
 function validCat(v){return v&&v.length<=40&&!/[<>"'`&\\\u0000-\u001f]/.test(v)}
@@ -78,14 +88,14 @@ export function onPage(){refresh()}
 export function onHidden(){leaving()}
 export function discardAll(){C.dirty={};C.conflict=null;C.edit=false}
 /* вход в раздел: данные пришли с сервера (аккаунт) или из браузера (гость), j — ответ GET /api/data */
-export function startSession(j){C.data=norm(j.data);C.rev=j.rev||{};stamp('cb');C.ck=clock()}
+export function startSession(j){C.data=norm(j.data);C.rev=j.rev||{};C.partner=normPartner(j.partner);stamp('cb');C.ck=clock()}
 export function finishBoot(){stage.classList.add('first');render();setTimeout(function(){stage.classList.remove('first')},600)}
 /* копия данных из памяти вместе с несохранёнными правками (пустые строки отброшены, как при сохранении правки): нужна, когда сессия закончилась и сервер уже недоступен */
 export function cbSnapshot(){var d=JSON.parse(JSON.stringify(C.data));pruneOf(d);return d}
 /* выход из аккаунта или конец сессии: данные аккаунта (snap, если есть) заменяют гостевые, раздел перечитывает их из браузера; режим правки закрывается */
 export function toGuest(snap){clearTimeout(timer);C.flight=false;C.edit=false;editBtn.setAttribute('aria-pressed','false');
   if(snap)guestSetCb(snap);
-  var g=guestGetCb();C.data=norm(g.data);C.rev=g.rev;C.dirty={};C.dirtyBefore={};C.conflict=null;C.snap='';C.ck=clock();stamp('cb');
+  var g=guestGetCb();C.data=norm(g.data);C.rev=g.rev;C.partner=null;C.dirty={};C.dirtyBefore={};C.conflict=null;C.snap='';C.ck=clock();stamp('cb');
   st.textContent='';showWarn();render()}
 export var cbNote=note;
 

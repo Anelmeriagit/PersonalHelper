@@ -1,7 +1,8 @@
 /* Кэшбэк: сборка разметки (блоки, компактный вид, история, свои категории) и отрисовка */
 import {$,esc,fp,cls,opts,IC,ls} from '../util.js';
 import {label} from '../time.js';
-import {BANKS,PCTS,C,peek,list,blank,allCats,hasAny} from './state.js';
+import {accName} from '../account.js';
+import {BANKS,PCTS,C,peek,ppeek,list,blank,allCats,hasAny,hasAnyL} from './state.js';
 
 var stage=$('stage'),months=$('months'),pNext=$('pNext'),prompt_=$('prompt'),vsw=$('vsw');
 
@@ -9,18 +10,18 @@ function bn(id){return BANKS[id]?BANKS[id].n:String(id||'')}
 function badge(id){var b=BANKS[id];if(!b)return '';
   return '<span class="badge" aria-hidden="true"'+(b.f?' style="--f:'+b.f+'"':'')+'><img src="logos/'+id+'.svg" alt=""><b>'+b.m+'</b></span>'}
 /* подсветка в категории, где заполнено несколько банков: лучший процент — best, остальные — dim */
-function hl(mo){var g={},out={};
-  peek(mo).forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;
+function hl(l){var g={},out={};
+  l.forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;
     (g[i.cat]=g[i.cat]||[]).push({bank:b.bank,v:parseFloat(i.pct)})})});
   Object.keys(g).forEach(function(c){var e=g[c];if(e.length<2)return;
     var M=Math.max.apply(null,e.map(function(r){return r.v}));
     e.forEach(function(r){out[r.bank+'|'+c]=r.v===M?' best':' dim'})});
   return out}
 
-function colHtml(mo,ro){
-  var l=peek(mo),h='<div class="col">';
+function colHtml(mo,ro,lst){
+  var l=lst||peek(mo),h='<div class="col">';
   if(!C.edit||ro){
-    var hm=hl(mo),shown=l.filter(function(b){return b.items.length});
+    var hm=hl(l),shown=l.filter(function(b){return b.items.length});
     if(!shown.length){
       if(ro)return h+'<p class="empty">Пусто</p></div>';
       var cp=mo===C.ck.nxt&&hasAny(C.ck.cur)?'<button class="copybtn" data-m="copy" type="button">Скопировать из текущего месяца</button>':'';
@@ -42,8 +43,8 @@ function colHtml(mo,ro){
 /* ---------- компактный вид: категории по алфавиту, под каждой «банки + процент» ---------- */
 function mini(id){var b=BANKS[id];if(!b)return '';
   return '<span class="mb" title="'+esc(b.n)+'"'+(b.f?' style="--f:'+b.f+'"':'')+'><img src="logos/'+esc(id)+'.svg" alt="'+esc(b.n)+'"><b>'+esc(b.m)+'</b></span>'}
-function compactHtml(mo){var g={};
-  peek(mo).forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;
+function compactHtml(l){var g={};
+  l.forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;
     (g[i.cat]=g[i.cat]||[]).push({bank:b.bank,v:parseFloat(i.pct)})})});
   var cats=Object.keys(g).sort(function(a,b){return a.localeCompare(b,'ru')});
   var rowsOf=cats.map(function(c){var M=-1,gr={};
@@ -55,9 +56,18 @@ function compactHtml(mo){var g={};
   return '<div class="cmp">'+rowsOf.map(function(o){
     return '<div class="cc"><div class="cn">'+esc(o.c)+'</div><div class="cgs">'+o.rows.map(function(q){
       return '<div class="cg'+q.cl+'"><span class="cw">'+q.banks.map(mini).join('')+'</span><span class="pct">'+fp(q.v)+'%</span></div>'}).join('')+'</div></div>'}).join('')+'</div>'}
-function colsHtml(mo,ro){if(C.compact&&(!C.edit||ro)&&hasAny(mo))return compactHtml(mo);
-  return '<div class="cols">'+colHtml(mo,ro)+'</div>'}
-function histMonths(){return Object.keys(C.data.months).filter(function(mo){return mo<C.ck.cur&&peek(mo).some(function(b){return b.items.length})}).sort().reverse()}
+/* одна колонка человека: компактный вид или блоки; l — список банков месяца этого человека */
+function side(mo,ro,l){if(C.compact&&(!C.edit||ro)&&hasAnyL(l))return compactHtml(l);
+  return '<div class="cols">'+colHtml(mo,ro,l)+'</div>'}
+/* соединённые аккаунты: слева свой кэшбэк (имя из настроек), справа партнёра, только на просмотр; в режиме правки партнёр скрыт, правка идёт на всю ширину */
+function colsHtml(mo,ro){
+  if(C.partner&&(!C.edit||ro))return '<div class="pair"><div class="pc"><h3 class="pn">'+esc(accName())+'</h3>'+side(mo,ro,peek(mo))+'</div>'+
+    '<div class="pc"><h3 class="pn">'+esc(C.partner.name)+'</h3>'+side(mo,true,ppeek(mo))+'</div></div>';
+  return side(mo,ro,peek(mo))}
+function histMonths(){var ms={};
+  function add(d){Object.keys(d).forEach(function(mo){if(mo<C.ck.cur&&d[mo].some(function(b){return b.items.length}))ms[mo]=1})}
+  add(C.data.months);if(C.partner)add(C.partner.months);
+  return Object.keys(ms).sort().reverse()}
 function histHtml(){var ms=histMonths();if(!ms.length)return '<p class="empty">История пока пуста: здесь появятся прошлые месяцы.</p>';
   if(ms.indexOf(C.histMo)<0)C.histMo=ms[0];
   return '<div class="chips">'+ms.map(function(m){return '<button class="chip'+(m===C.histMo?' on':'')+'" data-h="pick" data-mo="'+m+'" type="button">'+label(m)+'</button>'}).join('')+'</div>'+colsHtml(C.histMo,true)}

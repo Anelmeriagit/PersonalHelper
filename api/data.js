@@ -1,5 +1,5 @@
 import { session, renewCookie, loadDoc, writeDoc, clean, isPrecond, PART_RE, curMonth, shiftMonth } from './_lib.js';
-import { getAcc } from './_acc.js';
+import { getAcc, partnerAcc } from './_acc.js';
 
 const pub = (doc) => ({ months: doc.months, custom: doc.custom });
 
@@ -13,8 +13,11 @@ export default async function handler(req, res) {
       if (rc) res.setHeader('Set-Cookie', rc);
       const acc = await getAcc(user);
       if (!acc) return res.status(401).json({ error: 'auth' });
-      const { doc } = await loadDoc(user);
-      return res.status(200).json({ id: user, name: acc.name || '', data: pub(doc), rev: doc.rev });
+      const [{ doc }, pr] = await Promise.all([loadDoc(user), partnerAcc(user)]);
+      // Кэшбэк партнёра только на просмотр: id берётся только из partnerAcc (полная пара), читается один раз loadDoc, обратно ничего не пишется
+      // (PUT ниже всегда пишет документ user). Отдаём имя и месяцы; id, версии и свои категории партнёра сайту не нужны.
+      const partner = pr ? { linked: true, name: pr.acc.name || '', data: { months: (await loadDoc(pr.id)).doc.months } } : { linked: false };
+      return res.status(200).json({ id: user, name: acc.name || '', data: pub(doc), rev: doc.rev, partner });
     }
     if (req.method === 'PUT') {
       if (!String(req.headers['content-type'] || '').includes('application/json')) return res.status(415).end();

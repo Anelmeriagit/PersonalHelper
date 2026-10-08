@@ -3,7 +3,7 @@
 import {$,ls,lset,ldel,nrm} from './util.js';
 import {S,api,net,onAuthFail,fresh} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
-import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote} from './cashback/index.js';
+import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote,pairChanged,nameChanged} from './cashback/index.js';
 import {initReminders,remLoad} from './reminders/index.js';
 import {initWifi,wifiLoad,wifiClear,wifiForget,wifiSnapshot} from './wifi.js';
 import {initAgent,agClear,agLeave,agVisible,agOnPage,agSnapshot,agPending} from './agent/index.js';
@@ -111,13 +111,13 @@ function joinTry(){var t=joinToken();if(!t){ldel(PJ);return}
     if(r.status===401)return;
     if(r.status===429){whenFree(function(){dlgAlert(j.error||'Слишком часто. Попробуйте позже.')});return}
     ldel(PJ);
-    if(r.ok&&j.partner&&j.partner.linked)whenFree(function(){dlgAlert('Ваш аккаунт соединён с аккаунтом '+(nrm(j.partner.name)||'Helper User')+'.')});
+    if(r.ok&&j.partner&&j.partner.linked){pairChanged(true);whenFree(function(){dlgAlert('Ваш аккаунт соединён с аккаунтом '+(nrm(j.partner.name)||'Helper User')+'.')})}
     else whenFree(function(){dlgAlert(typeof j.error==='string'&&j.error?j.error:'Не удалось соединить аккаунты. Попробуйте позже.')})})
   }).catch(function(){whenFree(function(){dlgAlert('Нет связи с сервером. Откройте ссылку ещё раз.')})})}
 
 onAuthFail(function(){if(S.acct)toGuestMode({cb:cbSnapshot(),ag:agSnapshot(),wf:wifiSnapshot()},GUEST_END)});
 initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
-initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')}});
+initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')},pair:function(){pairChanged(false)},name:nameChanged});
 joinStore();
 gButtons();boot();
 googleBack();

@@ -1,6 +1,6 @@
 /* Кэшбэк: справочники, состояние и чистые функции над данными.
    Состояние одно на весь раздел и лежит в объекте C, чтобы его могли читать и разметка, и логика. */
-import {ls} from '../util.js';
+import {ls,nrm} from '../util.js';
 import {clock,label} from '../time.js';
 
 export var BANKS={
@@ -10,7 +10,7 @@ export var CATS=['АЗС','Авто и автосервис','Активный �
 export var PCTS=['0.5','1','1.5','2','3','4','5','6','7','8','10','12','15','20','25','30'];
 
 export function empty(){return{months:{},custom:[]}}
-export var C={data:empty(),rev:{},dirty:{},edit:false,flight:false,conflict:null,showNext:false,ck:clock(),histOpen:false,histMo:null,hCache:'',snap:'',dirtyBefore:{},compact:ls('view')==='compact'};
+export var C={data:empty(),rev:{},dirty:{},edit:false,flight:false,conflict:null,showNext:false,ck:clock(),histOpen:false,histMo:null,hCache:'',snap:'',dirtyBefore:{},compact:ls('view')==='compact',partner:null};
 
 export function blank(){return{bank:'',items:[{cat:'',pct:''}]}}
 export function peek(mo){return C.data.months[mo]||[]}
@@ -30,4 +30,13 @@ export function changedParts(){var sd=JSON.parse(C.snap),cd=JSON.parse(JSON.stri
   var keys=['custom'].concat(Object.keys(ms));
   return keys.filter(function(k){return JSON.stringify(partIn(cd,k))!==JSON.stringify(partIn(sd,k))})}
 export function hasUnsaved(){return(C.edit&&changedParts().length>0)||Object.keys(C.dirty).length>0||!!C.conflict}
-export function hasAny(mo){return peek(mo).some(function(b){return b.items.some(function(i){return i.cat&&i.pct})})}
+export function hasAnyL(l){return l.some(function(b){return b.items.some(function(i){return i.cat&&i.pct})})}
+export function hasAny(mo){return hasAnyL(peek(mo))}
+/* Кэшбэк партнёра (соединённый аккаунт), только на просмотр: часть `partner` ответа GET /api/data → null (нет связи) или {name, months}.
+   Живёт отдельно от C.data: в сохранение, правку и снимки не попадает. */
+export var PDEF='Helper User';
+export function normPartner(p){if(!p||p.linked!==true)return null;
+  var src=p.data&&typeof p.data.months==='object'&&p.data.months?p.data.months:{},ms={};
+  Object.keys(src).forEach(function(k){if(Array.isArray(src[k]))ms[k]=src[k].filter(function(b){return b&&Array.isArray(b.items)})});
+  return{name:nrm(typeof p.name==='string'?p.name:'').slice(0,32)||PDEF,months:ms}}
+export function ppeek(mo){return C.partner&&C.partner.months[mo]||[]}

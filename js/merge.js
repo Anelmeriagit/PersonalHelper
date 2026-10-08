@@ -21,7 +21,7 @@ function doCb(j,g){
   return put('/api/data',{parts:parts}).then(function(x){
     if(!final(x))return RETRY;
     if(x.status!==200)return DONE;
-    return{done:true,n:m.parts.length,j:{id:j.id,name:j.name,data:m.data,rev:Object.assign({},j.rev,x.body.rev)}}})}
+    return{done:true,n:m.parts.length,j:{id:j.id,name:j.name,data:m.data,rev:Object.assign({},j.rev,x.body.rev),partner:j.partner}}})}
 function doAg(g){
   if(!g)return Promise.resolve(DONE);
   return jget('/api/agent').then(function(a){

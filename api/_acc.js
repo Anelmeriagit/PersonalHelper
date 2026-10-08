@@ -162,12 +162,19 @@ export const PAIR_TTL = 86400; // секунд: ссылка живёт сутк
 
 // Партнёр аккаунта: id | null. Верим только полной паре: pair:<id> → P, pair:<P> → id и аккаунт P существует.
 // Половинка (сбой при соединении или удалении) партнёром не считается.
-export async function partnerOf(id) {
+// Единственная проверка пары: partnerOf и partnerAcc обе идут через неё.
+// partnerAcc отдаёт ещё и запись аккаунта партнёра (имя), чтобы не читать её второй раз.
+export async function partnerAcc(id) {
   if (!ID_RE.test(String(id))) return null;
   const p = await cmd('GET', key('pair', id));
   if (!p || !ID_RE.test(String(p)) || p === id) return null;
   if ((await cmd('GET', key('pair', p))) !== id) return null;
-  return (await getAcc(p)) ? String(p) : null;
+  const acc = await getAcc(p);
+  return acc ? { id: String(p), acc } : null;
+}
+export async function partnerOf(id) {
+  const r = await partnerAcc(id);
+  return r ? r.id : null;
 }
 
 // Свободен ли аккаунт для соединения. Оборванную половинку (pair:<id> без ответной записи или без аккаунта партнёра) убирает.

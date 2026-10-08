@@ -11,7 +11,7 @@
 import crypto from 'node:crypto';
 import { makeCookie, clearCookie, session } from './_lib.js';
 import { dbReady, key, hit } from './_db.js';
-import { googleAccount, getAcc, getLink, setName, deleteAccount, partnerOf, createPairToken, joinPair, unpair } from './_acc.js';
+import { googleAccount, getAcc, getLink, setName, deleteAccount, partnerAcc, createPairToken, joinPair, unpair } from './_acc.js';
 
 const clientIp = (req) => String(req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '?';
 const h = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 24);
@@ -134,9 +134,8 @@ const PAIR_CODE = { bad: 404, self: 400, mine: 409, busy: 409 };
 
 // Партнёр для ответа: { linked: true, name } | { linked: false }. Имя пустое, пока не задано (сайт подставляет «Helper User»).
 async function partnerInfo(id) {
-  const p = await partnerOf(id);
-  const a = p ? await getAcc(p) : null;
-  return a ? { linked: true, name: a.name || '' } : { linked: false };
+  const r = await partnerAcc(id);
+  return r ? { linked: true, name: r.acc.name || '' } : { linked: false };
 }
 
 // Действия с сессией: id аккаунта берётся только из cookie, не из тела запроса.
