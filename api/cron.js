@@ -1,15 +1,17 @@
-// Рассылка личных напоминаний (этап 3b) и ежедневная резервная копия Redis (этап 4.3, см. notes/backup.md). Обход: множество tgs (аккаунты с привязанным Telegram, см. _acc.js) → rem:<id> → отправка в tg:<id>.chat.
+// Рассылка личных и общих напоминаний (этап 3b; общие пары — этап 5, «Соединить аккаунты», часть 4) и ежедневная резервная копия Redis (этап 4.3, см. notes/backup.md). Обход: множество tgs (аккаунты с привязанным Telegram, см. _acc.js) → rem:<id> → отправка в tg:<id>.chat.
 // Hobby: cron раз в сутки, два слота (vercel.json: 11:00 UTC — «day», 15:00 UTC — «evening»). Точное время отправки сервер не гарантирует.
 // Лимиты: общий поток Telegram около 30 сообщений в секунду (шлём не чаще 20), maxDuration функции 30 с (укладываемся в BUDGET_MS).
 // Отметка «отправлено» ставится до отправки (planRem), поэтому повторный запуск не дублирует; не успевшие аккаунты (left) и сбои добираются повторным вызовом.
+// Общие напоминания (shr:<id>:<id>): у каждого аккаунта своя галочка и своя отметка отправки, поэтому каждый аккаунт пары при своём обходе забирает только свою сторону
+// и получает сообщение в свой Telegram; без привязки Telegram ничего не помечается (отметка стороны остаётся пустой).
 // Копия: после рассылки, на оставшееся время (всего 30 с), в оба слота: backupIfDue делает новую копию, только если последней полной больше 7 суток (DUE_GAP_MS),
 // и продолжает незаконченную (до 3 суток, STALE_MS). Поэтому сбой или нехватка времени в одном слоте доделываются следующим. Копия не мешает рассылке: её сбой не
 // отменяет отправленное, а только даёт код 502. Ручной запуск только копии: /api/cron?backup=1 (без рассылки; &dry=1 — только состояние).
 // Нет BACKUP_KEY — копия выключена (state:'off'), рассылка работает как раньше. Ключ задан, но негодный (не 64 hex-символа, слишком простой) —
 // это ошибка настройки (state:'error', kind:'config', код 502), а не тихое отключение: опечатка не должна оставлять базу без копий.
 import { authed, sendCustom } from './_bot.js';
-import { mskNow, readRem, mutateRem, planRem, unclaimRem } from './_rem.js';
-import { linkedIds, getLink } from './_acc.js';
+import { mskNow, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf } from './_rem.js';
+import { linkedIds, getLink, partnerAcc } from './_acc.js';
 import { backupReady, backupStatus, backupIfDue, runBackup, DUE_GAP_MS } from './_backup.js';
 
 const BUDGET_MS = 24000; // из 30 с maxDuration: запас на последнюю отправку и ответ
@@ -73,30 +75,39 @@ async function backupInfo() {
   }
 }
 
-// Один аккаунт. → { n: сколько ушло (при dry: ушло бы), failed, blocked, nolink }
+// Один аккаунт: свои напоминания и общие пары (его сторона). → { n: сколько ушло (при dry: ушло бы), failed, blocked, nolink }
+// Лишние команды Redis: у не соединённого аккаунта одна (GET pair:<id> в partnerAcc), у соединённого ещё три на проверку пары и одна на чтение общей записи.
+const clone = (o) => JSON.parse(JSON.stringify(o));
 async function one(id, now, slot, dry, turn) {
   const { rem } = await readRem(id);
-  const plan = planRem(JSON.parse(JSON.stringify(rem)), now, slot); // пробный расчёт на копии: ничего не меняет
-  if (!plan.length) return { n: 0, failed: 0, blocked: 0 };
+  const plan = planRem(clone(rem), now, slot); // пробный расчёт на копии: ничего не меняет
+  const pr = await partnerAcc(id); // общие напоминания читаем только у полной пары
+  let splan = [];
+  if (pr) splan = planShr(clone((await readShr(id, pr.id)).shr), now, slot, sideOf(id, pr.id));
+  if (!plan.length && !splan.length) return { n: 0, failed: 0, blocked: 0 };
   const link = await getLink(id);
   if (!link || !link.chat) return { n: 0, failed: 0, blocked: 0, nolink: true }; // привязку убрали: ничего не помечаем
-  if (dry) return { n: plan.length, failed: 0, blocked: 0 };
-  let claims = [];
-  await mutateRem(id, (r) => { claims = planRem(r, now, slot); }); // при повторе из-за чужой записи fn вызывается заново на свежих данных
-  const fails = [];
+  if (dry) return { n: plan.length + splan.length, failed: 0, blocked: 0 };
+  let claims = [], sclaims = [];
+  if (plan.length) await mutateRem(id, (r) => { claims = planRem(r, now, slot); }); // при повторе из-за чужой записи fn вызывается заново на свежих данных
+  if (splan.length) await mutateShr(id, pr.id, (r, me) => { sclaims = planShr(r, now, slot, me); });
+  const fails = [], sfails = [];
   let n = 0, blocked = 0;
-  for (const c of claims) {
+  for (const c of claims.concat(sclaims)) {
     await turn();
     try { await sendCustom(link.chat, c.text); n++; }
     catch (e) {
       if (DEAD.test(String(e && e.message))) blocked++; // отметка остаётся: после блокировки повтор не нужен
-      else { fails.push(c); console.error('send failed', short(id), e && e.message); }
+      else { (c.shared ? sfails : fails).push(c); console.error('send failed', short(id), e && e.message); }
     }
   }
   if (fails.length) {
     try { await mutateRem(id, (r) => { unclaimRem(r, fails); }); } catch (e) { console.error('unclaim failed', short(id), e && e.message); }
   }
-  return { n, failed: fails.length, blocked };
+  if (sfails.length) {
+    try { await mutateShr(id, pr.id, (r, me) => { unclaimShr(r, sfails, me); }); } catch (e) { console.error('unclaim shared failed', short(id), e && e.message); }
+  }
+  return { n, failed: fails.length + sfails.length, blocked };
 }
 
 export default async function handler(req, res) {

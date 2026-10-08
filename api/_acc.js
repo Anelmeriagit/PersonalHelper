@@ -14,6 +14,7 @@
 //   pair:<id>        → id второго аккаунта (двусторонне: pair:A = B и pair:B = A; без срока; верим только полной паре)
 //   cnt:<хеш токена> → id аккаунта, давшего ссылку (одноразовая ссылка /?join=<токен>, живёт PAIR_TTL секунд; сам токен не хранится)
 //   cnp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
+//   shr:<меньший id>:<больший id> → общие напоминания пары (запись _rem.js: readShr/mutateShr); удаляется при разрыве связи (unpair) и при удалении аккаунта
 import crypto from 'node:crypto';
 import { key, cmd, setNx, del, take } from './_db.js';
 
@@ -160,6 +161,9 @@ export async function linkedIds() {
 /* ---------- соединение двух аккаунтов ---------- */
 export const PAIR_TTL = 86400; // секунд: ссылка живёт сутки (второй человек может сначала войти через Google)
 
+// Имя пары для общих записей: два id по порядку, одинаково для обоих (shr:<меньший>:<больший>).
+export const pairId = (a, b) => (a < b ? a + ':' + b : b + ':' + a);
+
 // Партнёр аккаунта: id | null. Верим только полной паре: pair:<id> → P, pair:<P> → id и аккаунт P существует.
 // Половинка (сбой при соединении или удалении) партнёром не считается.
 // Единственная проверка пары: partnerOf и partnerAcc обе идут через неё.
@@ -215,12 +219,15 @@ export async function joinPair(token, id) {
     if ((await cmd('GET', key('pair', a))) === id) await del(key('pair', a));
     return { error: 'mine' };
   }
+  await del(key('shr', pairId(a, id))); // запись общих напоминаний от прежней связи этой пары (если разрыв не дочистил) новой связи не достаётся
   return { id: a, name: from.name || '' };
 }
 
 // Разрыв связи у обоих. Идемпотентен; обратную запись снимает, только если она указывает на этот аккаунт. → id бывшего партнёра | null
 export async function unpair(id) {
   const p = await cmd('GET', key('pair', id));
+  // Общие напоминания пары удаляются первыми: если сбой случится дальше, повтор разрыва (связь ещё есть) дочистит остальное.
+  if (p && ID_RE.test(String(p)) && p !== id) await del(key('shr', pairId(id, String(p))));
   await del(key('pair', id));
   if (!p || !ID_RE.test(String(p))) return null;
   if ((await cmd('GET', key('pair', p))) === id) await del(key('pair', p));

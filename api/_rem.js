@@ -4,8 +4,11 @@
 // Получатель один: Telegram, привязанный к аккаунту (tg:<id>, см. _acc.js). Постоянных напоминаний и поля «кому» больше нет.
 // Состояние бота (псевдонимы, ожидающие запросы) лежит отдельно, не здесь: бот пишет его на каждое сообщение, а эту запись читает и пишет cron.
 // Расписание (recDue, recNext), mskNow, лимиты и EVERY живут здесь; _bot.js их не знает.
+// Общие напоминания соединённой пары (этап 5, «Соединить аккаунты», часть 4): запись shr:<меньший id>:<больший id>, та же форма списков, но у каждого напоминания
+// две галочки и две отметки отправки, по одной на аккаунт: on:{a,b}, sent:{a,b} (временные) и sent:{'YYYY-MM-DD':{a,b}} (повторяющиеся).
+// a — аккаунт с меньшим id, b — с большим (sideOf). Читать и писать можно только через readShr/mutateShr, а доступ давать только после partnerAcc (target).
 import { readRec, writeRec, isPrecond } from './_lib.js';
-import { getLink } from './_acc.js';
+import { getLink, partnerAcc, pairId } from './_acc.js';
 
 export const CUSTOM_MAX = 50; // не больше 50 временных напоминаний
 export const RECURRING_MAX = 30; // не больше 30 повторяющихся
@@ -118,12 +121,19 @@ export function publicRecurring(rem) {
     .sort((a, b) => cmp((a.next || '9') + slotKey(a), (b.next || '9') + slotKey(b)));
 }
 
-// Ответ всех эндпоинтов напоминаний: { linked, username?, custom, recurring }. linked — привязан ли Telegram к аккаунту;
+// Ответ всех эндпоинтов напоминаний: { linked, username?, custom, recurring, shared? }. linked — привязан ли Telegram к аккаунту;
 // username (без @, может быть пустым) есть только у привязанного и берётся из той же записи tg:<id>, что и linked (одна команда Redis):
 // блок «Telegram» на сайте показывает @имя из этого ответа и не делает отдельный GET /api/tglink.
-export async function pubRem(id, rem) {
-  const l = await getLink(id);
-  return { linked: !!l, ...(l ? { username: l.un || '' } : {}), custom: publicCustom(rem), recurring: publicRecurring(rem) };
+// shared есть только у соединённого аккаунта (нет поля = не соединён): { linked:true, name, custom, recurring }, у каждого напоминания on — своя галочка,
+// pon — галочка партнёра. ctx — { pr, shr }, если вызывающий уже проверил пару и прочитал общую запись (иначе читается здесь).
+export async function pubRem(id, rem, ctx) {
+  const [l, pr] = await Promise.all([getLink(id), ctx ? ctx.pr : partnerAcc(id)]);
+  const out = { linked: !!l, ...(l ? { username: l.un || '' } : {}), custom: publicCustom(rem), recurring: publicRecurring(rem) };
+  if (pr) {
+    const shr = ctx ? ctx.shr : (await readShr(id, pr.id)).shr;
+    out.shared = pubShr(sideOf(id, pr.id), pr.acc.name || '', shr);
+  }
+  return out;
 }
 
 /* ---------- расписание ---------- */
@@ -156,4 +166,123 @@ export function unclaimRem(rem, fails) {
     if (f.kind === 'rec') { const it = rem.recurring.find((x) => x.id === f.cid); if (it) delete it.sent[f.date]; }
     else { const it = rem.custom.find((x) => x.id === f.cid); if (it) it.sent = false; }
   }
+}
+
+/* ---------- общие напоминания пары ---------- */
+export const sideOf = (id, pid) => (id < pid ? 'a' : 'b'); // a — аккаунт с меньшим id
+export const other = (side) => (side === 'a' ? 'b' : 'a');
+const two = (v, pick) => ({ a: pick(v && v.a), b: pick(v && v.b) });
+const flag = (x) => x !== false; // галочка: нет значения = включено
+const done = (x) => x === true; // отправлено: только явное true
+
+function scustom1(it) {
+  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_HOUR, it.slot) || typeof it.text !== 'string' || !it.text) return null;
+  return { id: it.id, date: it.date, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: two(it.on, flag), sent: two(it.sent, done) };
+}
+function srec1(it) {
+  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_HOUR, it.slot) || !EVERY.includes(it.every) || typeof it.text !== 'string' || !it.text) return null;
+  const sent = {};
+  if (it.sent && typeof it.sent === 'object' && !Array.isArray(it.sent)) {
+    for (const d of Object.keys(it.sent)) {
+      if (!validDate(d)) continue;
+      const v = two(it.sent[d], done);
+      if (v.a || v.b) sent[d] = v;
+    }
+  }
+  return { id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: two(it.on, flag), sent };
+}
+// Новое поле общих напоминаний сначала добавить сюда (scustom1/srec1/normShr), иначе оно потеряется при первой же записи.
+export const normShr = (raw) => ({
+  custom: (Array.isArray(raw && raw.custom) ? raw.custom : []).map(scustom1).filter(Boolean).slice(0, CUSTOM_MAX),
+  recurring: (Array.isArray(raw && raw.recurring) ? raw.recurring : []).map(srec1).filter(Boolean).slice(0, RECURRING_MAX),
+});
+
+// Новые общие напоминания: обе галочки включены (партнёр может выключить свою)
+export const newShrCustom = (it) => ({ ...it, on: { a: true, b: true }, sent: { a: false, b: false } });
+export const newShrRec = (it) => ({ ...it, on: { a: true, b: true }, sent: {} });
+export const anySent = (it) => !!(it.sent && (it.sent.a || it.sent.b)); // временное общее: отправлено хотя бы одному
+
+// → { shr, etag } (нет записи: пустые списки и etag null). a и b — id пары в любом порядке.
+export async function readShr(a, b) {
+  const { raw, etag } = await readRec('shr', pairId(a, b));
+  return { shr: normShr(raw), etag };
+}
+
+// Как mutateRem, но для общей записи пары. fn(shr, me, other): me и other — 'a'/'b' (свой и партнёра для id). Вызывать только после partnerAcc(id).
+export async function mutateShr(id, pid, fn) {
+  const me = sideOf(id, pid);
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { shr, etag } = await readShr(id, pid);
+    const before = JSON.stringify(shr);
+    const r = fn(shr, me, other(me));
+    if (r && r.err) return { shr, err: r.err };
+    if (JSON.stringify(shr) === before) return { shr };
+    try { await writeRec('shr', pairId(id, pid), shr, etag); return { shr }; }
+    catch (e) { if (!isPrecond(e)) throw e; }
+  }
+  throw new Error('shr busy');
+}
+
+// Вид для сайта: me — сторона аккаунта ('a'/'b'). on/sent — свои, pon/psent — партнёра.
+function pubShr(me, name, shr) {
+  const you = other(me), today = mskNow().date, tomorrow = addDays(today, 1);
+  return {
+    linked: true,
+    name,
+    custom: shr.custom
+      .map((it) => ({ id: it.id, date: it.date, slot: it.slot, text: it.text, on: it.on[me], pon: it.on[you], sent: it.sent[me], psent: it.sent[you] }))
+      .sort((x, y) => cmp(x.date + slotKey(x), y.date + slotKey(y))),
+    recurring: shr.recurring
+      .map((it) => {
+        const mine = recDue(it, today) && !!(it.sent[today] && it.sent[today][me]);
+        return { id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text, on: it.on[me], pon: it.on[you], next: recNext(it, mine ? tomorrow : today) };
+      })
+      .sort((x, y) => cmp((x.next || '9') + slotKey(x), (y.next || '9') + slotKey(y))),
+  };
+}
+
+// Расписание общих для одной стороны (side): то же, что planRem, но галочка и отметка отправки берутся по стороне.
+// Вызывать внутри mutateShr и только для аккаунтов с привязанным Telegram. → [{ kind:'custom'|'rec', cid, text, date }]
+export function planShr(shr, now, slot, side) {
+  const out = [];
+  for (const it of shr.custom) {
+    if (!it.on[side] || it.sent[side] || it.date !== now.date) continue;
+    if (slot && it.slot !== slot) continue;
+    it.sent[side] = true;
+    out.push({ kind: 'custom', cid: it.id, text: it.text, date: now.date, shared: true });
+  }
+  for (const it of shr.recurring) {
+    if (!it.on[side] || (it.sent[now.date] && it.sent[now.date][side]) || !recDue(it, now.date)) continue;
+    if (slot && it.slot !== slot) continue;
+    it.sent[now.date] = { ...(it.sent[now.date] || { a: false, b: false }), [side]: true };
+    out.push({ kind: 'rec', cid: it.id, text: it.text, date: now.date, shared: true });
+  }
+  const old = addDays(now.date, -60);
+  shr.custom = shr.custom.filter((it) => it.date >= old);
+  for (const it of shr.recurring) for (const d of Object.keys(it.sent)) if (d < old) delete it.sent[d];
+  return out;
+}
+
+// Снимает отметку стороны у неудавшихся отправок (элементы planShr).
+export function unclaimShr(shr, fails, side) {
+  for (const f of fails) {
+    if (f.kind === 'rec') {
+      const it = shr.recurring.find((x) => x.id === f.cid);
+      if (it && it.sent[f.date]) { it.sent[f.date][side] = false; if (!it.sent[f.date].a && !it.sent[f.date].b) delete it.sent[f.date]; }
+    } else { const it = shr.custom.find((x) => x.id === f.cid); if (it) it.sent[side] = false; }
+  }
+}
+
+// Куда писать обработчикам /api/custom и /api/recurring: shared=false — личная запись аккаунта, true — общая запись пары (нужна связь).
+// → null (shared, но пары нет) | { sh, mut(fn), out(r) }. mut(fn) для общей вызывает fn(shr, me, other), для личной fn(rem).
+// out(r) — тело ответа: то же, что GET /api/reminders.
+export async function target(uid, shared) {
+  if (!shared) return { sh: false, mut: (fn) => mutateRem(uid, (s) => fn(s)), out: (r) => pubRem(uid, r.rem) };
+  const pr = await partnerAcc(uid);
+  if (!pr) return null;
+  return {
+    sh: true,
+    mut: (fn) => mutateShr(uid, pr.id, fn),
+    out: async (r) => pubRem(uid, (await readRem(uid)).rem, { pr, shr: r.shr }),
+  };
 }

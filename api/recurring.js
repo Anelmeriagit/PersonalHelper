@@ -1,13 +1,14 @@
 import crypto from 'node:crypto';
 import { session } from './_lib.js';
-import { EVERY, RECURRING_MAX, SLOT_HOUR, MAX_TEXT, mskNow, hourMsk, validDate, cleanText, own, idOk, lastDay, mutateRem, pubRem } from './_rem.js';
+import { EVERY, RECURRING_MAX, SLOT_HOUR, MAX_TEXT, mskNow, hourMsk, validDate, cleanText, own, idOk, lastDay, target, newShrRec } from './_rem.js';
 
 // Повторяющиеся напоминания аккаунта из сессии. Данные: rem:<id> (см. _rem.js).
-//   POST   /api/recurring   {date:'YYYY-MM-DD', every:'week'|'2weeks'|'month', slot:'day'|'evening', text}
-//   PUT    /api/recurring   {id, key:'on', value:boolean}                          — включить / выключить
-//   PUT    /api/recurring   {id, text?, date?, slot?, every?}                       — правка (date — новая дата отсчёта)
-//   DELETE /api/recurring?id=<id>
-// Каждый ответ — то же, что GET /api/reminders ({linked, custom, recurring}).
+//   POST   /api/recurring   {date:'YYYY-MM-DD', every:'week'|'2weeks'|'month', slot:'day'|'evening', text, shared?:true}
+//   PUT    /api/recurring   {id, key:'on', value:boolean, shared?:true, who?:'me'|'partner'}   — включить / выключить
+//   PUT    /api/recurring   {id, text?, date?, slot?, every?, shared?:true}                    — правка (date — новая дата отсчёта)
+//   DELETE /api/recurring?id=<id>[&shared=1]
+// shared, who и 409 {error:'nopair'}: как у /api/custom (общее напоминание соединённой пары, у каждого аккаунта своя галочка).
+// Каждый ответ — то же, что GET /api/reminders ({linked, custom, recurring, shared?}).
 // Отправку делает api/cron.js (слоты 14:00 и 18:00 по Москве), расписание считает recDue() в _rem.js.
 
 export default async function handler(req, res) {
@@ -15,12 +16,13 @@ export default async function handler(req, res) {
   const uid = session(req);
   if (!uid) return res.status(401).json({ error: 'auth' });
   try {
-    const out = async (r) => res.status(200).json(await pubRem(uid, r.rem));
-
     if (req.method === 'DELETE') {
       const id = String((req.query && req.query.id) || '');
       if (!idOk(id)) return res.status(400).json({ error: 'bad request' });
-      return out(await mutateRem(uid, (s) => { s.recurring = s.recurring.filter((it) => it.id !== id); }));
+      const T = await target(uid, !!req.query && req.query.shared === '1');
+      if (!T) return res.status(409).json({ error: 'nopair' });
+      const r = await T.mut((s) => { s.recurring = s.recurring.filter((it) => it.id !== id); });
+      return res.status(200).json(await T.out(r));
     }
 
     if (req.method !== 'POST' && req.method !== 'PUT') return res.status(405).end();
@@ -28,6 +30,9 @@ export default async function handler(req, res) {
     let b = req.body;
     try { if (typeof b === 'string') b = JSON.parse(b); } catch { return res.status(400).json({ error: 'bad request' }); }
     b = b && typeof b === 'object' ? b : {};
+    const T = await target(uid, b.shared === true);
+    if (!T) return res.status(409).json({ error: 'nopair' });
+    const out = async (r) => res.status(200).json(await T.out(r));
 
     if (req.method === 'POST') {
       const { date, slot, every } = b;
@@ -36,9 +41,10 @@ export default async function handler(req, res) {
       const now = mskNow();
       if (date < now.date || date > lastDay(now.date)) return res.status(400).json({ error: 'bad date' });
       if (date === now.date && hourMsk() >= SLOT_HOUR[slot]) return res.status(400).json({ error: 'late' });
-      const r = await mutateRem(uid, (s) => {
+      const r = await T.mut((s) => {
         if (s.recurring.length >= RECURRING_MAX) return { err: 'limit' };
-        s.recurring.push({ id: crypto.randomBytes(6).toString('hex'), date, every, slot, text, on: true, sent: {} });
+        const it = { id: crypto.randomBytes(6).toString('hex'), date, every, slot, text, on: true, sent: {} };
+        s.recurring.push(T.sh ? newShrRec(it) : it);
       });
       if (r.err) return res.status(409).json({ error: r.err });
       return out(r);
@@ -60,7 +66,7 @@ export default async function handler(req, res) {
       if (hasEvery && !EVERY.includes(b.every)) return res.status(400).json({ error: 'bad request' });
       const now = mskNow();
       if (hasDate && (b.date < now.date || b.date > lastDay(now.date))) return res.status(400).json({ error: 'bad date' });
-      r = await mutateRem(uid, (s) => {
+      r = await T.mut((s) => {
         const it = s.recurring.find((x) => x.id === id);
         if (!it) return { err: 'gone' };
         if (hasDate) it.date = b.date;
@@ -72,10 +78,11 @@ export default async function handler(req, res) {
       // PUT: включить/выключить
       const { key, value } = b;
       if (key !== 'on' || typeof value !== 'boolean') return res.status(400).json({ error: 'bad request' });
-      r = await mutateRem(uid, (s) => {
+      if (own(b, 'who') && b.who !== 'me' && b.who !== 'partner') return res.status(400).json({ error: 'bad request' });
+      r = await T.mut((s, me, they) => {
         const it = s.recurring.find((x) => x.id === id);
         if (!it) return { err: 'gone' };
-        it.on = value;
+        if (T.sh) it.on[b.who === 'partner' ? they : me] = value; else it.on = value;
       });
     }
     if (r.err === 'gone') return res.status(404).json({ error: 'gone' });

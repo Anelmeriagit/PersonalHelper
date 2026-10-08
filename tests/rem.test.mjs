@@ -354,7 +354,7 @@ test('привязка без username: linked true, username пустая ст�
   assert.equal(r.body.username, '');
 });
 
-test('GET /api/reminders: две команды Redis, запись tg:<id> читается один раз', async () => {
+test('GET /api/reminders: три команды Redis (одна из них проверка связи), запись tg:<id> читается один раз', async () => {
   const id = await mkAcc('ivan');
   const { token } = await acc.createLinkToken(id);
   await acc.bindTelegram(token, { id: 77, username: 'ivan_k' }, 77);
@@ -362,10 +362,11 @@ test('GET /api/reminders: две команды Redis, запись tg:<id> чи
   const r = await get(id);
   assert.equal(r.statusCode, 200);
   const log = __cmdLog();
-  assert.equal(log.length, 2, 'команды: ' + log.join(' | '));
+  assert.equal(log.length, 3, 'команды: ' + log.join(' | '));
   assert.equal(log.filter((c) => c === 'GET tg:' + id).length, 1, 'tg:<id> читается один раз: ' + log.join(' | '));
   assert.equal(log.filter((c) => c === 'HMGET rem:' + id).length, 1);
-  assert.equal(__cmds(), 2);
+  assert.equal(log.filter((c) => c === 'GET pair:' + id).length, 1, 'без связи только один GET pair: ' + log.join(' | '));
+  assert.equal(__cmds(), 3);
 });
 
 test('POST /api/custom тоже отдаёт username (клиент заменяет rem целиком, блок Telegram не теряет имя)', async () => {
