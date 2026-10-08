@@ -3,15 +3,13 @@
 ## Порядок деплоя этапа 3b (PowerShell, из корня репозитория)
 1. Распаковать zip поверх репозитория. Удалённые файлы zip не передаёт: `git rm cashback-spelling.patch`. По желанию `git rm tree.txt` (устаревший список файлов; в `.vercelignore` он уже есть, наружу не раздаётся).
 2. По желанию локально: `node --import ./tests/register.mjs --test "tests/*.test.mjs"` (ожидается 300 из 300).
-3. Настоящий Redis: `$env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; node tests/live-redis.mjs` (значения только в окне, в файлы не писать) → «Все проверки настоящего Redis пройдены». Пишет только ключи `selftest<время>:` и удаляет их. Если упала проверка `SCAN`, скрипт чистки не запускать.
+3. Настоящий Redis: `$env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; node tests/live-redis.mjs` (значения только в окне, в файлы не писать) → «Все проверки настоящего Redis пройдены». Пишет только ключи `selftest<время>:` и удаляет их.
 4. Vercel → Settings → Environment Variables: заданы Redis-переменные, `SESSION_SECRET`, `TELEGRAM_BOT_TOKEN`, `CRON_SECRET`. `AUTH_USER` пока оставить.
 5. `git status` (нет ли лишних файлов, особенно с секретами) → `git add -A; git commit -m "Stage 3b part 5"; git push`. Деплой пойдёт сам. После зелёного деплоя: Vercel → Functions, должно быть 11 функций (лимит Hobby 12).
-6. Чистка данных (в том же окне PowerShell, `$env:DB_PREFIX=''` для боя). Для шага Blob: `npm i` (пакет `@vercel/blob` теперь в `package.json`) и `$env:BLOB_READ_WRITE_TOKEN='...'` (без них шаг Blob пропускается).
-   - Сухой прогон: `node scripts/purge-3b.mjs --backfill`. Сверить числа: `rem`, `bot`, `doc`, Blob `bot/state.json`, `tgs: добавить N`.
-   - **`--apply` необратимо удалит документы кэшбэков всех аккаунтов (и ваши, и Жанны) и все личные напоминания.** Если согласны: `node scripts/purge-3b.mjs --apply --backfill`, ввести `DELETE`. Строка «Готово, но не всё» или код выхода 2 значит, что шаг пропущен (обычно Blob): поставить пакет или токен и повторить (повтор безопасен).
+6. (Разовая чистка данных: скрипт `scripts/purge-3b.mjs` удалён из репозитория 2026-10-08; шаг не повторять, его `--apply` удалил бы документы кэшбэков всех аккаунтов.)
 7. Сухой прогон cron: `$secret = '...'; curl.exe -H "Authorization: Bearer $secret" "https://<домен>/api/cron?dry=1"` → `"dry":true`, `accounts` равен числу привязанных, `would_send` 0, `errors` 0, `left` 0.
 8. Вебхук и меню бота: `curl.exe -H "Authorization: Bearer $secret" https://<домен>/api/tg-setup` → `"ok":true`, `url` оканчивается на `/api/telegram`.
-9. Привязка Дениса и Жанны: вход на сайт → «Напоминания» → «Привязать Telegram» → «Открыть Telegram» → «Запустить». Если после `--backfill` на сайте уже виден «@имя», привязывать заново не нужно: достаточно написать боту `/cashback`.
+9. Привязка Дениса и Жанны: вход на сайт → «Напоминания» → «Привязать Telegram» → «Открыть Telegram» → «Запустить». Если на сайте уже виден «@имя», привязывать заново не нужно: достаточно написать боту `/cashback`.
 10. Проверка по спискам ниже (минимум: привязка, `/cashback`, ответ по магазину, напоминание на завтра после cron).
 11. После вашего подтверждения, что всё работает: удалить `AUTH_USER` из Vercel (код её не читает, передеплой не нужен). `BLOB_READ_WRITE_TOKEN` и Blob-хранилище оставить до этапа 4.
 

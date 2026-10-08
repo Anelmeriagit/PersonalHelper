@@ -1,4 +1,4 @@
-// Проверка НАСТОЯЩЕГО Redis (Upstash): атомарные скрипты версии документа, счётчика и одноразового значения (take), SET NX, множество (SADD/SREM/SMEMBERS), SCAN с MATCH и COUNT (нужен скрипту scripts/purge-3b.mjs), TYPE, HGETALL, PTTL и круг резервной копии api/_backup.js (этап 4.1: чтение, шифрование, восстановление).
+// Проверка НАСТОЯЩЕГО Redis (Upstash): атомарные скрипты версии документа, счётчика и одноразового значения (take), SET NX, множество (SADD/SREM/SMEMBERS), SCAN с MATCH и COUNT (нужен резервной копии api/_backup.js), TYPE, HGETALL, PTTL и круг резервной копии api/_backup.js (этап 4.1: чтение, шифрование, восстановление).
 // Заглушка tests/redis.mjs Lua не исполняет, поэтому этот прогон нужен один раз после подключения базы и после правок скриптов в api/_db.js.
 // Запуск (PowerShell): $env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; node tests/live-redis.mjs
 // Пишет только ключи с префиксом selftest<время>: и удаляет их в конце. Значения переменных нигде не печатаются.
@@ -36,7 +36,7 @@ try {
   ok((await db.cmd('SMEMBERS', ks)).sort().join() === 'a1,b2', 'SMEMBERS отдаёт все элементы');
   ok(await db.cmd('SREM', ks, 'a1', 'нет') === 1 && (await db.cmd('SMEMBERS', ks)).join() === 'b2', 'SREM убирает только существующее');
   ok(await db.cmd('SREM', ks, 'b2') === 1 && (await db.cmd('SMEMBERS', ks)).length === 0, 'пустое множество: SMEMBERS даёт []');
-  // SCAN с MATCH и COUNT (scripts/purge-3b.mjs): обход по курсору находит все свои ключи doc: и не находит чужие
+  // SCAN с MATCH и COUNT (api/_backup.js): обход по курсору находит все свои ключи doc: и не находит чужие
   const seen = new Set();
   let cur = '0';
   do { const r = await db.cmd('SCAN', cur, 'MATCH', db.key('doc', '*'), 'COUNT', 1); cur = String(r[0]); for (const k of r[1]) seen.add(k); } while (cur !== '0');
