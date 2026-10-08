@@ -15,9 +15,11 @@ export function mskDay(offset = 0) {
 
 const qrRows = Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => ((x * 7 + y * 3 + (x ^ y)) % 3 === 0 ? '1' : '0')).join(''));
 
+export const ACC_ID = '0123456789abcdef0123456789abcdef';
 export const qr = { size: 21, rows: qrRows };
 export const routes = {
   'GET /api/data': () => ({
+    id: ACC_ID, // id аккаунта (метка «гостевые данные уже сливали», js/merge.js)
     user: 'test',
     name: '', // отображаемое имя; пусто: в шапке «Helper User»
     data: {
@@ -56,7 +58,7 @@ export const routes = {
   // вход, регистрация, выход; me / rename / delete — меню и окно «Настройки аккаунта» (форма ответов в notes/account.md)
   'POST /api/auth': (body) => {
     const a = body && body.action;
-    if (a === 'me') return { id: '0123456789abcdef0123456789abcdef', name: '', email: '', tg: { linked: false } };
+    if (a === 'me') return { id: ACC_ID, name: '', email: '', tg: { linked: false } };
     if (a === 'rename') return { name: String(body.name || '') };
     return { ok: true };
   },

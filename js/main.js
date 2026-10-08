@@ -12,6 +12,7 @@ import {initTg,tgVisible,tgClear} from './tglink.js';
 import {initWelcome} from './welcome.js';
 import {initAccount,accShow,accSetName} from './account.js';
 import {guestSetAg,guestSetWf} from './local.js';
+import {mergeGuest} from './merge.js';
 
 var editBtn=$('editBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
 
@@ -46,7 +47,10 @@ function gButtons(){Array.prototype.forEach.call(document.querySelectorAll('[dat
   var b=$('gBtn').cloneNode(true);b.removeAttribute('id');b.hidden=false;box.appendChild(b)})}
 /* открыть разделы: j — ответ GET /api/data (с сервера или из браузера) */
 function openApp(j){startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui();applyPage();finishBoot()}
-function openAcct(j){S.acct=true;accSetName(j&&j.name);openApp(j)}
+/* вход в аккаунт: при первом входе в этом браузере гостевые данные сливаются в аккаунт (merge.js), затем разделы открываются уже с итоговым кэшбэком */
+var MERGED='Данные из гостевого режима добавлены в аккаунт.';
+function openAcct(j){S.acct=true;accSetName(j&&j.name);
+  mergeGuest(j).then(function(m){openApp(m&&m.j||j);if(m)cbNote(MERGED)})}
 function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(openApp)}
 /* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые: {cb, ag, wf}, каждая часть отдельно
    (cb — кэшбэк; ag — строки агента; wf — сеть WiFi, null: у аккаунта сети нет, гостевая удаляется); часть без значения (null, у wf ещё и undefined) оставляет гостевые данные как были; snap=null — все остаются как были */

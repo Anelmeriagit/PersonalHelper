@@ -33,11 +33,14 @@ test('без сессии 401; cookie несуществующего аккау�
   assert.equal((await call('GET', ghost)).statusCode, 401);
 });
 
-test('GET нового аккаунта: пустое имя, пустые данные', async () => {
+test('GET нового аккаунта: id, пустое имя, пустые данные', async () => {
   const c = await signup('anna');
+  const { id } = await acc.googleAccount('sub-anna', '', 100); // тот же sub: тот же аккаунт
   const r = await call('GET', c);
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { name: '', data: { months: {}, custom: [] }, rev: {} });
+  assert.match(id, /^[0-9a-f]{32}$/);
+  // id нужен сайту для метки «гостевые данные уже сливали» (js/merge.js); берётся из сессии, лишних команд Redis нет
+  assert.deepEqual(r.body, { id, name: '', data: { months: {}, custom: [] }, rev: {} });
   assert.equal(r.headers['cache-control'], 'no-store');
 });
 

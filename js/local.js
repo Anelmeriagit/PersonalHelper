@@ -4,13 +4,15 @@
    кэшбэк (/api/data) — api/_lib.js (clean, cleanCustom, cleanBlocks, PART_RE) и api/data.js (PUT);
    агент (/api/agent) — api/agent.js (cleanApp, cleanRows, withAt, nextAt);
    WiFi (/api/wifi) — api/wifi.js (cleanWifi, wifiString), QR строит js/qr.js (парный файл к api/_qr.js): пароль сети на сервер не уходит.
-   Остальные пути (напоминания, Telegram, вход) отвечают 401, как сервер без входа. */
+   Остальные пути (напоминания, Telegram, вход) отвечают 401, как сервер без входа.
+   Слияние гостевых данных с аккаунтом при входе через Google: чистые функции guestDump, mergeCb, mergeAg и метка «уже сливали» (guestMerged, guestMark) здесь,
+   сетевая часть — merge.js. */
 import {ls} from './util.js';
 import {clock,shiftM} from './time.js';
 import {BANKS,CATS,PCTS} from './cashback/state.js';
 import {makeQr,utf8Bytes} from './qr.js';
 
-var K_CB='g-cb',K_AG='g-ag',K_WF='g-wf';
+var K_CB='g-cb',K_AG='g-ag',K_WF='g-wf',K_MG='g-mg',ACC_RE=/^[0-9a-f]{32}$/;
 var MONTH_RE=/^\d{4}-(0[1-9]|1[0-2])$/,PART_RE=/^(\d{4}-(0[1-9]|1[0-2])|custom)$/,BAD_CAT=/[<>"'`&\\\u0000-\u001f]/;
 
 function has(o,k){return Object.prototype.hasOwnProperty.call(o,k)}
@@ -132,6 +134,46 @@ function wifiReq(m,b){
   if(!c.cfg)return out(400,{error:c.error});
   var v=wifiView(c.cfg);
   return write(K_WF,c.cfg)?out(200,v):out(500,{error:'storage'})}
+
+/* ---------- слияние гостевых данных с аккаунтом при входе через Google (часть 4; сеть — merge.js) ----------
+   Правило: на конфликте побеждает аккаунт, гость заполняет пробелы. Выполняется один раз на аккаунт в этом браузере (метка g-mg). */
+/* гостевые данные как есть; часть, которой у гостя нет, — null (кэшбэк: пустой документ; агент: список ни разу не сохранялся) */
+export function guestDump(){var d=cbDoc(),ag=read(K_AG),wf=wfCfg();
+  return{cb:Object.keys(d.months).length||d.custom.length?pub(d):null,
+    ag:ag&&Array.isArray(ag.rows)&&ag.rows.length?cleanRows(ag.rows,true).slice(0,AG_MAX):null,
+    wf:wf||null}}
+/* кэшбэк: месяц и банк, которых нет в аккаунте, копируются (месяц вне окна «прошлый … +2», которого у аккаунта нет, сервер создать не даст, он пропускается); свои категории объединяются (аккаунт первым, до 30).
+   → {data: итоговый документ, parts: ключи изменённых частей (месяцы и 'custom')} */
+export function mergeCb(acc,gst){
+  var a=clean(acc),g=clean(gst),cur=clock().cur,lo=shiftM(cur,-1),hi=shiftM(cur,2),months=JSON.parse(JSON.stringify(a.months)),low=Object.create(null);
+  a.custom.forEach(function(c){low[c.toLowerCase()]=c});
+  /* своя категория гостя, совпавшая с категорией аккаунта в другом регистре, записывается как у аккаунта (иначе проверка отбросила бы строку) */
+  function spell(items){return items.map(function(i){var c=low[String(i.cat).toLowerCase()];return{cat:c||i.cat,pct:i.pct}})}
+  Object.keys(g.months).forEach(function(mo){
+    if(!has(months,mo)&&!(mo>=lo&&mo<=hi))return;
+    var mine=months[mo]||[],banks=mine.map(function(b){return b.bank}),
+      add=g.months[mo].filter(function(b){return banks.indexOf(b.bank)<0}).map(function(b){return{bank:b.bank,items:spell(b.items)}});
+    if(add.length)months[mo]=mine.concat(add)});
+  var m=clean({months:months,custom:a.custom.concat(g.custom)}),parts=[];
+  if(JSON.stringify(m.custom)!==JSON.stringify(a.custom))parts.push('custom');
+  Object.keys(m.months).forEach(function(mo){if(JSON.stringify(m.months[mo])!==JSON.stringify(a.months[mo]||[]))parts.push(mo)});
+  return{data:m,parts:parts}}
+/* агент: строка гостя с тем же названием (без учёта регистра, по порядку) совпадает со строкой аккаунта: побеждает аккаунт, но если у неё нет времени, берётся время гостя;
+   строки без пары добавляются в конец, пока их не станет 12. → {rows, changed} */
+export function mergeAg(acc,gst){
+  var rows=cleanRows(acc,true).slice(0,AG_MAX),used=[],extra=[],changed=false;
+  cleanRows(gst,true).forEach(function(g){var i=-1,k;
+    for(k=0;k<rows.length;k++)if(used.indexOf(k)<0&&rows[k].app.toLowerCase()===g.app.toLowerCase()){i=k;break}
+    if(i<0){extra.push(g);return}
+    used.push(i);
+    var r=rows[i];
+    if((r.h===null||r.m===null)&&g.h!==null&&g.m!==null){rows[i]={id:r.id,app:r.app,h:g.h,m:g.m,at:null};changed=true}});
+  extra.forEach(function(g){if(rows.length>=AG_MAX)return;rows.push({id:agId(),app:g.app,h:g.h,m:g.m,at:null});changed=true});
+  return{rows:rows,changed:changed}}
+/* метка «с этим аккаунтом уже сливали»: список id (32 hex), последние 20; id аккаунта приходит в ответе GET /api/data */
+export function guestMerged(id){var a=read(K_MG);return Array.isArray(a)&&a.indexOf(id)>-1}
+export function guestMark(id){if(typeof id!=='string'||!ACC_RE.test(id))return false;
+  var a=read(K_MG);a=Array.isArray(a)?a.filter(function(v){return typeof v==='string'&&ACC_RE.test(v)&&v!==id}):[];a.push(id);return write(K_MG,a.slice(-20))}
 
 /* запрос гостя: ответ Response (как fetch). Всё, что не гостевое (напоминания, Telegram), отвечает 401 «нужен вход». */
 export function guestApi(m,u,b){
