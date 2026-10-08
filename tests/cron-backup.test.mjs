@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { __keys, __raw } from './redis.mjs';
 import { __reset, __keys as blobKeys, __failPutOn, __puts } from './blob.mjs'; // __reset заглушки Blob сбрасывает и Redis
-import { mockReq, mockRes, setEnv, linkUser, fakeClock } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, linkUser, fakeClock, mockTg } from './helpers.mjs';
 
 const KEY1 = 'a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00';
 setEnv();
@@ -30,16 +30,6 @@ async function run(query = {}, headers = AUTH) {
   req.query = query;
   await cron(req, res);
   return res;
-}
-function mockTg(t) {
-  const calls = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts) => {
-    const m = String(url).match(/api\.telegram\.org\/bot[^/]+\/(\w+)/);
-    assert.ok(m, 'неожиданный запрос: ' + url);
-    calls.push({ method: m[1], body: JSON.parse(opts.body) });
-    return new Response(JSON.stringify({ ok: true, result: {} }));
-  });
-  return calls;
 }
 const sent = (calls) => calls.filter((c) => c.method === 'sendMessage');
 const snaps = () => [...new Set(blobKeys().map((k) => /^backup\/([^/]+)\//.exec(k)).filter(Boolean).map((m) => m[1]))];

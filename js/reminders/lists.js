@@ -125,7 +125,6 @@ function listRender(kind){
   else{var up=items.filter(function(i){return!tmpPast(i)}),pa=items.filter(tmpPast).reverse();
     k.list.innerHTML=items.length?up.concat(pa).map(tmpItemHtml).join(''):'<p class="empty">Временных напоминаний пока нет.</p>'}
   if(sel){var n=k.list.querySelector(sel);if(n)n.focus()}}
-function tmpRender(){listRender('tmp')}
 export function listsRender(){listRender('tmp');listRender('rec')}
 function tmpSave(req){remMsg.textContent='…';
   req.then(function(r){if(r.status===401){authFail();return}if(!r.ok)throw 0;

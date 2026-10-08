@@ -3,7 +3,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __reset, __fail } from './redis.mjs';
-import { mockReq, mockRes, setEnv, linkUser } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, linkUser, mockTg } from './helpers.mjs';
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -36,16 +36,6 @@ beforeEach(async () => {
 });
 
 // Мок Telegram: запоминает вызовы api.telegram.org, отвечает {ok:true}.
-function mockTg(t) {
-  const calls = [];
-  t.mock.method(globalThis, 'fetch', async (url, opts) => {
-    const m = String(url).match(/api\.telegram\.org\/bot[^/]+\/(\w+)/);
-    assert.ok(m, 'неожиданный запрос: ' + url);
-    calls.push({ method: m[1], body: JSON.parse(opts.body) });
-    return new Response(JSON.stringify({ ok: true, result: {} }));
-  });
-  return calls;
-}
 async function send(update, secret = bot.webhookSecret()) {
   const res = mockRes();
   await handler(mockReq({ method: 'POST', headers: { 'x-telegram-bot-api-secret-token': secret }, body: update }), res);

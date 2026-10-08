@@ -16,28 +16,14 @@
 // В вывод идут только числа и начало id (8 символов): ни адресов, ни токенов, ни содержимого записей.
 import { pathToFileURL } from 'node:url';
 import { cmd, pipe, key, prefix, dbReady } from '../api/_db.js';
+import { CHUNK, short, globEsc, chunks, scan, ttyConfirm } from './_cli.mjs';
 import { ID_RE } from '../api/_acc.js';
 
 export const KINDS = ['rem', 'bot', 'doc', 'blob'];
 export const BLOB_PATH = 'bot/state.json';
 const REDIS_KINDS = ['rem', 'bot', 'doc'];
-const CHUNK = 100;
 
-const short = (id) => String(id).slice(0, 8);
-const globEsc = (s) => s.replace(/[\\*?[\]]/g, '\\$&'); // спецсимволы шаблона SCAN в префиксе
-const chunks = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
 
-// Все ключи по шаблону: SCAN по курсору до конца (Redis может вернуть повторы, поэтому Set).
-async function scan(pattern) {
-  const found = new Set();
-  let cur = '0';
-  do {
-    const r = await cmd('SCAN', cur, 'MATCH', pattern, 'COUNT', 500);
-    cur = String(r[0]);
-    for (const k of r[1] || []) found.add(k);
-  } while (cur !== '0');
-  return [...found];
-}
 
 // id аккаунтов, у которых есть ключ <вид>:<id> в этом префиксе. Ключи не такого вида (например doc:abc) считаются чужими и не возвращаются.
 export async function idsOf(kind) {
@@ -183,12 +169,7 @@ async function main() {
   if (o.help) { console.log(HELP); return; }
   const io = {
     log: (s) => console.log(s),
-    confirm: async (q) => {
-      if (!process.stdin.isTTY) { console.log('Нет терминала для подтверждения: запустите в обычном окне PowerShell или добавьте --yes.'); return false; }
-      const { createInterface } = await import('node:readline/promises');
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try { return (await rl.question(q)).trim() === 'DELETE'; } finally { rl.close(); }
-    },
+    confirm: ttyConfirm,
     blob: async () => { try { return await import('@vercel/blob'); } catch { return null; } },
     blobToken: () => process.env.BLOB_READ_WRITE_TOKEN || '',
   };

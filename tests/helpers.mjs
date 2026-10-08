@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 export function setEnv() {
   delete process.env.AUTH_USER; // с этапа 3b бот читает документ привязанного аккаунта, переменная не нужна
   process.env.SESSION_SECRET = 'test-session-secret-0123456789abcdef';
@@ -50,4 +51,22 @@ export async function linkUser(acc, name, from, chat = from.id * 100 + 1) {
   const r = await acc.bindTelegram(token, from, chat);
   if (r.error) throw new Error('linkUser: ' + r.error);
   return id;
+}
+
+// Подменяет fetch для запросов к Telegram Bot API: любой другой запрос роняет тест. → массив вызовов { method, body }.
+export function mockTg(t) {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, opts) => {
+    const m = String(url).match(/api\.telegram\.org\/bot[^/]+\/(\w+)/);
+    assert.ok(m, 'неожиданный запрос: ' + url);
+    calls.push({ method: m[1], body: JSON.parse(opts.body) });
+    return new Response(JSON.stringify({ ok: true, result: {} }));
+  });
+  return calls;
+}
+
+// Создаёт аккаунт Google (sub = 'sub-' + имя) и возвращает куку сессии для запроса. acc — api/_acc.js, lib — api/_lib.js.
+export async function sessionCookie(acc, lib, name) {
+  const { id } = await acc.googleAccount('sub-' + name, '', 100);
+  return lib.makeCookie(id).split(';')[0];
 }

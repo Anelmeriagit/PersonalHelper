@@ -18,16 +18,15 @@
 // В вывод идут только числа, виды ключей и номер копии: ни адресов, ни токенов, ни ключей шифрования, ни содержимого записей, ни id аккаунтов.
 import { pathToFileURL } from 'node:url';
 import { cmd, pipe, prefix, dbReady } from '../api/_db.js';
+import { chunks, ttyConfirm } from './_cli.mjs';
 import { listBackups, readManifest, readPart, verifyBackup, restoreCmds, normPrefix, globEsc, readRecs, recSize } from '../api/_backup.js';
 
 export const DEFAULT_SKIP = ['rl', 'tgt']; // временные ключи: счётчики лимитов и одноразовые ссылки привязки
 const SEND_BYTES = 200 * 1024; // сколько записей отправлять в Redis одним запросом (в байтах JSON)
-const EXISTS_CHUNK = 200;
 
 const kindOf = (k) => String(k).split(':')[0];
 const when = (ms) => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '?');
 const fmtKinds = (m) => Object.keys(m).sort().map((k) => k + ' ' + m[k]).join(', ') || 'нет';
-const chunks = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
 const add = (m, k, n = 1) => { m[k] = (m[k] || 0) + n; };
 
 // Сверка записанного с копией: читает ключи обратно (с текущим DB_PREFIX) и сравнивает тип, значение и срок жизни.
@@ -215,12 +214,7 @@ async function main() {
   if (o.help) { console.log(HELP); return; }
   const io = {
     log: (s) => console.log(s),
-    confirm: async (q, word) => {
-      if (!process.stdin.isTTY) { console.log('Нет терминала для подтверждения: запустите в обычном окне PowerShell или добавьте --yes.'); return false; }
-      const { createInterface } = await import('node:readline/promises');
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      try { return (await rl.question(q)).trim() === word; } finally { rl.close(); }
-    },
+    confirm: ttyConfirm,
   };
   const r = await run(o, io);
   if (!r.ok) process.exitCode = r.mode === 'cancelled' ? 0 : 2;

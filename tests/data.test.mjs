@@ -3,7 +3,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __reset, __fail, __raw } from './redis.mjs';
-import { mockReq, mockRes, setEnv } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, sessionCookie } from './helpers.mjs';
 
 setEnv();
 const lib = await import('../api/_lib.js');
@@ -12,10 +12,7 @@ const data = (await import('../api/data.js')).default;
 
 beforeEach(() => { __reset(); setEnv(); });
 
-async function signup(name) {
-  const { id } = await acc.googleAccount('sub-' + name, '', 100);
-  return lib.makeCookie(id).split(';')[0];
-}
+const signup = (name) => sessionCookie(acc, lib, name);
 async function call(method, cookie, body, ct = 'application/json') {
   const res = mockRes();
   const headers = { ...(cookie ? { cookie } : {}), ...(method === 'PUT' && ct ? { 'content-type': ct } : {}) };
