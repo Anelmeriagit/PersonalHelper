@@ -46,6 +46,10 @@ function agFlush(ka){clearTimeout(A.timer);A.timer=0;if(!A.ag)return;if(A.saving
     return r.json().catch(function(){return null}).then(function(j){agMerge(j);
       if(A.again){A.again=false;agFlush(document.visibilityState==='hidden')}else agNote('Сохранено ✓')})
   }).catch(function(){A.saving=false;A.again=false;agNote('Не удалось сохранить. Проверьте соединение и измените строку ещё раз.',true)})}
+/* строки из памяти для гостевых данных (выход, конец сессии): на странице «Агент» — вместе с несохранёнными правками, иначе последние полученные для уведомлений; null — ничего не загружено (гостевой список остаётся как был) */
+export function agSnapshot(){var s=A.ag?A.ag.rows:A.n;return s?agCopy(s):null}
+/* правка, которая ещё не дошла до сервера (ждёт паузу автосохранения или идёт запись): при выходе свежие данные сервера её не содержат, берутся строки из памяти */
+export function agPending(){return A.ag&&(A.timer||A.saving||A.again)?agCopy(A.ag.rows):null}
 /* уход со вкладки: ждущая отправка уходит сразу (keepalive); если сейчас идёт сохранение, а за ним правка (A.again), её отправит цепочка в agFlush */
 export function agLeave(){if((A.timer||A.again)&&S.loggedIn)agFlush(true)}
 

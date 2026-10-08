@@ -3,8 +3,13 @@ import {$,esc} from './util.js';
 import {api,S,authFail,stamp} from './api.js';
 import {dlgConfirm} from './dialogs.js';
 
-var wifiBody=$('wifiBody'),wifiMsg=$('wifiMsg'),wf=null,wfShow=false,wfPrintPass=true,wfBusy=false,wfTimer=0,wfForm=false,wfSaving=false;
+var wifiBody=$('wifiBody'),wifiMsg=$('wifiMsg'),wf=null,wfShow=false,wfPrintPass=true,wfBusy=false,wfTimer=0,wfForm=false,wfSaving=false,wfPend=null,wfLast=null;
 export function wifiClear(){wf=null;wfShow=false;wfForm=false;wfSaving=false;if(wifiBody)wifiBody.innerHTML='';if(wifiMsg)wifiMsg.textContent=''}
+/* wfLast — последние полученные данные сети: при уходе со вкладки wf очищается (пароль не висит в странице), а для гостевых данных при конце сессии нужна последняя копия; сбрасывается при переходе в гостя */
+export function wifiForget(){wfLast=null;wfPend=null;wifiClear()}
+/* сеть из памяти страницы для гостевых данных, когда сессия закончилась: сеть, чья запись оборвалась на 401, иначе последняя полученная;
+   null — у аккаунта сети нет, undefined — раздел за сессию не открывался (гостевая сеть остаётся как была) */
+export function wifiSnapshot(){if(wfPend)return wfPend;var w=wf||wfLast;return w?(w.configured?w:null):undefined}
 export function wifiNote(t){wifiMsg.textContent=t;clearTimeout(wfTimer);if(t)wfTimer=setTimeout(function(){wifiMsg.textContent=''},3000)}
 export function qrSvg(q){var n=q.size+8,d='';
   q.rows.forEach(function(row,y){var x=0,s;while(x<row.length){if(row.charAt(x)==='1'){s=x;while(x<row.length&&row.charAt(x)==='1')x++;d+='M'+(s+4)+' '+(y+4)+'h'+(x-s)+'v1h-'+(x-s)+'z'}else x++}});
@@ -30,7 +35,7 @@ export function wifiRender(){
 /* форма данных сети: пустая, если сеть не задана, иначе с текущими значениями */
 export function wifiForm(){var c=wf&&wf.configured?wf:{ssid:'',password:'',security:'WPA',hidden:false},sec=c.security;
   wifiBody.innerHTML='<form class="fm wfm" id="wForm" novalidate>'+
-    (wf&&wf.configured?'':'<p class="wfn">Введите данные своей сети. Они хранятся только в вашем аккаунте и показываются только после входа.</p>')+
+    (wf&&wf.configured?'':'<p class="wfn">'+(S.acct?'Введите данные своей сети. Они хранятся только в вашем аккаунте и показываются только после входа.':'Введите данные своей сети. Они хранятся только в этом браузере и никуда не отправляются.')+'</p>')+
     '<div class="wfl"><label for="wfSsid">Название сети</label><input id="wfSsid" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false"></div>'+
     '<div class="wfl"><label for="wfSec">Защита</label><select id="wfSec"><option value="WPA"'+(sec==='WPA'?' selected':'')+'>WPA / WPA2 / WPA3</option><option value="WEP"'+(sec==='WEP'?' selected':'')+'>WEP</option><option value="nopass"'+(sec==='nopass'?' selected':'')+'>Без пароля</option></select></div>'+
     '<div class="wfl" id="wfPwBox"'+(sec==='nopass'?' hidden':'')+'><label for="wfPw">Пароль</label><input id="wfPw" type="password" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false"><label class="chk"><input type="checkbox" id="wfPwShow"> Показать пароль</label></div>'+
@@ -46,20 +51,20 @@ function wifiSave(){if(wfSaving)return;var err=$('wfErr'),sec=$('wfSec').value,b
   err.textContent='';wfSaving=true;btn.disabled=true;
   api('PUT','/api/wifi',body).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
     wfSaving=false;
-    if(r.status===401){authFail();return}
+    if(r.status===401){wfPend=body;authFail();return}
     if(r.status===400){err.textContent=wfError(j.error,sec);btn.disabled=false;return}
     if(!r.ok){err.textContent='Не удалось сохранить. Попробуйте ещё раз';btn.disabled=false;return}
-    wf=j;stamp('wifi');wfForm=false;wfShow=false;wifiRender();wifiNote('Сохранено')})
+    wf=wfLast=j;stamp('wifi');wfForm=false;wfShow=false;wifiRender();wifiNote('Сохранено')})
   }).catch(function(){wfSaving=false;err.textContent='Нет связи с сервером';btn.disabled=false})}
 function wifiDelete(){dlgConfirm('Удалить данные сети? Показ и QR-код пропадут, пока вы не введёте сеть заново.').then(function(ok){if(!ok)return;
   api('DELETE','/api/wifi').then(function(r){if(r.status===401){authFail();return}if(!r.ok){wifiNote('Не удалось удалить');return}
-    wf={configured:false};wfForm=true;wfShow=false;wifiRender()}).catch(function(){wifiNote('Нет связи с сервером')})})}
+    wf=wfLast={configured:false};wfForm=true;wfShow=false;wifiRender()}).catch(function(){wifiNote('Нет связи с сервером')})})}
 export function wifiLoad(){
   if(wfBusy)return;wfBusy=true;
   api('GET','/api/wifi').then(function(r){
     if(r.status===401){wfBusy=false;authFail();return}
     if(!r.ok)throw 0;
-    return r.json().then(function(j){wfBusy=false;if(!S.loggedIn||S.page!=='wifi')return;stamp('wifi');wf=j;if(wfForm&&$('wForm'))return;wfForm=false;wifiRender()})
+    return r.json().then(function(j){wfBusy=false;if(!S.loggedIn||S.page!=='wifi')return;stamp('wifi');wf=wfLast=j;if(wfForm&&$('wForm'))return;wfForm=false;wifiRender()})
   }).catch(function(){wfBusy=false;if(S.loggedIn&&S.page==='wifi'&&!wf)wifiBody.innerHTML='<p class="empty">Не удалось загрузить данные. Проверьте соединение и откройте вкладку снова.</p>'})}
 export function wifiCopy(){var t=wf&&wf.password;if(!t)return;
   function fb(){var ta=document.createElement('textarea'),done=false;ta.value=t;ta.setAttribute('readonly','');ta.className='wcp';document.body.appendChild(ta);ta.select();

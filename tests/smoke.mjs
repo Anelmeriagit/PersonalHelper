@@ -2,7 +2,7 @@
 // Для каждой страницы × ширины 360/1280 × светлой/тёмной темы проверяет:
 //   нет нарушений CSP, нет ошибок JS и console.error, нет обращений к незамоканному API,
 //   нет горизонтальной прокрутки.
-// Гостевой режим: сайт без входа, данные в браузере (--only=guest), выход и конец сессии (--only=session), кэшбэк для одного человека (--only=cashback), личная сеть WiFi (--only=wifi),
+// Гостевой режим: сайт без входа, кэшбэк, WiFi и агент в браузере (--only=guest), выход и конец сессии (--only=session), кэшбэк для одного человека (--only=cashback), личная сеть WiFi (--only=wifi),
 // блок «Telegram» (--only=tg), вкладка «Напоминания» (--only=rem), аккаунт: Google, меню, настройки, удаление (--only=acct) и окно приветствия (--only=welcome), расход команд Redis: возврат на вкладку, опрос привязки, пауза сохранения (--only=refresh) проверяются отдельными сценариями.
 // Во всех остальных сценариях флаг welcome=1 проставляется заранее, иначе окно приветствия перекрывало бы страницу.
 // Запуск: node tests/smoke.mjs [--root=<папка>] [--only=guest|session|cashback|wifi|tg|rem|acct|welcome|refresh]   (Playwright: npm i --no-save playwright && npx playwright install chromium)
@@ -10,6 +10,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { start } from './serve.mjs';
 import { qr, mskDay } from './fixtures.mjs';
+import { makeQr } from '../api/_qr.js';
 
 const arg = process.argv.find((a) => a.startsWith('--root='));
 const root = arg ? path.resolve(arg.slice(7)) : undefined;
@@ -121,11 +122,47 @@ for (const scheme of run('guest') ? SCHEMES : []) {
       check((await page.locator('#remGuest .gbtn').count()) === 1 && (await page.getAttribute('#remGuest .gbtn', 'href')) === '/api/auth?action=google', 'напоминания гостя: кнопка Google ведёт на вход');
       check((await page.locator('#remGuest .gbtn').evaluate((el) => el.getBoundingClientRect().height)) >= 40, 'напоминания гостя: кнопка слишком мелкая');
       await noHScroll('напоминания гостя');
-      for (const [hash, id] of [['#wifi', 'wifiGuest'], ['#agent', 'agentGuest']]) {
-        await page.goto(stand.url + '/' + hash, { waitUntil: 'load' });
-        await page.waitForSelector('#' + id, { state: 'visible', timeout: 5000 });
-        await noHScroll('гость ' + hash);
-      }
+
+      // WiFi гостя: форма вместо предложения войти, сеть сохраняется в браузере, QR строит сайт, пароль на сервер не уходит
+      await page.goto(stand.url + '/#wifi', { waitUntil: 'load' });
+      await page.waitForSelector('#wForm', { state: 'visible', timeout: 5000 });
+      check((await page.locator('#wifiGuest').count()) === 0, 'WiFi гостя: предложения войти нет');
+      check(/в этом браузере/.test(await text('#wForm .wfn')), 'WiFi гостя: в форме сказано, что данные только в браузере');
+      await noHScroll('WiFi гостя: форма');
+      await page.fill('#wfSsid', 'GuestNet');
+      await page.fill('#wfPw', 'guest-pass-1');
+      await page.click('#wForm .done');
+      await page.waitForSelector('.wqr svg.qr', { state: 'visible', timeout: 5000 });
+      const wq = makeQr('WIFI:T:WPA;S:GuestNet;P:guest-pass-1;H:false;;');
+      const wsvg = await page.evaluate(() => { const s = document.querySelector('.wqr svg.qr'); return { vb: s.getAttribute('viewBox'), d: s.querySelector('path').getAttribute('d') }; });
+      check(wsvg.vb === `0 0 ${wq.size + 8} ${wq.size + 8}`, 'WiFi гостя: размер QR как у серверного: ' + wsvg.vb);
+      const darkWant = wq.rows.join('').split('1').length - 1;
+      check([...wsvg.d.matchAll(/h(\d+)v1/g)].reduce((n, m) => n + Number(m[1]), 0) === darkWant, 'WiFi гостя: тёмные модули QR как у серверного');
+      check(/GuestNet/.test(await text('.wi')) && !/guest-pass-1/.test(await text('.wi')), 'WiFi гостя: название видно, пароль скрыт');
+      const wl = await page.evaluate(() => localStorage.getItem('g-wf') || '');
+      check(/GuestNet/.test(wl) && /guest-pass-1/.test(wl) && !/qr/.test(wl), 'WiFi гостя: сеть в браузере, без QR');
+      await noHScroll('WiFi гостя: сеть');
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForSelector('.wqr svg.qr', { state: 'visible', timeout: 5000 });
+      check(/GuestNet/.test(await text('.wi')), 'WiFi гостя: сеть на месте после перезагрузки');
+
+      // агент гостя: четыре строки по умолчанию, время сохраняется в браузере, подпись «через …»
+      await page.goto(stand.url + '/#agent', { waitUntil: 'load' });
+      await page.waitForSelector('#agBody .agr', { state: 'visible', timeout: 5000 });
+      check((await page.locator('#agentGuest').count()) === 0, 'агент гостя: предложения войти нет');
+      check((await page.locator('#agBody .agr').count()) === 4, 'агент гостя: четыре строки по умолчанию');
+      await noHScroll('агент гостя: список');
+      const row0 = page.locator('#agBody .agr').first();
+      await row0.locator('select[data-k=h]').selectOption('9');
+      await row0.locator('select[data-k=m]').selectOption('30');
+      await page.waitForFunction(() => /"h":9/.test(localStorage.getItem('g-ag') || '') && /"m":30/.test(localStorage.getItem('g-ag') || ''), null, { timeout: 7000 });
+      const ag = await page.evaluate(() => JSON.parse(localStorage.getItem('g-ag')).rows);
+      check(ag.length === 4 && ag[0].at > Date.now() && ag[1].at === null, 'агент гостя: момент сброса посчитан только у строки со временем');
+      check(/через/.test(await row0.locator('.ags').innerText()), 'агент гостя: подпись «через …»');
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForSelector('#agBody .agr', { state: 'visible', timeout: 5000 });
+      check((await page.locator('#agBody .agr').first().locator('select[data-k=h]').inputValue()) === '9', 'агент гостя: время на месте после перезагрузки');
+      await noHScroll('агент гостя: со временем');
       await page.goto(stand.url + '/', { waitUntil: 'load' });
       await page.waitForSelector('#mainNav', { state: 'visible', timeout: 5000 });
       check(!(await vis('#remAcct')) && (await page.locator('#remGuest').isHidden()), 'на главной предложение войти не показано');
@@ -184,9 +221,36 @@ for (const scheme of run('session') ? SCHEMES : []) {
       await page.goto(stand.url + '/', { waitUntil: 'load' });
       await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 }); // стенд снова отвечает как аккаунт
 
+      // 2b. сессия заканчивается на странице «Агент»: строки (с правкой) и сеть аккаунта заменяют гостевые
+      await page.evaluate(() => {
+        localStorage.setItem('g-wf', JSON.stringify({ ssid: 'GuestNet', password: 'guest-pass-1', security: 'WPA', hidden: false }));
+        localStorage.setItem('g-ag', JSON.stringify({ rows: [{ id: 'gg', app: 'Моя гостевая', h: null, m: null, at: null }] }));
+        location.hash = '#wifi';
+      });
+      await page.waitForSelector('.wqr svg.qr', { state: 'visible', timeout: 5000 }); // сеть аккаунта загружена в память
+      await page.evaluate(() => { location.hash = '#agent'; });
+      await page.waitForSelector('#agBody .agr', { state: 'visible', timeout: 5000 });
+      await page.route('**/api/agent', (r) => (r.request().method() === 'PUT' ? r.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"auth"}' }) : r.fallback()));
+      await page.locator('#agBody .agr').first().locator('select[data-k=h]').selectOption('7');
+      await page.locator('#agBody .agr').first().locator('select[data-k=m]').selectOption('20');
+      await page.waitForSelector('#gBtn', { state: 'visible', timeout: 8000 });
+      const l3 = await page.evaluate(() => ({ ag: localStorage.getItem('g-ag') || '', wf: localStorage.getItem('g-wf') || '' }));
+      check(/"id":"a1"/.test(l3.ag) && /"h":7/.test(l3.ag) && /"m":20/.test(l3.ag) && !/Моя гостевая/.test(l3.ag), '401 на «Агенте»: строки аккаунта с правкой заменили гостевые');
+      check(/TestNet/.test(l3.wf) && /test-password/.test(l3.wf) && !/GuestNet/.test(l3.wf), '401 на «Агенте»: сеть аккаунта заменила гостевую');
+      check((await page.locator('#agBody .agr').count()) === 4 && (await page.locator('#agBody .agr').first().locator('select[data-k=h]').inputValue()) === '7', '401 на «Агенте»: на странице те же строки с правкой');
+      check(/гостевом режиме/.test(await page.locator('#warn').innerText()), '401 на «Агенте»: объяснение про гостевой режим');
+      await page.goto('about:blank');
+      await page.unroute('**/api/agent');
+      await page.goto(stand.url + '/', { waitUntil: 'load' });
+      await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+
       // 3. выход: свежие данные аккаунта заменяют гостевые
       await page.unroute('**/api/data');
-      await page.evaluate(() => localStorage.setItem('g-cb', JSON.stringify({ months: {}, custom: ['Ещё гостевая'], rev: {} })));
+      await page.evaluate(() => {
+        localStorage.setItem('g-cb', JSON.stringify({ months: {}, custom: ['Ещё гостевая'], rev: {} }));
+        localStorage.setItem('g-wf', JSON.stringify({ ssid: 'GuestNet', password: 'guest-pass-1', security: 'WPA', hidden: false }));
+        localStorage.setItem('g-ag', JSON.stringify({ rows: [{ id: 'gg', app: 'Моя гостевая', h: null, m: null, at: null }] }));
+      });
       await page.goto('about:blank');
       await page.goto(stand.url + '/', { waitUntil: 'load' });
       await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
@@ -196,6 +260,9 @@ for (const scheme of run('session') ? SCHEMES : []) {
       const l2 = await local();
       check(/Маркетплейсы/.test(l2) && !/Ещё гостевая/.test(l2), 'выход: данные аккаунта заменили гостевые: ' + l2.slice(0, 80));
       check((await page.locator('#bCur .blk').count()) === 3 && (await vis('#mainNav')), 'выход: на странице данные аккаунта, навигация на месте');
+      const l4 = await page.evaluate(() => ({ ag: localStorage.getItem('g-ag') || '', wf: localStorage.getItem('g-wf') || '' }));
+      check(/"id":"a1"/.test(l4.ag) && !/Моя гостевая/.test(l4.ag), 'выход: строки агента аккаунта заменили гостевые');
+      check(/TestNet/.test(l4.wf) && !/GuestNet/.test(l4.wf), 'выход: сеть аккаунта заменила гостевую');
       check((await page.locator('#lf').count()) === 0, 'выход: экрана входа нет');
       const csp = await page.evaluate(() => window.__csp);
       check(!csp.length, 'CSP: ' + csp.join('; '));
@@ -319,7 +386,7 @@ for (const scheme of run('wifi') ? SCHEMES : []) {
       await noHScroll('форма с ошибкой');
 
       await page.fill('#wfPw', 'secret-pass-1'); await page.check('#wfHid');
-      await page.click('#wForm .done');
+      await page.press('#wfPw', 'Enter'); // кнопка «Сохранить» под сообщением об ошибке на 360 px не ловит щелчок Playwright (на странице под указателем кнопка), отправляем с клавиатуры
       await page.waitForSelector('#wifiBody .wqr', { timeout: 5000 });
       const put = calls[calls.length - 1][1];
       check(JSON.stringify(put) === JSON.stringify({ ssid: 'HomeNet', security: 'WPA', password: 'secret-pass-1', hidden: true }), 'запрос сохранения: ' + JSON.stringify(put));

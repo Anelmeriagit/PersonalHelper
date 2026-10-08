@@ -5,12 +5,13 @@ import {S,api,net,onAuthFail,fresh} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
 import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote} from './cashback/index.js';
 import {initReminders,remLoad} from './reminders/index.js';
-import {initWifi,wifiLoad,wifiClear} from './wifi.js';
-import {initAgent,agClear,agLeave,agVisible,agOnPage} from './agent/index.js';
+import {initWifi,wifiLoad,wifiClear,wifiForget,wifiSnapshot} from './wifi.js';
+import {initAgent,agClear,agLeave,agVisible,agOnPage,agSnapshot,agPending} from './agent/index.js';
 import {initTheme} from './theme-switch.js';
 import {initTg,tgVisible,tgClear} from './tglink.js';
 import {initWelcome} from './welcome.js';
 import {initAccount,accShow,accSetName} from './account.js';
+import {guestSetAg,guestSetWf} from './local.js';
 
 var editBtn=$('editBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
 
@@ -24,7 +25,7 @@ function applyPage(){var prev=S.page;S.page=pageFromHash();
   Object.keys(PAGES).forEach(function(k){var p=PAGES[k],on=k===S.page;
     p.stage.hidden=!S.loggedIn||!on;p.nav.classList.toggle('on',on);
     if(on)p.nav.setAttribute('aria-current','page');else p.nav.removeAttribute('aria-current')});
-  $('remAcct').hidden=!S.acct;$('remGuest').hidden=S.acct;$('wifiGuest').hidden=S.acct;$('agentGuest').hidden=S.acct;
+  $('remAcct').hidden=!S.acct;$('remGuest').hidden=S.acct;
   document.body.classList.toggle('pw',S.page==='wifi');
   editBtn.hidden=!S.loggedIn||S.page!=='main';
   if(prev!==S.page)window.scrollTo(0,0);
@@ -32,7 +33,7 @@ function applyPage(){var prev=S.page;S.page=pageFromHash();
   if(S.page!=='rem')tgClear();
   /* переход на раздел: данные грузятся всегда (REFRESH_MS ограничивает только возврат на вкладку); привязка Telegram приходит в ответе remLoad */
   if(S.acct&&S.page==='rem')remLoad();
-  if(S.acct&&S.page==='wifi')wifiLoad();
+  if(S.loggedIn&&S.page==='wifi')wifiLoad();
   if(S.loggedIn&&S.page==='main'&&prev!=='main')cbPage();
   agOnPage()}
 
@@ -47,18 +48,26 @@ function gButtons(){Array.prototype.forEach.call(document.querySelectorAll('[dat
 function openApp(j){startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui();applyPage();finishBoot()}
 function openAcct(j){S.acct=true;accSetName(j&&j.name);openApp(j)}
 function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(openApp)}
-/* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые (null: гостевые остаются как были) */
-function toGuestMode(snap,notice){S.acct=false;S.at={};wifiClear();agClear();tgClear();toGuest(snap);ui();applyPage();if(notice)cbNote(notice)}
+/* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые: {cb, ag, wf}, каждая часть отдельно
+   (cb — кэшбэк; ag — строки агента; wf — сеть WiFi, null: у аккаунта сети нет, гостевая удаляется); часть без значения (null, у wf ещё и undefined) оставляет гостевые данные как были; snap=null — все остаются как были */
+function toGuestMode(snap,notice){var g=snap||{};S.acct=false;S.at={};wifiForget();agClear();tgClear();
+  if(g.ag)guestSetAg(g.ag);
+  if(g.wf!==undefined)guestSetWf(g.wf);
+  toGuest(g.cb);ui();applyPage();if(notice)cbNote(notice)}
 function boot(){net('GET','/api/data').then(function(r){
   if(r.status===401)return openGuest();
   if(!r.ok)throw 0;
   return r.json().then(openAcct)
 }).catch(function(){loginRoot.innerHTML='<p class=\"empty\">Не удалось загрузить данные. Обновите страницу.</p>'})}
 function logout(){(hasUnsaved()?dlgConfirm('Есть несохранённые изменения. Выйти без сохранения?'):Promise.resolve(true)).then(function(ok){if(!ok)return;discardAll();
-  /* данные аккаунта остаются в браузере и становятся гостевыми: свежая копия берётся до выхода, пока сессия жива */
-  api('GET','/api/data').then(function(r){return r.ok?r.json():null}).catch(function(){return null}).then(function(j){
-    function leave(){toGuestMode(j&&j.data?{months:j.data.months,custom:j.data.custom}:null)}
+  /* данные аккаунта остаются в браузере и становятся гостевыми: свежие копии берутся до выхода, пока сессия жива; несохранённая правка агента (её нет на сервере) берётся из памяти */
+  var pend=agPending();
+  Promise.all([fetchJ('/api/data'),fetchJ('/api/agent'),fetchJ('/api/wifi')]).then(function(a){
+    var d=a[0],w=a[2],snap={cb:d&&d.data?{months:d.data.months,custom:d.data.custom}:null,ag:pend||(a[1]&&a[1].rows)||null,wf:w?(w.configured?w:null):undefined};
+    function leave(){toGuestMode(snap)}
     api('POST','/api/auth',{action:'logout'}).then(leave,leave)})})}
+/* один GET раздела: разобранный ответ или null, если не вышло */
+function fetchJ(u){return api('GET',u).then(function(r){return r.ok?r.json():null}).catch(function(){return null})}
 
 /* ---------- события вкладки ---------- */
 document.addEventListener('visibilitychange',function(){
@@ -66,7 +75,7 @@ document.addEventListener('visibilitychange',function(){
     /* возврат на вкладку: каждый раздел обновляется не чаще раза в REFRESH_MS (api.js); ожидающая привязка Telegram проверяется сразу */
     cbVisible();
     if(S.acct&&S.page==='rem'){if(!fresh('rem'))remLoad();tgVisible()}
-    if(S.acct&&S.page==='wifi'&&!fresh('wifi'))wifiLoad();
+    if(S.loggedIn&&S.page==='wifi'&&!fresh('wifi'))wifiLoad();
     agVisible()
   }else{cbHidden();agLeave()}});
 window.addEventListener('pagehide',function(){cbHidden();agLeave()});
@@ -80,7 +89,7 @@ function googleBack(){var m=/[?&]gerr=([^&#]*)/.exec(location.search);if(!m)retu
   history.replaceState(null,'',location.pathname+location.hash);
   if(Object.prototype.hasOwnProperty.call(GERR,m[1]))dlgAlert(GERR[m[1]])}
 
-onAuthFail(function(){if(S.acct)toGuestMode(cbSnapshot(),GUEST_END)});
+onAuthFail(function(){if(S.acct)toGuestMode({cb:cbSnapshot(),ag:agSnapshot(),wf:wifiSnapshot()},GUEST_END)});
 initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
 initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')}});
 gButtons();boot();

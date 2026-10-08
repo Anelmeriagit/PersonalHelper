@@ -7,7 +7,6 @@ import { session, renewCookie, readRec, writeRec, isPrecond } from './_lib.js';
 // поэтому прошедший сброс остаётся «прошедшим», а не переезжает на завтра. Уведомление о сбросе показывает сам сайт (app.js).
 // app — либо id встроенного приложения, либо своё название (строка до 40 символов, введённая вручную).
 export const AGENT_APPS = ['app', 'opera', 'mozilla', 'edge'];
-const LABELS = { app: 'app', opera: 'opera', mozilla: 'mozilla', edge: 'edge' };
 export const AGENT_NAME_MAX = 40;
 export const AGENT_MAX = 12; // не больше 12 строк
 // Хранилище: Redis, ключ agent:<id аккаунта> (с префиксом DB_PREFIX), у каждого пользователя свой список.
@@ -30,7 +29,8 @@ export function cleanApp(v) {
   if (typeof v !== 'string') return null;
   const t = v.replace(/\s+/g, ' ').trim();
   if (!t || t.length > AGENT_NAME_MAX || /[<>"'`&\\\u0000-\u001f]/.test(t)) return null;
-  return LABELS[t.toLowerCase()] || t;
+  const low = t.toLowerCase();
+  return AGENT_APPS.includes(low) ? low : t; // не LABELS[low]: имена вроде «constructor» дали бы свойство прототипа
 }
 
 // Серверная проверка: приложение (из списка или своё), часы 0–23, минуты 0–50 с шагом 10 (или не заданы).
