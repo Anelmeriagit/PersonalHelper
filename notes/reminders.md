@@ -75,4 +75,4 @@
 
 ## Чистка данных этапа 3b (`scripts/purge-3b.mjs`)
 - Разовый скрипт (не функция Vercel, исключён в `.vercelignore`): удаляет `rem:<id>`, `bot:<id>`, `doc:<id>` (документ кэшбэков целиком, с месяцами и своими категориями) и общий `bot/state.json` в Blob; режим `--backfill` добавляет в `tgs` аккаунты, привязанные в 3a (только полная привязка: `tg:` с `tid` и `chat`, `tgu:` на тот же аккаунт, аккаунт существует). Справочник банков `BANKS` лежит в коде, не в базе, и скриптом не затрагивается; аккаунты, агент, WiFi и привязки не трогаются. Без `--apply` сухой прогон; `--apply` просит ввести `DELETE`; `--only=rem,bot,doc,blob` ограничивает набор. Переменные: `KV_REST_API_URL`, `KV_REST_API_TOKEN` (или `UPSTASH_REDIS_REST_*`), `DB_PREFIX`; для Blob `BLOB_READ_WRITE_TOKEN` и пакет `@vercel/blob` (`npm i`: он в `package.json`). Тест: `tests/purge.test.mjs` (заглушка Redis с `SCAN`).
-- Порядок запуска при деплое — в `notes/CHECKLIST.md`, раздел «Порядок деплоя этапа 3b».
+- Порядок запуска при деплое — в `notes/DEPLOY.md`, раздел «Порядок деплоя этапа 3b».

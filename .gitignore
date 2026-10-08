@@ -3,3 +3,17 @@ node_modules/
 .env
 .env.*
 .vercel/
+
+# В репозиторий и на деплой попадают только файлы проекта: архивы, патчи, выгрузки, логи и временные файлы не коммитить.
+*.zip
+*.patch
+*.diff
+*.log
+*.bak
+*.tmp
+*.orig
+tree.txt
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
