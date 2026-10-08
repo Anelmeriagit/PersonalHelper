@@ -10,3 +10,4 @@ export function nrm(v){return String(v||'').replace(/\s+/g,' ').trim()}
 export function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
 export function ls(k){try{return localStorage.getItem(k)}catch(e){return null}}
 export function lset(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+export function ldel(k){try{localStorage.removeItem(k)}catch(e){}}

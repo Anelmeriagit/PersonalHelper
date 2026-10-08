@@ -92,7 +92,7 @@ test('устаревший аккаунт с никнеймом и пароле�
   const res = mockRes();
   await auth(mockReq({ method: 'POST', headers: { cookie: lib.makeCookie(id).split(';')[0] }, body: { action: 'me' } }), res);
   assert.equal(res.statusCode, 200);
-  assert.deepEqual(res.body, { id, name: '', email: '', tg: { linked: false } });
+  assert.deepEqual(res.body, { id, name: '', email: '', tg: { linked: false }, partner: { linked: false } });
 });
 
 /* ---------- выход и прочее ---------- */

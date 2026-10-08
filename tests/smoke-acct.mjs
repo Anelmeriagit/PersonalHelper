@@ -91,7 +91,7 @@ export async function acct({ stand, browser, fail }) {
         check(/ID 123456789/.test(dlgT) && /@anna_tg<i>x<\/i>/.test(dlgT), 'Telegram: ID и имя текстом');
         check((await page.locator('#acctDlg u, #acctDlg i').count()) === 0, 'Email и имя Telegram не создают разметку (экранирование)');
         check((await page.locator('#acctDlg [data-a=unlink]').count()) === 1, 'кнопка «Отвязать»');
-        check(/Соединить аккаунты/.test(dlgT) && (await page.locator('#acctDlg .ar button[disabled]').count()) === 1, 'поле «Соединить аккаунты» (кнопка пока недоступна)');
+        check(/Соединить аккаунты/.test(dlgT) && (await page.locator('#acctDlg .ar [data-a=share]').count()) === 1 && (await page.locator('#acctDlg .ar button[disabled]').count()) === 0, 'поле «Соединить аккаунты»: кнопка «Поделиться»');
         check((await text('#acctDlg .dz .done')) === 'ПЕРМАНЕНТНОЕ УДАЛЕНИЕ АККАУНТА', 'красная кнопка удаления');
         const ys = await page.evaluate(() => {
           const q = (s) => document.querySelector('#acctDlg ' + s).getBoundingClientRect();

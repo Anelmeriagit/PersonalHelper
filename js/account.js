@@ -1,13 +1,14 @@
 /* Аккаунт: вход через Google (кнопка в шапке), меню пользователя, окно «Настройки аккаунта», удаление аккаунта.
    Сервер (см. notes/account.md): GET /api/auth?action=google (переход на вход Google, обычная ссылка, без скриптов Google),
-   POST /api/auth {action:'me'|'rename'|'delete'}; отвязка Telegram — DELETE /api/tglink. Имя для шапки приходит в GET /api/data (поле name),
+   POST /api/auth {action:'me'|'rename'|'delete'|'pair-link'|'pair-drop'}; отвязка Telegram — DELETE /api/tglink. Имя для шапки приходит в GET /api/data (поле name),
    поэтому лишних запросов при входе нет; «me» читается только при открытии окна. */
 import {$,esc,nrm,IC} from './util.js';
 import {api,authFail} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
 
 var DEF='Helper User',WORD='удалить',NAME_MAX=32;
-var A={name:'',me:null,gen:0,edit:false,busy:false},cb={logout:function(){},tg:function(){},gone:function(){}};
+var TOKEN=/^[A-Za-z0-9_-]{22}$/,SENT='Ссылка отправлена. Она одноразовая и действует 24 часа.',COPIED='Ссылка скопирована. Отправьте её второму человеку: она одноразовая и действует 24 часа.',MANUAL='Скопируйте ссылку и отправьте её второму человеку: она одноразовая и действует 24 часа.';
+var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){}};
 var uBtn,uMenu,acct,del;
 
 /* ---------- имя в шапке ---------- */
@@ -17,7 +18,7 @@ export function accSetName(n){A.name=nrm(n).slice(0,NAME_MAX);paintName()}
 
 /* ---------- шапка: вошёл / не вошёл ---------- */
 export function accShow(on){$('uWrap').hidden=!on;$('gBtn').hidden=on;
-  if(!on){menuClose(false);A.gen++;A.me=null;A.edit=false;A.busy=false;
+  if(!on){menuClose(false);A.gen++;A.me=null;A.edit=false;A.busy=false;pairReset();
     if(acct&&acct.open)acct.close();if(del&&del.open)del.close();accSetName('')}}
 
 /* ---------- меню пользователя ---------- */
@@ -29,6 +30,14 @@ function menuKey(e){var it=uMenu.querySelectorAll('button'),i=Array.prototype.in
   else if(e.key==='ArrowUp'){e.preventDefault();it[(i-1+it.length)%it.length].focus()}}
 
 /* ---------- окно «Настройки аккаунта» ---------- */
+function pairReset(){A.link='';A.pmsg='';A.perr='';A.manual=false}
+function pname(){var p=A.me&&A.me.partner;return nrm(p&&p.name)||DEF}
+function pairRow(){var p=A.me.partner,h='<div class="ar"><div class="al">Соединить аккаунты</div>';
+  if(p&&p.linked)return h+'<div class="av"><span class="vn">'+esc(pname())+'<span class="mut sub">аккаунт соединён</span></span><button class="btn" type="button" data-a="pdrop">Разорвать</button></div><p class="err" id="pErr" role="alert">'+esc(A.perr)+'</p></div>';
+  return h+'<div class="av"><span class="vn mut">Свяжите аккаунт с близким человеком</span><button class="btn" type="button" data-a="share">Поделиться</button></div>'+
+    '<p class="ahint" id="pOk" role="status">'+esc(A.pmsg||'Отправьте второму человеку ссылку: она одноразовая и действует 24 часа.')+'</p>'+
+    (A.manual&&A.link?'<input id="pLink" readonly aria-label="Ссылка для соединения" spellcheck="false">':'')+
+    '<p class="err" id="pErr" role="alert">'+esc(A.perr)+'</p></div>'}
 function head(){return '<div class="ah"><h2 id="acctH">Настройки аккаунта</h2><button class="x" type="button" data-a="close" aria-label="Закрыть">'+IC.x+'</button></div>'}
 function nameRow(){
   if(A.edit)return '<div class="ar"><label class="al" for="acIn">Отображаемое имя</label><input id="acIn" maxlength="'+NAME_MAX+'" autocomplete="nickname" spellcheck="false">'+
@@ -40,21 +49,23 @@ function body(){var m=A.me;
     '<div class="ar"><div class="al">Email</div><div class="av"><span class="vn">'+(m.email?esc(m.email):'<span class="mut">не указан</span>')+'</span></div></div>'+
     '<div class="ar"><div class="al">Account ID</div><div class="av"><code class="vid">'+esc(m.id)+'</code></div></div>'+
     (m.tg?'<div class="ar"><div class="al">Telegram</div><div class="av"><span class="vn">ID '+esc(m.tg.id)+(m.tg.username?'<span class="mut sub">@'+esc(m.tg.username)+'</span>':'')+'</span><button class="btn" type="button" data-a="unlink">Отвязать</button></div></div>':'')+
-    '<div class="ar"><div class="al">Соединить аккаунты</div><div class="av"><span class="vn mut">Два аккаунта в один</span><button class="btn" type="button" disabled>Скоро</button></div></div>'+
+    pairRow()+
     '<div class="dz"><button class="done danger" type="button" data-a="del">ПЕРМАНЕНТНОЕ УДАЛЕНИЕ АККАУНТА</button><p>Аккаунт и все его данные будут удалены без возможности восстановления.</p></div>'}
 function render(){if(!A.me)return;acct.innerHTML=body();paintName();
+  var pl=$('pLink');if(pl){pl.value=A.link;pl.focus();pl.select()}
   if(A.edit){var i=$('acIn');i.value=A.name;i.focus();i.select();
     i.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();save()}})}}
 function focusBtn(a){var b=acct.querySelector('[data-a="'+a+'"]');if(b)b.focus()}
 
-function openSettings(){var g=++A.gen;A.me=null;A.edit=false;A.busy=false;
+function openSettings(){var g=++A.gen;A.me=null;A.edit=false;A.busy=false;pairReset();
   acct.innerHTML=head()+'<p class="mut" role="status">Загрузка…</p>';if(!acct.open)acct.showModal();
   api('POST','/api/auth',{action:'me'}).then(function(r){return r.json().catch(function(){return null}).then(function(j){
     if(g!==A.gen||!acct.open)return;
     if(r.status===401){authFail();return}
     if(!r.ok||!j||typeof j.id!=='string'){acct.innerHTML=head()+'<p class="err" role="alert">Не удалось загрузить данные аккаунта. Попробуйте позже.</p>';return}
     var t=j.tg&&j.tg.linked?{id:String(j.tg.id==null?'':j.tg.id),username:typeof j.tg.username==='string'?j.tg.username:''}:null;
-    A.me={id:j.id,email:typeof j.email==='string'?j.email:'',tg:t};
+    var pr=j.partner&&j.partner.linked?{linked:true,name:typeof j.partner.name==='string'?j.partner.name:''}:{linked:false};
+    A.me={id:j.id,email:typeof j.email==='string'?j.email:'',tg:t,partner:pr};
     if(typeof j.name==='string')accSetName(j.name);
     render()})
   }).catch(function(){if(g===A.gen&&acct.open)acct.innerHTML=head()+'<p class="err" role="alert">Нет связи с сервером</p>'})}
@@ -80,6 +91,37 @@ function unlink(){
       A.me.tg=null;render();cb.tg()
     }).catch(function(){A.busy=false;if(g===A.gen)dlgAlert('Нет связи с сервером')})})}
 
+/* ---------- соединение аккаунтов: «Поделиться» и «Разорвать» ---------- */
+/* меню «Поделиться» только на телефоне (основной указатель — палец), на компьютере ссылка идёт в буфер */
+function canShare(){return !!(navigator.share&&window.matchMedia&&window.matchMedia('(pointer:coarse)').matches)}
+function pairShown(msg,err,man){A.pmsg=msg||'';A.perr=err||'';A.manual=!!man;render();focusBtn('share')}
+function copyLink(url){var c;try{c=navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(url):Promise.reject()}catch(e){c=Promise.reject(e)}
+  return c.then(function(){pairShown(COPIED)},function(){pairShown(MANUAL,'',true)})}
+function sendLink(url){var g=A.gen;
+  if(canShare()){var p;try{p=navigator.share({title:'Personal Helper',text:'Соединить аккаунты в Personal Helper',url:url})}catch(e){p=Promise.reject(e)}
+    p.then(function(){if(g===A.gen)pairShown(SENT)},function(e){if(g!==A.gen)return;
+      if(e&&e.name==='AbortError'){pairShown('','');return}
+      copyLink(url)})}
+  else copyLink(url)}
+function share(){
+  if(A.link){sendLink(A.link);return}
+  A.busy=true;var g=A.gen;
+  api('POST','/api/auth',{action:'pair-link'}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+    A.busy=false;if(g!==A.gen)return;
+    if(r.status===401){authFail();return}
+    if(r.status===409&&j.code==='paired'){openSettings();return}
+    if(!r.ok||typeof j.token!=='string'||!TOKEN.test(j.token)){pairShown('',j.error||'Не получилось создать ссылку. Попробуйте позже.');return}
+    A.link=location.origin+'/?join='+j.token;sendLink(A.link)})
+  }).catch(function(){A.busy=false;if(g===A.gen)pairShown('','Нет связи с сервером')})}
+function drop(){
+  dlgConfirm('Разорвать связь с аккаунтом «'+pname()+'»? Вы перестанете видеть данные друг друга.').then(function(ok){
+    if(!ok||!A.me||A.busy)return;var g=A.gen;A.busy=true;
+    api('POST','/api/auth',{action:'pair-drop'}).then(function(r){A.busy=false;if(g!==A.gen)return;
+      if(r.status===401){authFail();return}
+      if(!r.ok){A.perr='Не получилось разорвать связь. Попробуйте позже.';render();focusBtn('pdrop');return}
+      A.me.partner={linked:false};pairReset();render();focusBtn('share');cb.pair()
+    }).catch(function(){A.busy=false;if(g===A.gen){A.perr='Нет связи с сервером';render();focusBtn('pdrop')}})})}
+
 function onAcct(e){var el=e.target.closest&&e.target.closest('[data-a]');if(!el)return;var a=el.getAttribute('data-a');
   if(a==='close'){acct.close();return}
   if(A.busy||!A.me)return;
@@ -87,6 +129,8 @@ function onAcct(e){var el=e.target.closest&&e.target.closest('[data-a]');if(!el)
   else if(a==='cancel'){A.edit=false;render();focusBtn('rename')}
   else if(a==='save')save();
   else if(a==='unlink')unlink();
+  else if(a==='share')share();
+  else if(a==='pdrop')drop();
   else if(a==='del')openDel()}
 
 /* ---------- удаление аккаунта: нужно ввести слово «удалить» ---------- */
@@ -112,9 +156,9 @@ function doDelete(){var er=$('delErr'),go=$('delGo');if(A.busy||!delOk())return;
 function backdrop(d){d.addEventListener('click',function(e){if(e.target!==d)return;var r=d.getBoundingClientRect();
   if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()})}
 
-/* h: {logout, tg, gone} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён» */
+/* h: {logout, tg, gone, pair} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён», «связь с аккаунтом разорвана» */
 export function initAccount(h){
-  cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;
+  cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;cb.pair=h.pair||cb.pair;
   uBtn=$('uBtn');uMenu=$('uMenu');acct=$('acctDlg');del=$('delDlg');
   uBtn.addEventListener('click',function(){if(uMenu.hidden)menuOpen(false);else menuClose(false)});
   uBtn.addEventListener('keydown',function(e){if(e.key==='ArrowDown'&&uMenu.hidden){e.preventDefault();menuOpen(true)}});

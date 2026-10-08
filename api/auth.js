@@ -1,6 +1,8 @@
 // Вход только через Google (пароля, никнейма и регистрации нет).
 // POST /api/auth  { action: 'logout' }
-//   с сессией (этап 5): { action: 'me' } → {id, name, email, tg}; { action: 'rename', name } → {name}; { action: 'delete', confirm: 'удалить' } → {ok}
+//   с сессией (этап 5): { action: 'me' } → {id, name, email, tg, partner}; { action: 'rename', name } → {name}; { action: 'delete', confirm: 'удалить' } → {ok}
+//   соединение двух аккаунтов: { action: 'pair-link' } → {token, ttl} (одноразовая ссылка, 409 если связь уже есть);
+//   { action: 'pair-join', token } → {partner:{name}} (соединить с тем, кто дал ссылку); { action: 'pair-drop' } → {partner:{linked:false}} (разорвать, идемпотентно)
 // Вход через Google (этап 5, часть 3), обычные переходы браузера, не fetch:
 //   GET /api/auth?action=google     → 302 на Google (код авторизации, state, nonce и PKCE S256; их хранит подписанная cookie cb_oauth, 10 минут)
 //   GET /api/auth?action=google-cb  → обмен кода на сервере, проверка id_token, найти или создать аккаунт по sub, cookie cb_session, 302 на /
@@ -9,7 +11,7 @@
 import crypto from 'node:crypto';
 import { makeCookie, clearCookie, session } from './_lib.js';
 import { dbReady, key, hit } from './_db.js';
-import { googleAccount, getAcc, getLink, setName, deleteAccount } from './_acc.js';
+import { googleAccount, getAcc, getLink, setName, deleteAccount, partnerOf, createPairToken, joinPair, unpair } from './_acc.js';
 
 const clientIp = (req) => String(req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '?';
 const h = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 24);
@@ -121,6 +123,21 @@ async function googleCb(req, res) {
 }
 
 const DEL_WORD = 'удалить';
+const PAIR_WIN = 10 * 60 * 1000, PAIR_LINK_MAX = 5, PAIR_JOIN_MAX = 10; // новых ссылок и попыток соединения на аккаунт за 10 минут
+const PAIR_MSG = {
+  bad: 'Ссылка недействительна или устарела. Попросите новую.',
+  self: 'Нельзя соединить аккаунт с самим собой.',
+  mine: 'Ваш аккаунт уже соединён с другим. Сначала разорвите связь в настройках.',
+  busy: 'Аккаунт, давший ссылку, уже соединён с другим.',
+};
+const PAIR_CODE = { bad: 404, self: 400, mine: 409, busy: 409 };
+
+// Партнёр для ответа: { linked: true, name } | { linked: false }. Имя пустое, пока не задано (сайт подставляет «Helper User»).
+async function partnerInfo(id) {
+  const p = await partnerOf(id);
+  const a = p ? await getAcc(p) : null;
+  return a ? { linked: true, name: a.name || '' } : { linked: false };
+}
 
 // Действия с сессией: id аккаунта берётся только из cookie, не из тела запроса.
 async function mine(req, res, body) {
@@ -132,7 +149,24 @@ async function mine(req, res, body) {
     return res.status(200).json({
       id, name: acc.name || '', email: acc.email || '',
       tg: l ? { linked: true, id: String(l.tid), username: l.un || '' } : { linked: false },
+      partner: await partnerInfo(id),
     });
+  }
+  if (body.action === 'pair-link') {
+    if (await hit(key('rl', 'pl', id), PAIR_WIN) > PAIR_LINK_MAX) return res.status(429).json({ error: 'Слишком часто. Подождите несколько минут.' });
+    const r = await createPairToken(id);
+    if (r.error) return res.status(409).json({ error: 'Аккаунт уже соединён. Сначала разорвите связь.', code: 'paired' });
+    return res.status(200).json({ token: r.token, ttl: r.ttl });
+  }
+  if (body.action === 'pair-join') {
+    if (await hit(key('rl', 'pj', id), PAIR_WIN) > PAIR_JOIN_MAX) return res.status(429).json({ error: 'Слишком часто. Подождите несколько минут.' });
+    const r = await joinPair(typeof body.token === 'string' ? body.token : '', id);
+    if (r.error) return res.status(PAIR_CODE[r.error] || 400).json({ error: PAIR_MSG[r.error] || PAIR_MSG.bad, code: r.error });
+    return res.status(200).json({ partner: { linked: true, name: r.name } });
+  }
+  if (body.action === 'pair-drop') {
+    await unpair(id);
+    return res.status(200).json({ partner: { linked: false } });
   }
   if (body.action === 'rename') {
     if (typeof body.name !== 'string') return res.status(400).json({ error: 'Имя должно быть строкой' });
@@ -164,7 +198,7 @@ export default async function handler(req, res) {
     res.setHeader('Set-Cookie', clearCookie);
     return res.status(200).json({ ok: true });
   }
-  if (!['me', 'rename', 'delete'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
+  if (!['me', 'rename', 'delete', 'pair-link', 'pair-join', 'pair-drop'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
   if (String(process.env.SESSION_SECRET || '').length < 32 || !dbReady()) {
     console.error('auth: не заданы SESSION_SECRET (≥32 символов) или KV_REST_API_URL / KV_REST_API_TOKEN');
     return res.status(500).json({ error: 'Сервер не настроен' });

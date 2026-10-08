@@ -7,7 +7,7 @@
 // Во всех остальных сценариях флаг welcome=1 проставляется заранее, иначе окно приветствия перекрывало бы страницу.
 // Запуск: node tests/smoke.mjs [--root=<папка>] [--only=guest|session|merge|cashback|wifi|tg|rem|acct|welcome|refresh]   (Playwright: npm i --no-save playwright && npx playwright install chromium)
 // Устройство: этот файл поднимает стенд и браузер и по --only запускает сценарии; сами сценарии лежат рядом: smoke-pages.mjs (проход по страницам, без --only),
-// smoke-guest.mjs, smoke-session.mjs, smoke-merge.mjs, smoke-cashback.mjs, smoke-wifi.mjs, smoke-tg.mjs, smoke-rem.mjs, smoke-acct.mjs, smoke-welcome.mjs, smoke-refresh.mjs; общее — smoke-lib.mjs.
+// smoke-guest.mjs, smoke-pair.mjs, smoke-session.mjs, smoke-merge.mjs, smoke-cashback.mjs, smoke-wifi.mjs, smoke-tg.mjs, smoke-rem.mjs, smoke-acct.mjs, smoke-welcome.mjs, smoke-refresh.mjs; общее — smoke-lib.mjs.
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { start } from './serve.mjs';
@@ -20,13 +20,14 @@ import { wifi } from './smoke-wifi.mjs';
 import { tg } from './smoke-tg.mjs';
 import { rem } from './smoke-rem.mjs';
 import { acct } from './smoke-acct.mjs';
+import { pair } from './smoke-pair.mjs';
 import { welcome } from './smoke-welcome.mjs';
 import { refresh } from './smoke-refresh.mjs';
 
 const arg = process.argv.find((a) => a.startsWith('--root='));
 const root = arg ? path.resolve(arg.slice(7)) : undefined;
 
-const SCENARIOS = { guest, session, merge, cashback, wifi, tg, rem, acct, welcome, refresh };
+const SCENARIOS = { guest, session, merge, cashback, wifi, tg, rem, acct, pair, welcome, refresh };
 const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').slice(7);
 if (ONLY && !SCENARIOS[ONLY]) {
   console.error('Неизвестный сценарий --only=' + ONLY + '. Доступны: ' + Object.keys(SCENARIOS).join(', '));

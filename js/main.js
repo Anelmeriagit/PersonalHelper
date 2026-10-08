@@ -1,6 +1,6 @@
 /* Точка входа: каркас страницы (гость и аккаунт, выход, переключение разделов, события вкладки).
    Каждый раздел живёт в своём модуле: cashback/, reminders/, wifi.js, agent/. */
-import {$} from './util.js';
+import {$,ls,lset,ldel,nrm} from './util.js';
 import {S,api,net,onAuthFail,fresh} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
 import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote} from './cashback/index.js';
@@ -50,8 +50,8 @@ function openApp(j){startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui();
 /* вход в аккаунт: при первом входе в этом браузере гостевые данные сливаются в аккаунт (merge.js), затем разделы открываются уже с итоговым кэшбэком */
 var MERGED='Данные из гостевого режима добавлены в аккаунт.';
 function openAcct(j){S.acct=true;accSetName(j&&j.name);
-  mergeGuest(j).then(function(m){openApp(m&&m.j||j);if(m)cbNote(MERGED)})}
-function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(openApp)}
+  mergeGuest(j).then(function(m){openApp(m&&m.j||j);if(m)cbNote(MERGED);joinTry()})}
+function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(function(j){openApp(j);joinTry()})}
 /* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые: {cb, ag, wf}, каждая часть отдельно
    (cb — кэшбэк; ag — строки агента; wf — сеть WiFi, null: у аккаунта сети нет, гостевая удаляется); часть без значения (null, у wf ещё и undefined) оставляет гостевые данные как были; snap=null — все остаются как были */
 function toGuestMode(snap,notice){var g=snap||{};S.acct=false;S.at={};wifiForget();agClear();tgClear();
@@ -93,8 +93,31 @@ function googleBack(){var m=/[?&]gerr=([^&#]*)/.exec(location.search);if(!m)retu
   history.replaceState(null,'',location.pathname+location.hash);
   if(Object.prototype.hasOwnProperty.call(GERR,m[1]))dlgAlert(GERR[m[1]])}
 
+/* соединение аккаунтов по ссылке /?join=<токен> (сервер: notes/account.md): адрес сразу очищается, токен ждёт в localStorage (`pj`, сутки, как сама ссылка),
+   чтобы пережить вход через Google; соединяет запрос pair-join, как только есть аккаунт. Текст ошибок приходит с сервера. */
+var PJ='pj',PJ_AGE=24*60*60*1000,PJ_RE=/^[A-Za-z0-9_-]{22}$/;
+var PJ_GUEST='Чтобы соединить аккаунты, войдите через Google. Ссылка сохранена на сутки: после входа аккаунты соединятся сами.';
+var joinAsked=false;
+function dropParam(n){var q=location.search.replace(/^\?/,'').split('&').filter(function(p){return p&&p.split('=')[0]!==n}).join('&');
+  history.replaceState(null,'',location.pathname+(q?'?'+q:'')+location.hash)}
+function joinStore(){var m=/[?&]join=([^&#]*)/.exec(location.search);if(!m)return;dropParam('join');
+  if(PJ_RE.test(m[1]))lset(PJ,JSON.stringify({t:m[1],at:Date.now()}))}
+function joinToken(){try{var d=JSON.parse(ls(PJ));return d&&typeof d.t==='string'&&PJ_RE.test(d.t)&&Date.now()-d.at<PJ_AGE?d.t:null}catch(e){return null}}
+/* окно сообщений одно на сайт: если там уже что-то показано (например, ошибка входа), ждём его закрытия */
+function whenFree(fn){var d=$('dlg');if(!d.open){fn();return}d.addEventListener('close',function h(){d.removeEventListener('close',h);fn()})}
+function joinTry(){var t=joinToken();if(!t){ldel(PJ);return}
+  if(!S.acct){if(!joinAsked){joinAsked=true;whenFree(function(){dlgAlert(PJ_GUEST)})}return}
+  net('POST','/api/auth',{action:'pair-join',token:t}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+    if(r.status===401)return;
+    if(r.status===429){whenFree(function(){dlgAlert(j.error||'Слишком часто. Попробуйте позже.')});return}
+    ldel(PJ);
+    if(r.ok&&j.partner&&j.partner.linked)whenFree(function(){dlgAlert('Ваш аккаунт соединён с аккаунтом '+(nrm(j.partner.name)||'Helper User')+'.')});
+    else whenFree(function(){dlgAlert(typeof j.error==='string'&&j.error?j.error:'Не удалось соединить аккаунты. Попробуйте позже.')})})
+  }).catch(function(){whenFree(function(){dlgAlert('Нет связи с сервером. Откройте ссылку ещё раз.')})})}
+
 onAuthFail(function(){if(S.acct)toGuestMode({cb:cbSnapshot(),ag:agSnapshot(),wf:wifiSnapshot()},GUEST_END)});
 initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
 initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')}});
+joinStore();
 gButtons();boot();
 googleBack();

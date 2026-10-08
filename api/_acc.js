@@ -10,6 +10,10 @@
 //   tg:<id>          → JSON {tid, chat, un, at}: привязанный Telegram аккаунта
 //   tgu:<tid>        → id аккаунта (обратный поиск: один Telegram привязан к одному аккаунту)
 //   tgs              → множество id аккаунтов с привязанным Telegram (обход для cron, этап 3b); ведут bindTelegram и unlinkTelegram
+// Соединение двух аккаунтов (этап 5, «Соединить аккаунты»):
+//   pair:<id>        → id второго аккаунта (двусторонне: pair:A = B и pair:B = A; без срока; верим только полной паре)
+//   cnt:<хеш токена> → id аккаунта, давшего ссылку (одноразовая ссылка /?join=<токен>, живёт PAIR_TTL секунд; сам токен не хранится)
+//   cnp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
 import crypto from 'node:crypto';
 import { key, cmd, setNx, del, take } from './_db.js';
 
@@ -74,7 +78,8 @@ export async function deleteAccount(id) {
   const acc = await getAcc(id);
   if (!acc) return false;
   await unlinkTelegram(id);
-  await del(key('doc', id), key('rem', id), key('agent', id), key('wifi', id), key('bot', id), key('rl', 'tgl', id));
+  await unpair(id);
+  await del(key('doc', id), key('rem', id), key('agent', id), key('wifi', id), key('bot', id), key('rl', 'tgl', id), key('rl', 'pj', id), key('rl', 'pl', id), key('cnp', id));
   if (acc.nick && (await cmd('GET', key('nick', acc.nick))) === id) await del(key('nick', acc.nick));
   if (acc.gsub && SUB_RE.test(String(acc.gsub)) && (await cmd('GET', key('gid', acc.gsub))) === id) await del(key('gid', acc.gsub));
   if (Number(await del(key('acc', id))) > 0) await cmd('DECR', key('users')).catch(() => {});
@@ -150,4 +155,67 @@ export async function unlinkTelegram(id) {
 export async function linkedIds() {
   const r = await cmd('SMEMBERS', key('tgs'));
   return Array.isArray(r) ? r.filter((x) => ID_RE.test(String(x))).sort() : [];
+}
+
+/* ---------- соединение двух аккаунтов ---------- */
+export const PAIR_TTL = 86400; // секунд: ссылка живёт сутки (второй человек может сначала войти через Google)
+
+// Партнёр аккаунта: id | null. Верим только полной паре: pair:<id> → P, pair:<P> → id и аккаунт P существует.
+// Половинка (сбой при соединении или удалении) партнёром не считается.
+export async function partnerOf(id) {
+  if (!ID_RE.test(String(id))) return null;
+  const p = await cmd('GET', key('pair', id));
+  if (!p || !ID_RE.test(String(p)) || p === id) return null;
+  if ((await cmd('GET', key('pair', p))) !== id) return null;
+  return (await getAcc(p)) ? String(p) : null;
+}
+
+// Свободен ли аккаунт для соединения. Оборванную половинку (pair:<id> без ответной записи или без аккаунта партнёра) убирает.
+async function freePair(id) {
+  if (await partnerOf(id)) return false;
+  await del(key('pair', id));
+  return true;
+}
+
+// Выдаёт новую одноразовую ссылку; прежняя ссылка этого аккаунта перестаёт работать. → { token, ttl } | { error: 'paired' }
+export async function createPairToken(id) {
+  if (!(await freePair(id))) return { error: 'paired' };
+  const token = crypto.randomBytes(16).toString('base64url');
+  const h = th(token);
+  const old = await cmd('GET', key('cnp', id));
+  await cmd('SET', key('cnt', h), id, 'EX', PAIR_TTL);
+  await cmd('SET', key('cnp', id), h, 'EX', PAIR_TTL);
+  if (old && old !== h) await del(key('cnt', old));
+  return { token, ttl: PAIR_TTL };
+}
+
+// Соединение по токену: id — аккаунт того, кто открыл ссылку. Проверки идут до того, как токен потрачен: ошибка 'self' или 'mine'
+// ссылку не сжигает. → { id, name } (аккаунт, давший ссылку) | { error: 'bad' (нет такой ссылки или она устарела) | 'self' | 'mine' (у вас уже есть связь) | 'busy' (у давшего ссылку уже есть связь) }
+export async function joinPair(token, id) {
+  if (!TOKEN_RE.test(String(token)) || !ID_RE.test(String(id))) return { error: 'bad' };
+  const k = key('cnt', th(token));
+  const a = await cmd('GET', k);
+  if (!a || !ID_RE.test(String(a))) return { error: 'bad' };
+  if (a === id) return { error: 'self' };
+  const from = await getAcc(a);
+  if (!from) { await del(k); return { error: 'bad' }; }
+  if (!(await freePair(id))) return { error: 'mine' };
+  if (!(await freePair(a))) return { error: 'busy' };
+  if ((await take(k)) !== a) return { error: 'bad' }; // ссылку успел потратить другой
+  await del(key('cnp', a));
+  if (!(await setNx(key('pair', a), id))) return { error: 'busy' };
+  if (!(await setNx(key('pair', id), a))) {
+    if ((await cmd('GET', key('pair', a))) === id) await del(key('pair', a));
+    return { error: 'mine' };
+  }
+  return { id: a, name: from.name || '' };
+}
+
+// Разрыв связи у обоих. Идемпотентен; обратную запись снимает, только если она указывает на этот аккаунт. → id бывшего партнёра | null
+export async function unpair(id) {
+  const p = await cmd('GET', key('pair', id));
+  await del(key('pair', id));
+  if (!p || !ID_RE.test(String(p))) return null;
+  if ((await cmd('GET', key('pair', p))) === id) await del(key('pair', p));
+  return String(p);
 }

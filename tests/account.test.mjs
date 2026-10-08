@@ -36,7 +36,7 @@ test('me: id, пустое имя и пустой email (у аккаунта Goo
   const { cookie, id } = await signUp('anna');
   const r = await post(cookie, { action: 'me' });
   assert.equal(r.statusCode, 200);
-  assert.deepEqual(r.body, { id, name: '', email: '', tg: { linked: false } });
+  assert.deepEqual(r.body, { id, name: '', email: '', tg: { linked: false }, partner: { linked: false } });
   assert.ok(!JSON.stringify(r.body).includes('pw'));
   assert.equal(r.headers['cache-control'], 'no-store');
 });

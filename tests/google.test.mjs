@@ -127,7 +127,7 @@ test('новый вход: аккаунт без nick и pw, id_token прове
   // me: почта есть, имя пустое
   const me = mockRes();
   await auth(mockReq({ method: 'POST', headers: { cookie: pairOf(sess) }, body: { action: 'me' } }), me);
-  assert.deepEqual(me.body, { id, name: '', email: 'Anna@Example.com', tg: { linked: false } });
+  assert.deepEqual(me.body, { id, name: '', email: 'Anna@Example.com', tg: { linked: false }, partner: { linked: false } });
 });
 
 test('повторный вход с тем же sub: тот же аккаунт, счётчик не растёт, запись acc не переписывается', async () => {
