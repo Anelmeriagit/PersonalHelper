@@ -73,6 +73,7 @@ export async function shared({ stand, browser, fail }) {
         await page.click(`${formSel} [data-d="${tomorrow}"]`);
       };
       const save = async (formSel) => { await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); }); await page.click(formSel + ' [data-f=save]'); };
+      const arm = () => page.evaluate(() => { document.getElementById('remMsg').textContent = ''; });
       const lastCall = (m, kind) => calls.filter((c) => c[0] === m && c[1] === kind).pop();
       const saved = () => page.waitForFunction(() => /Сохранено/.test(document.getElementById('remMsg').textContent), null, { timeout: 5000 });
       try {
@@ -80,10 +81,15 @@ export async function shared({ stand, browser, fail }) {
         await page.waitForSelector('#shrCol:not([hidden]) #shrTmpList .rc', { timeout: 5000 });
 
         // ---------- разметка ----------
-        check((await page.locator('#remStage .rcol:not([hidden])').count()) === 3, 'три колонки');
-        const xs = await page.locator('#remStage .rcol').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
-        if (vp.width >= 900) check(xs[0] < xs[1] && xs[1] < xs[2], 'на 1280 px три колонки рядом: ' + xs);
-        else check(xs[0] === xs[1] && xs[1] === xs[2], 'на 360 px колонки друг под другом: ' + xs);
+        check((await page.locator('#remStage .rgrp:not([hidden])').count()) === 2 && (await page.locator('#remStage .rgrp:not([hidden]) .rcol').count()) === 4, 'две рамки, в каждой две колонки');
+        const box = (sel) => page.locator(sel).evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width)]; }));
+        const xs = await box('#remStage .rgrp:not([hidden]) .rcol'), fr = await box('#remStage .rgrp:not([hidden])');
+        if (vp.width >= 1100) check(fr[0][0] < fr[1][0] && fr[0][1] === fr[1][1], 'на 1280 px рамки рядом: ' + JSON.stringify(fr));
+        else check(fr[0][0] === fr[1][0] && fr[0][1] < fr[1][1], 'на 360 px рамки друг под другом: ' + JSON.stringify(fr));
+        if (vp.width >= 600) check(xs[0][0] < xs[1][0] && xs[0][1] === xs[1][1] && xs[2][0] < xs[3][0] && xs[2][1] === xs[3][1], 'в рамке повторяющиеся слева, временные справа: ' + JSON.stringify(xs));
+        else check(xs[0][0] === xs[1][0] && xs[1][1] < xs[2][1], 'на 360 px колонки друг под другом: ' + JSON.stringify(xs));
+        check(await page.locator('#rcols').evaluate((e) => Array.prototype.every.call(e.querySelectorAll('.rgrp'), (g) => getComputedStyle(g).borderTopWidth !== '0px' && parseFloat(getComputedStyle(g).borderTopLeftRadius) >= 12)), 'у обеих рамок есть граница и скругление');
+        if (vp.width >= 1100) check(Math.abs(fr[0][2] - fr[1][2]) <= 1 && xs[0][2] < 345 && xs[0][2] > 240, 'рамки одной ширины, колонка уже прежней (345 px), но не тесная: ' + xs[0][2]);
         check((await page.locator('#shrWith').innerText()) === 'Вместе с «' + PNAME + '»', 'подпись с именем партнёра: ' + (await page.locator('#shrWith').innerText()));
         check((await cnt('#shrCol b, #shrCol i')) === 0, 'имя и тексты экранированы: тегов нет');
         check((await cnt('#shrTmpList .rc')) === 2 && (await cnt('#shrRecList .rc')) === 1, 'карточки: 2 временных и 1 повторяющееся');
@@ -98,17 +104,20 @@ export async function shared({ stand, browser, fail }) {
         await noHScroll('вкладка');
 
         // ---------- галочки: своя и партнёра ----------
+        await arm();
         await page.locator('#shrTmpList [data-t="dddddddddddd"] .sw').nth(1).click();
         await saved();
         let c = lastCall('PUT', 'custom');
         check(JSON.stringify(c.slice(0, 4)) === JSON.stringify(['PUT', 'custom', true, { id: 'dddddddddddd', key: 'on', value: false, shared: true, who: 'partner' }]), 'галочка партнёра: ' + JSON.stringify(c));
         check((await page.locator('#shrTmpList [data-t="dddddddddddd"] .sw').nth(1).getAttribute('aria-checked')) === 'false' && (await page.locator('#shrTmpList [data-t="dddddddddddd"] .sw').nth(0).getAttribute('aria-checked')) === 'true', 'у партнёра выключена, своя включена');
+        await arm();
         await page.locator('#shrTmpList [data-t="dddddddddddd"] .sw').nth(0).click();
         await saved();
         c = lastCall('PUT', 'custom');
         check(JSON.stringify(c[3]) === JSON.stringify({ id: 'dddddddddddd', key: 'on', value: false, shared: true, who: 'me' }), 'своя галочка: ' + JSON.stringify(c[3]));
         check((await cnt('#shrTmpList [data-t="dddddddddddd"].off')) === 1, 'обе выключены: карточка серая');
         // личный переключатель без shared
+        await arm();
         await page.click('#tmpList .sw');
         await saved();
         c = lastCall('PUT', 'custom');
@@ -144,6 +153,7 @@ export async function shared({ stand, browser, fail }) {
         // ---------- правка ----------
         await page.click('#shrTmpList [data-edit="dddddddddddd"]');
         check(/Изменение общего напоминания/.test(await page.locator('#shrTmpForm').innerText()), 'правка: заголовок про общее');
+        await arm();
         await page.fill('#tText', 'Торт и свечи');
         await save('#shrTmpForm');
         await saved();
@@ -165,13 +175,13 @@ export async function shared({ stand, browser, fail }) {
         await page.locator('#shrTmpList [data-t="dddddddddddd"] .sw').nth(0).click();
         await page.waitForFunction(() => document.getElementById('shrCol').hidden, null, { timeout: 5000 });
         check(/больше не соединены/.test(await page.locator('#remMsg').innerText()), 'после 409: сообщение «аккаунты больше не соединены»');
-        check((await page.locator('#remStage .rcol:not([hidden])').count()) === 2 && (await cnt('#tmpList .rc')) === 1, 'остались личные две колонки с карточками');
+        check((await page.locator('#remStage .rgrp:not([hidden])').count()) === 1 && (await cnt('#tmpList .rc')) === 1, 'осталась рамка «Личные» с карточками');
         await noHScroll('без общей колонки');
 
         // ---------- не соединён: shared нет в ответе ----------
         await page.reload({ waitUntil: 'load' });
         await page.waitForSelector('#tmpList .rc', { timeout: 5000 });
-        check((await page.locator('#shrCol').isHidden()) && (await page.locator('#remStage .rcol:not([hidden])').count()) === 2, 'без shared колонки «Общие» нет');
+        check((await page.locator('#shrCol').isHidden()) && (await page.locator('#remStage .rgrp:not([hidden])').count()) === 1, 'без shared рамки «Общие» нет');
         check(!/Общие/.test(await page.locator('#remStage').evaluate((e) => Array.prototype.filter.call(e.querySelectorAll('*'), (x) => x.offsetParent !== null).map((x) => x.children.length ? '' : x.textContent).join(' '))), 'слова «Общие» на экране нет');
         await noHScroll('не соединён');
 

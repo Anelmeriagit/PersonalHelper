@@ -50,11 +50,11 @@ export async function rem({ stand, browser, fail }) {
         await page.waitForSelector('#tmpList .rc', { timeout: 5000 });
         await page.waitForSelector('#recList .rc', { timeout: 5000 });
         // разметка
-        check((await page.locator('#remStage .rcol:not([hidden])').count()) === 2, 'две колонки вместо трёх (общая колонка без связи скрыта)');
+        check((await page.locator('#remStage .rgrp:not([hidden]) .rcol').count()) === 2 && (await page.locator('#remStage .rgrp:not([hidden])').count()) === 1, 'одна рамка «Личные» с двумя колонками (рамка «Общие» без связи скрыта)');
         check((await page.locator('#remBody').count()) === 0 && !/Постоянные/.test(await page.locator('#remStage').innerText()), 'колонки «Постоянные» нет');
         check(!/Кому|Денис|Жанна/.test(await page.locator('#remStage').innerText()), 'на вкладке нет «Кому», Дениса и Жанны');
         check((await page.locator('#remStage input[type=checkbox]').count()) === 0, 'галок получателей нет');
-        const xs = await page.locator('#remStage .rcol:not([hidden])').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
+        const xs = await page.locator('#remStage .rgrp:not([hidden]) .rcol').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
         if (vp.width >= 900) check(xs[0] !== xs[1], 'на 1280 px колонки рядом');
         else check(xs[0] === xs[1], 'на 360 px колонки друг под другом');
         check((await page.locator('#tmpList .tt b').count()) === 0 && /<b>маме<\/b>/.test(await page.locator('#tmpList .tt').innerText()), 'текст напоминания экранирован');

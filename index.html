@@ -53,29 +53,40 @@
     <section class="fm tgb" id="tgBox" aria-labelledby="tgH"><h3 class="et" id="tgH">Telegram</h3><div id="tgBody"></div><p class="rmsg" id="tgMsg" role="status" aria-live="polite"></p></section>
     <div class="warn" id="remWarn" role="status" hidden></div>
     <div class="rcols" id="rcols">
-      <section class="rcol" aria-labelledby="rhRec">
-        <h3 class="rch" id="rhRec">Повторяющиеся</h3>
-        <button class="addbtn" id="recAdd" type="button">+ Добавить напоминание</button>
-        <div class="fm" id="recForm" hidden></div>
-        <div id="recList"></div>
+      <section class="rgrp" aria-labelledby="rgP">
+        <h3 class="rgt" id="rgP">Личные</h3>
+        <div class="rpair">
+          <section class="rcol" aria-labelledby="rhRec">
+            <h4 class="rch" id="rhRec">Повторяющиеся</h4>
+            <button class="addbtn" id="recAdd" type="button">+ Добавить напоминание</button>
+            <div class="fm" id="recForm" hidden></div>
+            <div id="recList"></div>
+          </section>
+          <section class="rcol" aria-labelledby="rhTmp">
+            <h4 class="rch" id="rhTmp">Временные</h4>
+            <button class="addbtn" id="tmpAdd" type="button">+ Добавить напоминание</button>
+            <div class="fm" id="tmpForm" hidden></div>
+            <div id="tmpList"></div>
+          </section>
+        </div>
       </section>
-      <section class="rcol" aria-labelledby="rhTmp">
-        <h3 class="rch" id="rhTmp">Временные</h3>
-        <button class="addbtn" id="tmpAdd" type="button">+ Добавить напоминание</button>
-        <div class="fm" id="tmpForm" hidden></div>
-        <div id="tmpList"></div>
-      </section>
-      <section class="rcol" id="shrCol" aria-labelledby="rhShr" hidden>
-        <h3 class="rch" id="rhShr">Общие</h3>
+      <section class="rgrp" id="shrCol" aria-labelledby="rgS" hidden>
+        <h3 class="rgt" id="rgS">Общие</h3>
         <p class="rd rwith" id="shrWith"></p>
-        <h4 class="rsh">Повторяющиеся</h4>
-        <button class="addbtn" id="shrRecAdd" type="button">+ Добавить напоминание</button>
-        <div class="fm" id="shrRecForm" hidden></div>
-        <div id="shrRecList"></div>
-        <h4 class="rsh">Временные</h4>
-        <button class="addbtn" id="shrTmpAdd" type="button">+ Добавить напоминание</button>
-        <div class="fm" id="shrTmpForm" hidden></div>
-        <div id="shrTmpList"></div>
+        <div class="rpair">
+          <section class="rcol" aria-labelledby="rhShrRec">
+            <h4 class="rch" id="rhShrRec">Повторяющиеся</h4>
+            <button class="addbtn" id="shrRecAdd" type="button">+ Добавить напоминание</button>
+            <div class="fm" id="shrRecForm" hidden></div>
+            <div id="shrRecList"></div>
+          </section>
+          <section class="rcol" aria-labelledby="rhShrTmp">
+            <h4 class="rch" id="rhShrTmp">Временные</h4>
+            <button class="addbtn" id="shrTmpAdd" type="button">+ Добавить напоминание</button>
+            <div class="fm" id="shrTmpForm" hidden></div>
+            <div id="shrTmpList"></div>
+          </section>
+        </div>
       </section>
     </div>
     <p class="rmsg" id="remMsg" role="status" aria-live="polite"></p>

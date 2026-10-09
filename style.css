@@ -128,9 +128,8 @@ select option{color:var(--text);background:var(--surface)}
 .chk{display:inline-flex;align-items:center;gap:.5rem;min-height:44px;cursor:pointer}
 .chk input{width:18px;height:18px;min-height:0;padding:0;margin:0;accent-color:var(--accent);cursor:pointer}
 /* колонки: постоянные | повторяющиеся | временные. От 900 px: постоянные слева, остальные две друг под другом справа; от 1200 px: три колонки */
-.rwide{width:min(100% - 2rem,1100px)}
-.rcols{display:grid;grid-template-columns:minmax(0,1fr);gap:0 2rem;align-items:start}
-@media(min-width:900px){.rcols{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.rwide{width:min(100% - 2rem,990px)}
+.rcols{display:grid;grid-template-columns:minmax(0,1fr);gap:1.25rem;align-items:start}
 .rch{margin:0 0 .75rem;font-size:1.15rem;text-align:center}
 .rcol .addbtn{margin-bottom:1rem}
 .sw:disabled{opacity:.45;cursor:not-allowed}
@@ -362,9 +361,11 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .pc .cn{flex:none;padding-top:.1rem;font-size:.85rem;overflow-wrap:break-word}
 .pc .cgs{width:100%}
 @media(min-width:640px){.pair{gap:1.25rem}.pn{font-size:1.2rem}.pc .head{padding:.7rem .8rem;gap:.6rem}.pc .head h4{font-size:1.05rem}.pc .body{padding:.9rem}.pc .row{font-size:1rem;gap:.5rem}.pc .cmp{padding:.25rem .9rem}.pc .cn{font-size:1rem}}
-.rcols.r3{gap:0 1.25rem}
-@media(min-width:900px){.rcols.r3{grid-template-columns:repeat(3,minmax(0,1fr))}}
-.rsh{margin:1.25rem 0 .6rem;font-size:.95rem;font-weight:600;color:var(--muted);text-align:center}
-.rwith{margin:-.4rem 0 .25rem;text-align:center;overflow-wrap:anywhere}
+@media(min-width:1100px){.rcols.r3{grid-template-columns:repeat(2,minmax(0,1fr));width:min(100vw - 2rem,1320px);position:relative;left:50%;transform:translateX(-50%)}}
+.rgrp{min-width:0;padding:1rem .85rem;border:1.5px solid var(--line);border-radius:16px}
+.rgt{margin:0 0 .75rem;font-size:1.05rem;text-align:center}
+.rpair{display:grid;grid-template-columns:minmax(0,1fr);gap:0 .85rem;align-items:start}
+@media(min-width:600px){.rpair{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.rwith{margin:-.4rem 0 .75rem;text-align:center;overflow-wrap:anywhere}
 .rwp>span{min-width:0;overflow-wrap:anywhere}
 .rw.rwp+.rw.rwp{margin-top:0;padding-top:.4rem;border-top:0}
