@@ -150,6 +150,7 @@ export async function pair({ stand, browser, fail }) {
         await noHScroll('соединён, длинное имя');
         await page.click('#acctDlg [data-a=pdrop]');
         check(/Разорвать связь с аккаунтом «<i>Борис<\/i>/.test(await dlgText()), 'подтверждение называет партнёра');
+        check(/Общие напоминания будут удалены у обоих; личные останутся/.test(await dlgText()), 'подтверждение предупреждает про общие напоминания');
         await page.click('#dlgNo');
         check(count('pair-drop') === 0 && (await page.locator('#acctDlg [data-a=pdrop]').count()) === 1, 'отмена не разрывает связь');
         await page.click('#acctDlg [data-a=pdrop]');

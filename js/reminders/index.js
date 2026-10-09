@@ -14,6 +14,9 @@ function remSync(){if(!R.rem)return;
 export function remLoad(){api('GET','/api/reminders').then(function(r){if(r.status===401){authFail();return}if(!r.ok)throw 0;
   return r.json().then(function(j){stamp('rem');R.rem=j;remSync();if(S.loggedIn&&S.page==='rem')tgApply(j)})}).catch(function(){remMsg.textContent='Не удалось загрузить напоминания. Обновите страницу.'})}
 
+/* связь аккаунтов изменилась (соединили или разорвали): общие напоминания устарели; на странице «Напоминания» список грузится заново */
+export function remPair(){delete S.at.rem;if(R.rem){delete R.rem.shared;remSync()}if(S.acct&&S.page==='rem')remLoad()}
+
 export function initReminders(){
   R.sync=remSync;R.load=remLoad;
   initLists();

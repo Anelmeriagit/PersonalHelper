@@ -1,21 +1,29 @@
 /* «Напоминания»: временные (/api/custom) и повторяющиеся (/api/recurring) — форма «календарь → частота → время → текст» и списки.
-   Открыта может быть только одна форма: R.fm.kind — 'tmp' или 'rec'. */
-import {$,esc,cap,IC} from '../util.js';
+   Те же списки и форма есть у общих напоминаний пары (третья колонка «Общие», ответ сервера: rem.shared; запросы с shared:true, галочка у каждого из двоих).
+   Открыта может быть только одна форма: R.fm.kind — 'tmp' или 'rec', R.fm.sh — общее ли. */
+import {$,esc,cap,nrm,IC} from '../util.js';
 import {MN,clock,mskHour,ymd,addDays,shiftM,dLabel} from '../time.js';
 import {api,authFail} from '../api.js';
 import {R} from './state.js';
 
 var remMsg=$('remMsg'),tmpList=$('tmpList'),tmpForm=$('tmpForm'),tmpAdd=$('tmpAdd'),recList=$('recList'),recForm=$('recForm'),recAdd=$('recAdd');
+var shrCol=$('shrCol'),shrWith=$('shrWith'),rcols=$('rcols'),shrTmpList=$('shrTmpList'),shrTmpForm=$('shrTmpForm'),shrTmpAdd=$('shrTmpAdd'),shrRecList=$('shrRecList'),shrRecForm=$('shrRecForm'),shrRecAdd=$('shrRecAdd');
+var FORMS=[tmpForm,recForm,shrTmpForm,shrRecForm],ADDS=[tmpAdd,recAdd,shrTmpAdd,shrRecAdd];
+var NOPAIR='Аккаунты больше не соединены: общих напоминаний нет.';
 var WDV=['в воскресенье','в понедельник','во вторник','в среду','в четверг','в пятницу','в субботу'];
 var SL={day:'после 14:00',evening:'после 18:00'},SLH={day:14,evening:18};
 var EV={week:'каждую неделю','2weeks':'каждые 2 недели',month:'каждый месяц'},EVK=['week','2weeks','month'];
 var CHEV={'-1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>','1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>'};
-function K(kind){return kind==='rec'?{form:recForm,list:recList,add:recAdd,url:'/api/recurring'}:{form:tmpForm,list:tmpList,add:tmpAdd,url:'/api/custom'}}
+function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,add:shrRecAdd,url:'/api/recurring'}:{form:shrTmpForm,list:shrTmpList,add:shrTmpAdd,url:'/api/custom'};
+  return kind==='rec'?{form:recForm,list:recList,add:recAdd,url:'/api/recurring'}:{form:tmpForm,list:tmpList,add:tmpAdd,url:'/api/custom'}}
+/* sh — общие напоминания пары (rem.shared), иначе личные (rem) */
+function src(kind,sh){var o=sh?R.rem&&R.rem.shared:R.rem;return(o&&(kind==='rec'?o.recurring:o.custom))||[]}
+function pname(){var s=R.rem&&R.rem.shared;return nrm(s&&s.name)||'Helper User'}
 function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskHour()>=SLH[slot])}
 function slotOff(date,slot){return slotPassed(date,slot)&&!(R.fm&&R.fm.id&&date===R.fm.od&&slot===R.fm.os)}
-function tmpFind(id){return(R.rem&&R.rem.custom||[]).filter(function(x){return x.id===id})[0]}
-function recFind(id){return(R.rem&&R.rem.recurring||[]).filter(function(x){return x.id===id})[0]}
-function tmpPast(it){return it.sent||it.date<clock().day}
+function tmpFind(id,sh){return src('tmp',sh).filter(function(x){return x.id===id})[0]}
+function recFind(id,sh){return src('rec',sh).filter(function(x){return x.id===id})[0]}
+function tmpPast(it){return it.sent||it.psent||it.date<clock().day}
 
 /* форма: календарь -> (частота) -> время -> текст */
 function calHtml(){
@@ -32,12 +40,12 @@ function calHtml(){
 function evHint(){var a=R.fm.date.split('-'),d=+a[2],w=WDV[new Date(Date.UTC(+a[0],+a[1]-1,d)).getUTCDay()];
   return 'Первое напоминание — '+dLabel(R.fm.date)+', дальше '+EV[R.fm.every]+(R.fm.every==='month'?', '+d+'-го числа'+(d>28?' (если такого числа в месяце нет, то в последний день месяца)':''):' '+w)+'.'}
 export function fmRender(focus){
-  var k=R.fm?K(R.fm.kind):null,rec=!!R.fm&&R.fm.kind==='rec';
-  [tmpForm,recForm].forEach(function(f){if(!k||f!==k.form){f.hidden=true;f.innerHTML=''}});
-  [tmpAdd,recAdd].forEach(function(a){a.hidden=!!k&&a===k.add});
+  var k=R.fm?K(R.fm.kind,R.fm.sh):null,rec=!!R.fm&&R.fm.kind==='rec';
+  FORMS.forEach(function(f){if(!k||f!==k.form){f.hidden=true;f.innerHTML=''}});
+  ADDS.forEach(function(a){a.hidden=!!k&&a===k.add});
   if(!R.fm)return;
   k.form.hidden=false;
-  var n=1,h=(R.fm.id?'<h4 class="et">Изменение напоминания</h4>':'')+'<h4>'+(n++)+'. Дата'+(R.fm.date?': '+dLabel(R.fm.date):'')+'</h4>'+calHtml(),ready=false;
+  var n=1,h=(R.fm.id||R.fm.sh?'<h4 class="et">'+(R.fm.id?'Изменение '+(R.fm.sh?'общего напоминания':'напоминания'):'Новое общее напоминание')+'</h4>':'')+'<h4>'+(n++)+'. Дата'+(R.fm.date?': '+dLabel(R.fm.date):'')+'</h4>'+calHtml(),ready=false;
   if(rec&&R.fm.date){
     h+='<h4>'+(n++)+'. Как часто повторять</h4><div class="slots" role="group" aria-label="Частота повторения">'+EVK.map(function(e){
       return '<button class="chip'+(R.fm.every===e?' on':'')+'" type="button" data-e="'+e+'" aria-pressed="'+(R.fm.every===e)+'">'+cap(EV[e])+'</button>'}).join('')+'</div>'+
@@ -50,22 +58,23 @@ export function fmRender(focus){
   if(R.fm.date&&R.fm.slot&&(!rec||R.fm.every)){ready=true;
     h+='<h4>'+(n++)+'. Текст</h4><label class="sr" for="tText">Текст напоминания</label>'+
       '<textarea class="tta" id="tText" maxlength="300" rows="3" placeholder="Текст напоминания">'+esc(R.fm.text)+'</textarea>'+
+      (R.fm.sh&&!R.fm.id?'<p class="rd">Придёт вам и «'+esc(pname())+'» в Telegram. Обе галочки включены, их можно поменять в списке.</p>':'')+
       '<p class="err" id="fmErr" role="alert"></p>'}
   h+='<div class="acts">'+(ready?'<button class="done" type="button" data-f="save">'+(R.fm.id?'Сохранить':'Добавить')+'</button>':'')+'<button class="btn" type="button" data-f="cancel">Отмена</button></div>';
   k.form.innerHTML=h;
   if(focus){var f=k.form.querySelector(focus);if(f&&!f.disabled)f.focus()}}
-function openForm(kind){var c=clock();R.fm={kind:kind,vm:c.cur,date:'',slot:'',every:'',text:''};fmRender('[data-d="'+c.day+'"]');listsRender()}
+function openForm(kind,sh){var c=clock();R.fm={kind:kind,sh:!!sh,vm:c.cur,date:'',slot:'',every:'',text:''};fmRender('[data-d="'+c.day+'"]');listsRender()}
 function formClick(e){var b=e.target.closest('button');if(!b||!R.fm||b.disabled)return;
   if(b.dataset.d){R.fm.date=b.dataset.d;if(R.fm.slot&&slotOff(R.fm.date,R.fm.slot))R.fm.slot='';fmRender('[data-d="'+R.fm.date+'"]')}
   else if(b.dataset.nav){R.fm.vm=shiftM(R.fm.vm,+b.dataset.nav);fmRender('[data-nav="'+b.dataset.nav+'"]')}
   else if(b.dataset.e){R.fm.every=b.dataset.e;fmRender('[data-e="'+R.fm.every+'"]')}
   else if(b.dataset.s){R.fm.slot=b.dataset.s;fmRender('#tText')}
-  else if(b.dataset.f==='cancel'){var eid=R.fm.id,k=K(R.fm.kind),en;R.fm=null;fmRender();listsRender();en=eid&&k.list.querySelector('[data-edit="'+eid+'"]');(en||k.add).focus()}
+  else if(b.dataset.f==='cancel'){var eid=R.fm.id,k=K(R.fm.kind,R.fm.sh),en;R.fm=null;fmRender();listsRender();en=eid&&k.list.querySelector('[data-edit="'+eid+'"]');(en||k.add).focus()}
   else if(b.dataset.f==='save')fmSave()}
 function formInput(e){if(R.fm&&e.target.id==='tText')R.fm.text=e.target.value}
-function fmDone(j,id,kind){var k=K(kind);R.rem=j;R.fm=null;fmRender();R.sync();remMsg.textContent='Сохранено ✓';var n=id&&k.list.querySelector('[data-edit="'+id+'"]');(n||k.add).focus()}
+function fmDone(j,id,kind,sh){var k=K(kind,sh);R.rem=j;R.fm=null;fmRender();R.sync();remMsg.textContent='Сохранено ✓';var n=id&&k.list.querySelector('[data-edit="'+id+'"]');(n||k.add).focus()}
 function fmSave(){
-  var kind=R.fm.kind,k=K(kind),rec=kind==='rec',err=$('fmErr'),btn=k.form.querySelector('[data-f="save"]'),text=R.fm.text.trim(),id=R.fm.id,m='POST',body;
+  var kind=R.fm.kind,sh=!!R.fm.sh,k=K(kind,sh),rec=kind==='rec',err=$('fmErr'),btn=k.form.querySelector('[data-f="save"]'),text=R.fm.text.trim(),id=R.fm.id,m='POST',body;
   if(!text){err.textContent='Напишите текст напоминания.';return}
   if(id){m='PUT';body={id:id};
     var evCh=rec&&R.fm.every!==R.fm.oe;
@@ -78,76 +87,98 @@ function fmSave(){
   }else{
     body={date:R.fm.date,slot:R.fm.slot,text:text};
     if(rec)body.every=R.fm.every}
+  if(sh)body.shared=true;
   err.textContent='';btn.disabled=true;
   api(m,k.url,body).then(function(r){
     if(r.status===401){authFail();return}
     return r.json().catch(function(){return{}}).then(function(j){
       if(!r.ok){
+        if(j.error==='nopair'){R.fm=null;fmRender();remMsg.textContent=NOPAIR;R.load();return}
         if(j.error==='gone'||j.error==='past'){R.fm=null;fmRender();remMsg.textContent=j.error==='gone'?'Это напоминание уже удалено.':'Это напоминание уже отправлено, изменить нельзя.';R.load();return}
         btn.disabled=false;err.textContent=({late:'Это время уже прошло. Выберите другое.',limit:'Слишком много напоминаний. Удалите ненужные.','bad date':'Эту дату выбрать нельзя.'})[j.error]||'Не удалось сохранить.';return}
-      fmDone(j,id,kind)})
+      fmDone(j,id,kind,sh)})
   }).catch(function(){btn.disabled=false;err.textContent='Не удалось сохранить. Проверьте соединение.'})}
-function tmpEdit(id){var it=tmpFind(id),c=clock();
-  if(!it||it.sent)return;
-  R.fm={kind:'tmp',id:id,vm:it.date<c.day?c.cur:it.date.slice(0,7),date:it.date,slot:it.slot,od:it.date,os:it.slot,ot:it.text,text:it.text};
-  listsRender();fmRender(it.date<c.day?'#tText':'[data-d="'+it.date+'"]');tmpForm.scrollIntoView({block:'nearest'})}
+function tmpEdit(id,sh){var it=tmpFind(id,sh),c=clock();
+  if(!it||it.sent||it.psent)return;
+  R.fm={kind:'tmp',sh:!!sh,id:id,vm:it.date<c.day?c.cur:it.date.slice(0,7),date:it.date,slot:it.slot,od:it.date,os:it.slot,ot:it.text,text:it.text};
+  listsRender();fmRender(it.date<c.day?'#tText':'[data-d="'+it.date+'"]');K('tmp',sh).form.scrollIntoView({block:'nearest'})}
 // правка повторяющегося: показана ближайшая дата, частота, время и текст
-function recEdit(id){var it=recFind(id),c=clock();
+function recEdit(id,sh){var it=recFind(id,sh),c=clock();
   if(!it)return;
   var d=it.next&&it.next>=c.day?it.next:c.day;
-  R.fm={kind:'rec',id:id,vm:d.slice(0,7),date:d,slot:it.slot,every:it.every,od:d,os:it.slot,oe:it.every,ot:it.text,text:it.text};
-  listsRender();fmRender('[data-d="'+d+'"]');recForm.scrollIntoView({block:'nearest'})}
+  R.fm={kind:'rec',sh:!!sh,id:id,vm:d.slice(0,7),date:d,slot:it.slot,every:it.every,od:d,os:it.slot,oe:it.every,ot:it.text,text:it.text};
+  listsRender();fmRender('[data-d="'+d+'"]');K('rec',sh).form.scrollIntoView({block:'nearest'})}
 
 /* списки */
-function tmpItemHtml(it){
-  var all=it.sent===true,missed=!all&&it.date<clock().day,past=all||missed,
-      status=all?' · Отправлено ✓':missed?' · Не отправлено':(it.on?'':' · Выключено'),armed=R.delArm===it.id;
-  return '<section class="rc tmp'+(past?' past':'')+(it.on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
-    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+dLabel(it.date)+', '+SL[it.slot]+status+'</p></div><div class="ra">'+(all||armed?'':'<button class="x ed" type="button" data-edit="'+esc(it.id)+'" aria-label="Изменить напоминание">'+IC.pen+'</button>')+
+/* строка с переключателем: у личного одна («Включено»), у общего две — своя и партнёра (менять может любой из двоих) */
+function swRows(it,sh,off){
+  if(!sh)return '<div class="rw"><span>Включено</span>'+
+    '<button class="sw" type="button" role="switch" aria-checked="'+(it.on?'true':'false')+'" aria-label="Включить напоминание" data-t="'+esc(it.id)+'" data-key="on"'+(off?' disabled':'')+'></button></div>';
+  function row(who,label,on,aria){return '<div class="rw rwp"><span>'+esc(label)+'</span>'+
+    '<button class="sw" type="button" role="switch" aria-checked="'+(on?'true':'false')+'" aria-label="'+esc(aria)+'" data-t="'+esc(it.id)+'" data-key="on" data-who="'+who+'"'+(off?' disabled':'')+'></button></div>'}
+  return row('me','Вы',it.on,'Включить напоминание для вас')+row('partner',pname(),it.pon,'Включить напоминание для '+pname())}
+function shSent(it){return it.sent&&it.psent?' · Отправлено обоим ✓':it.sent?' · Отправлено вам ✓':it.psent?' · Отправлено: '+esc(pname())+' ✓':''}
+function delBtns(it,sh,armed,edit){
+  return '<div class="ra">'+(edit&&!armed?'<button class="x ed" type="button" data-edit="'+esc(it.id)+'" aria-label="Изменить напоминание">'+IC.pen+'</button>':'')+
     (armed?'<button class="del arm" type="button" data-del="'+esc(it.id)+'">Уверены?</button>'
-          :'<button class="x del" type="button" data-del="'+esc(it.id)+'" aria-label="Удалить напоминание">'+IC.x+'</button>')+'</div></div>'+
-    '<div class="rw"><span>Включено</span>'+
-    '<button class="sw" type="button" role="switch" aria-checked="'+(it.on?'true':'false')+'" aria-label="Включить напоминание" data-t="'+esc(it.id)+'" data-key="on"'+(past?' disabled':'')+'></button></div></section>'}
-function recItemHtml(it){
-  var armed=R.delArm===it.id;
-  return '<section class="rc tmp rec'+(it.on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
-    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+cap(EV[it.every]||'')+', '+SL[it.slot]+(it.on?'':' · Выключено')+'</p>'+
-    (it.next?'<p class="rd">Ближайшее: '+dLabel(it.next)+'</p>':'')+'</div><div class="ra">'+(armed?'':'<button class="x ed" type="button" data-edit="'+esc(it.id)+'" aria-label="Изменить напоминание">'+IC.pen+'</button>')+
-    (armed?'<button class="del arm" type="button" data-del="'+esc(it.id)+'">Уверены?</button>'
-          :'<button class="x del" type="button" data-del="'+esc(it.id)+'" aria-label="Удалить напоминание">'+IC.x+'</button>')+'</div></div>'+
-    '<div class="rw"><span>Включено</span>'+
-    '<button class="sw" type="button" role="switch" aria-checked="'+(it.on?'true':'false')+'" aria-label="Включить напоминание" data-t="'+esc(it.id)+'" data-key="on"></button></div></section>'}
-function listRender(kind){
+          :'<button class="x del" type="button" data-del="'+esc(it.id)+'" aria-label="'+(sh?'Удалить общее напоминание (у обоих)':'Удалить напоминание')+'">'+IC.x+'</button>')+'</div>'}
+function tmpItemHtml(it,sh){
+  var all=sh?!!(it.sent||it.psent):it.sent===true,missed=!all&&it.date<clock().day,past=all||missed,on=sh?(it.on||it.pon):it.on,
+      status=all?(sh?shSent(it):' · Отправлено ✓'):missed?' · Не отправлено':(on?'':' · Выключено'),armed=R.delArm===it.id;
+  return '<section class="rc tmp'+(sh?' shr':'')+(past?' past':'')+(on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
+    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+dLabel(it.date)+', '+SL[it.slot]+status+'</p></div>'+delBtns(it,sh,armed,!all)+'</div>'+
+    swRows(it,sh,past)+'</section>'}
+function recItemHtml(it,sh){
+  var armed=R.delArm===it.id,on=sh?(it.on||it.pon):it.on;
+  return '<section class="rc tmp rec'+(sh?' shr':'')+(on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
+    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+cap(EV[it.every]||'')+', '+SL[it.slot]+(on?'':' · Выключено')+'</p>'+
+    (it.next?'<p class="rd">Ближайшее: '+dLabel(it.next)+'</p>':'')+'</div>'+delBtns(it,sh,armed,true)+'</div>'+
+    swRows(it,sh,false)+'</section>'}
+function listRender(kind,sh){
   if(!R.rem)return;
-  var k=K(kind),rec=kind==='rec',sel='',ae=document.activeElement,items=((rec?R.rem.recurring:R.rem.custom)||[]).filter(function(x){return x&&typeof x.id==='string'});
-  if(ae&&k.list.contains(ae)&&ae.dataset){if(ae.dataset.edit)sel='[data-edit="'+ae.dataset.edit+'"]';else if(ae.dataset.del)sel='[data-del="'+ae.dataset.del+'"]';else if(ae.dataset.t&&ae.dataset.key)sel='[data-t="'+ae.dataset.t+'"][data-key="'+ae.dataset.key+'"]'}
-  if(rec)k.list.innerHTML=items.length?items.map(recItemHtml).join(''):'<p class="empty">Повторяющихся напоминаний пока нет.</p>';
+  var k=K(kind,sh),rec=kind==='rec',sel='',ae=document.activeElement,items=src(kind,sh).filter(function(x){return x&&typeof x.id==='string'}),
+      one=function(it){return rec?recItemHtml(it,sh):tmpItemHtml(it,sh)};
+  if(ae&&k.list.contains(ae)&&ae.dataset){if(ae.dataset.edit)sel='[data-edit="'+ae.dataset.edit+'"]';else if(ae.dataset.del)sel='[data-del="'+ae.dataset.del+'"]';else if(ae.dataset.t&&ae.dataset.key)sel='[data-t="'+ae.dataset.t+'"][data-key="'+ae.dataset.key+'"]'+(ae.dataset.who?'[data-who="'+ae.dataset.who+'"]':'')}
+  if(rec)k.list.innerHTML=items.length?items.map(one).join(''):'<p class="empty">'+(sh?'Общих повторяющихся':'Повторяющихся')+' напоминаний пока нет.</p>';
   else{var up=items.filter(function(i){return!tmpPast(i)}),pa=items.filter(tmpPast).reverse();
-    k.list.innerHTML=items.length?up.concat(pa).map(tmpItemHtml).join(''):'<p class="empty">Временных напоминаний пока нет.</p>'}
+    k.list.innerHTML=items.length?up.concat(pa).map(one).join(''):'<p class="empty">'+(sh?'Общих временных':'Временных')+' напоминаний пока нет.</p>'}
   if(sel){var n=k.list.querySelector(sel);if(n)n.focus()}}
-export function listsRender(){listRender('tmp');listRender('rec')}
+/* третья колонка «Общие» есть, только пока аккаунты соединены (в ответе есть shared); пропала связь — открытая общая форма закрывается */
+export function listsRender(){
+  var s=R.rem&&R.rem.shared&&R.rem.shared.linked?R.rem.shared:null;
+  if(R.fm&&R.fm.sh&&!s){R.fm=null;fmRender()}
+  shrCol.hidden=!s;rcols.classList.toggle('r3',!!s);
+  if(s)shrWith.textContent='Вместе с «'+pname()+'»';
+  listRender('tmp');listRender('rec');
+  if(s){listRender('tmp',true);listRender('rec',true)}}
 function tmpSave(req){remMsg.textContent='…';
-  req.then(function(r){if(r.status===401){authFail();return}if(!r.ok)throw 0;
-    return r.json().then(function(j){R.rem=j;R.sync();remMsg.textContent='Сохранено ✓'})
+  req.then(function(r){if(r.status===401){authFail();return}
+    return r.json().catch(function(){return{}}).then(function(j){
+      if(!r.ok){if(j.error==='nopair'){remMsg.textContent=NOPAIR;R.load();return}throw 0}
+      R.rem=j;R.sync();remMsg.textContent='Сохранено ✓'})
   }).catch(function(){remMsg.textContent='Не удалось сохранить';R.load()})}
-function lFind(kind,id){return kind==='rec'?recFind(id):tmpFind(id)}
-function lSet(kind,id,key,v){var it=lFind(kind,id);if(!it)return;
-  if(key==='on')it.on=v;
-  listRender(kind);tmpSave(api('PUT',K(kind).url,{id:id,key:key,value:v}))}
-function lDelete(kind,id){if(!R.rem)return;var keep=function(x){return x.id!==id};
-  if(kind==='rec')R.rem.recurring=(R.rem.recurring||[]).filter(keep);else R.rem.custom=(R.rem.custom||[]).filter(keep);
-  listRender(kind);tmpSave(api('DELETE',K(kind).url+'?id='+encodeURIComponent(id)))}
-function bindList(kind){var list=K(kind).list;
+function lFind(kind,id,sh){return kind==='rec'?recFind(id,sh):tmpFind(id,sh)}
+/* who у общего: 'me' — своя галочка, 'partner' — галочка партнёра */
+function lSet(kind,id,key,v,sh,who){var it=lFind(kind,id,sh),body={id:id,key:key,value:v};if(!it)return;
+  if(key==='on'){if(sh&&who==='partner')it.pon=v;else it.on=v}
+  if(sh){body.shared=true;body.who=who==='partner'?'partner':'me'}
+  listRender(kind,sh);tmpSave(api('PUT',K(kind,sh).url,body))}
+function lDelete(kind,id,sh){var o=sh?R.rem&&R.rem.shared:R.rem;if(!o)return;var keep=function(x){return x.id!==id};
+  if(kind==='rec')o.recurring=(o.recurring||[]).filter(keep);else o.custom=(o.custom||[]).filter(keep);
+  listRender(kind,sh);tmpSave(api('DELETE',K(kind,sh).url+'?id='+encodeURIComponent(id)+(sh?'&shared=1':'')))}
+function bindList(kind,sh){var list=K(kind,sh).list;
   list.addEventListener('click',function(e){var b=e.target.closest('button');if(!b||b.disabled)return;
-    if(b.dataset.edit){if(kind==='rec')recEdit(b.dataset.edit);else tmpEdit(b.dataset.edit);return}
+    if(b.dataset.edit){if(kind==='rec')recEdit(b.dataset.edit,sh);else tmpEdit(b.dataset.edit,sh);return}
     if(b.dataset.del){var id=b.dataset.del;
-      if(R.delArm!==id){R.delArm=id;clearTimeout(R.delTimer);R.delTimer=setTimeout(function(){R.delArm='';listsRender()},4000);listRender(kind);return}
-      clearTimeout(R.delTimer);R.delArm='';lDelete(kind,id);return}
-    if(b.dataset.key==='on')lSet(kind,b.dataset.t,'on',b.getAttribute('aria-checked')!=='true')});}
+      if(R.delArm!==id){R.delArm=id;clearTimeout(R.delTimer);R.delTimer=setTimeout(function(){R.delArm='';listsRender()},4000);listRender(kind,sh);return}
+      clearTimeout(R.delTimer);R.delArm='';lDelete(kind,id,sh);return}
+    if(b.dataset.key==='on')lSet(kind,b.dataset.t,'on',b.getAttribute('aria-checked')!=='true',sh,b.dataset.who)});}
 
 export function initLists(){
   tmpAdd.addEventListener('click',function(){openForm('tmp')});
   recAdd.addEventListener('click',function(){openForm('rec')});
-  [tmpForm,recForm].forEach(function(f){f.addEventListener('click',formClick);f.addEventListener('input',formInput)});
-  bindList('tmp');bindList('rec');
+  shrTmpAdd.addEventListener('click',function(){openForm('tmp',true)});
+  shrRecAdd.addEventListener('click',function(){openForm('rec',true)});
+  FORMS.forEach(function(f){f.addEventListener('click',formClick);f.addEventListener('input',formInput)});
+  bindList('tmp');bindList('rec');bindList('tmp',true);bindList('rec',true);
 }

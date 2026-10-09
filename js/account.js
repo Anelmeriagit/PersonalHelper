@@ -116,7 +116,7 @@ function share(){
     A.link=location.origin+'/?join='+j.token;sendLink(A.link)})
   }).catch(function(){A.busy=false;if(g===A.gen)pairShown('','Нет связи с сервером')})}
 function drop(){
-  dlgConfirm('Разорвать связь с аккаунтом «'+pname()+'»? Вы перестанете видеть данные друг друга.').then(function(ok){
+  dlgConfirm('Разорвать связь с аккаунтом «'+pname()+'»? Вы перестанете видеть данные друг друга. Общие напоминания будут удалены у обоих; личные останутся.').then(function(ok){
     if(!ok||!A.me||A.busy)return;var g=A.gen;A.busy=true;
     api('POST','/api/auth',{action:'pair-drop'}).then(function(r){A.busy=false;if(g!==A.gen)return;
       if(r.status===401){authFail();return}
