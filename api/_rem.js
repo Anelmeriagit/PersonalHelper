@@ -1,6 +1,6 @@
 // Личные напоминания аккаунта (этап 3b). Ключ Redis rem:<id аккаунта> (с префиксом DB_PREFIX), запись по версии (CAS) через readRec/writeRec.
 //   { custom:    [ { id, date:'YYYY-MM-DD', slot:'h07'|'h07m30' … 'h23'|'h23m30' (или старые 'day'|'evening'), text, on, sent:boolean } ],
-//     recurring: [ { id, date:'YYYY-MM-DD' (дата отсчёта), every:'week'|'2weeks'|'month', slot, text, on, sent:{'YYYY-MM-DD':true} } ] }
+//     recurring: [ { id, date:'YYYY-MM-DD' (дата отсчёта), every:'week'|'2weeks'|'month', days?:[числа месяца 1..31, по возрастанию] (тогда every всегда 'month'), slot, text, on, sent:{'YYYY-MM-DD':true} } ] }
 // Получатель один: Telegram, привязанный к аккаунту (tg:<id>, см. _acc.js). Постоянных напоминаний и поля «кому» больше нет.
 // Состояние бота (псевдонимы, ожидающие запросы) лежит отдельно, не здесь: бот пишет его на каждое сообщение, а эту запись читает и пишет cron.
 // Расписание (recDue, recNext), mskNow, лимиты и EVERY живут здесь; _bot.js их не знает.
@@ -33,9 +33,20 @@ export function recDue(it, date) {
   if (!it || typeof it.date !== 'string' || typeof date !== 'string' || date < it.date) return false;
   if (it.every === 'week') return (dayNum(date) - dayNum(it.date)) % 7 === 0;
   if (it.every === '2weeks') return (dayNum(date) - dayNum(it.date)) % 14 === 0;
-  if (it.every === 'month') return +date.slice(8, 10) === Math.min(+it.date.slice(8, 10), daysIn(date.slice(0, 7)));
+  if (it.every === 'month') {
+    // days: несколько чисел месяца (одно сообщение в каждое); без days — число даты отсчёта. Числа больше длины месяца переходят на его последний день.
+    const dim = daysIn(date.slice(0, 7)), d = +date.slice(8, 10), ds = Array.isArray(it.days) && it.days.length ? it.days : [+it.date.slice(8, 10)];
+    return ds.some((x) => d === Math.min(x, dim));
+  }
   return false;
 }
+// Числа месяца для повторяющегося: массив целых 1..31 без повторов по возрастанию или null (пусто, не массив, мусор).
+export function cleanDays(v) {
+  if (!Array.isArray(v) || v.length < 1 || v.length > 31 || !v.every((x) => Number.isInteger(x) && x >= 1 && x <= 31)) return null;
+  return [...new Set(v)].sort((a, b) => a - b);
+}
+// Дата первого срабатывания для чисел days: не раньше from.
+export const firstOfDays = (days, from) => recNext({ date: from, every: 'month', days }, from);
 export function recNext(it, from) {
   for (let i = 0; i < 70; i++) { const d = iso(Date.parse(from + 'T00:00:00Z') + i * 864e5); if (recDue(it, d)) return d; }
   return '';
@@ -74,7 +85,7 @@ export function cleanText(v) {
 export const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
 export const idOk = (s) => typeof s === 'string' && /^[0-9a-f]{12}$/.test(s);
 export const lastDay = (today) => new Date(Date.parse(today + 'T00:00:00Z') + MAX_DAYS * 864e5).toISOString().slice(0, 10);
-const addDays = (date, n) => new Date(Date.parse(date + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+export const addDays = (date, n) => new Date(Date.parse(date + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
 
 /* ---------- запись аккаунта: чтение, нормализация, изменение ---------- */
 // Из Redis берём только допустимые записи с допустимыми полями: чужое и испорченное отбрасывается при первой же записи.
@@ -86,7 +97,9 @@ function rec1(it) {
   if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_MIN, it.slot) || !EVERY.includes(it.every) || typeof it.text !== 'string' || !it.text) return null;
   const sent = {};
   if (it.sent && typeof it.sent === 'object' && !Array.isArray(it.sent)) for (const d of Object.keys(it.sent)) if (validDate(d) && it.sent[d]) sent[d] = true;
-  return { id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: it.on !== false, sent };
+  const days = cleanDays(it.days), out = { id: it.id, date: it.date, every: days ? 'month' : it.every, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: it.on !== false, sent };
+  if (days) out.days = days;
+  return out;
 }
 export const normRem = (raw) => ({
   custom: (Array.isArray(raw && raw.custom) ? raw.custom : []).map(custom1).filter(Boolean).slice(0, CUSTOM_MAX),
@@ -130,7 +143,7 @@ export const publicCustom = (rem) => rem.custom
 export function publicRecurring(rem) {
   const today = mskNow().date, tomorrow = addDays(today, 1);
   return rem.recurring
-    .map((it) => ({ id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text, on: it.on, next: recNext(it, recDue(it, today) && it.sent[today] ? tomorrow : today) }))
+    .map((it) => ({ id: it.id, date: it.date, every: it.every, ...(it.days ? { days: it.days } : {}), slot: it.slot, text: it.text, on: it.on, next: recNext(it, recDue(it, today) && it.sent[today] ? tomorrow : today) }))
     .sort((a, b) => cmp((a.next || '9') + slotKey(a), (b.next || '9') + slotKey(b)));
 }
 
@@ -247,7 +260,9 @@ function srec1(it) {
       if (v.a || v.b) sent[d] = v;
     }
   }
-  return { id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: two(it.on, flag), sent };
+  const days = cleanDays(it.days), out = { id: it.id, date: it.date, every: days ? 'month' : it.every, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: two(it.on, flag), sent };
+  if (days) out.days = days;
+  return out;
 }
 // Новое поле общих напоминаний сначала добавить сюда (scustom1/srec1/normShr), иначе оно потеряется при первой же записи.
 export const normShr = (raw) => ({
@@ -296,7 +311,7 @@ function pubShr(me, name, shr) {
     recurring: shr.recurring
       .map((it) => {
         const mine = recDue(it, today) && !!(it.sent[today] && it.sent[today][me]);
-        return { id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text, on: it.on[me], pon: it.on[you], next: recNext(it, mine ? tomorrow : today) };
+        return { id: it.id, date: it.date, every: it.every, ...(it.days ? { days: it.days } : {}), slot: it.slot, text: it.text, on: it.on[me], pon: it.on[you], next: recNext(it, mine ? tomorrow : today) };
       })
       .sort((x, y) => cmp((x.next || '9') + slotKey(x), (y.next || '9') + slotKey(y))),
   };

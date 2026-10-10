@@ -508,3 +508,41 @@ test('нормализация: слот вне сетки отбрасывае�
   assert.deepEqual(n.custom.map((x) => [x.text, x.slot]), [['тb', 'h23'], ['тc', 'day']]);
   assert.deepEqual(n.recurring.map((x) => [x.text, x.slot]), [['рe', 'h07']]);
 });
+
+/* ---------- повторяющиеся: несколько чисел месяца (days) ---------- */
+test('повторяющееся с days: создание, дата первого срабатывания, правка и возврат к обычному расписанию', async (t) => {
+  AT(t); // 2026-10-10 12:00 по Москве
+  const id = await mkAcc('ivan');
+  const mk = (b) => post(recurring, id, { slot: 'h18', text: 'x', ...b });
+  for (const days of [[], '3', [0], [32], [1.5], ['3'], Array.from({ length: 32 }, (_, i) => i % 31 + 1)]) assert.equal((await mk({ days })).statusCode, 400, JSON.stringify(days));
+  const r = await mk({ days: [20, 3, 15, 7, 15], date: '2026-12-01', every: 'week' });
+  assert.equal(r.statusCode, 200);
+  const it = r.body.recurring[0];
+  assert.deepEqual([it.days, it.every, it.date, it.next], [[3, 7, 15, 20], 'month', '2026-10-15', '2026-10-15'], 'date и every клиента игнорируются');
+  assert.deepEqual(Object.keys(it).sort(), ['date', 'days', 'every', 'id', 'next', 'on', 'slot', 'text']);
+  // число сегодня, время слота уже прошло: первое срабатывание в следующем месяце не раньше завтра
+  const p = await mk({ days: [10], slot: 'h07', text: 'прошло' });
+  assert.deepEqual([p.body.recurring.find((x) => x.text === 'прошло').next, p.body.recurring.find((x) => x.text === 'прошло').date], ['2026-11-10', '2026-11-10']);
+  const q = await mk({ days: [10], text: 'сегодня' });
+  assert.equal(q.body.recurring.find((x) => x.text === 'сегодня').next, '2026-10-10', 'время слота не прошло: сегодня');
+  const e = await put(recurring, id, { id: it.id, days: [1, 2] });
+  const e1 = e.body.recurring.find((x) => x.id === it.id);
+  assert.deepEqual([e1.days, e1.date, e1.next], [[1, 2], '2026-11-01', '2026-11-01']);
+  assert.equal((await put(recurring, id, { id: it.id, days: [] })).statusCode, 400);
+  const back = await put(recurring, id, { id: it.id, date: '2026-10-20', every: 'week' });
+  const b1 = back.body.recurring.find((x) => x.id === it.id);
+  assert.deepEqual([b1.days, b1.every, b1.date], [undefined, 'week', '2026-10-20'], 'date или every без days убирают days');
+  assert.equal((await put(recurring, id, { id: it.id, text: 'новый' })).body.recurring.find((x) => x.id === it.id).days, undefined);
+  assert.deepEqual(Object.keys(rem.normRem({ recurring: [{ id: it.id, date: '2026-10-15', every: 'week', days: [31, 3, 3], slot: 'h18', text: 'т', on: true, sent: {} }] }).recurring[0]).sort(), ['date', 'days', 'every', 'id', 'on', 'sent', 'slot', 'text']);
+  assert.deepEqual(rem.normRem({ recurring: [{ id: it.id, date: '2026-10-15', every: 'week', days: [99], slot: 'h18', text: 'т', on: true, sent: {} }] }).recurring[0].days, undefined, 'мусорные days отбрасываются');
+});
+
+test('planRem с days: одно сообщение в каждое выбранное число, число больше длины месяца уходит на последний день', () => {
+  const R2 = (o) => ({ id: 'a'.repeat(12), date: '2026-10-03', every: 'month', days: [3, 15, 31], slot: 'day', text: 'м', on: true, sent: {}, ...o });
+  const r = mk({ recurring: [R2()] });
+  const sent = (date) => rem.planRem(r, { month: date.slice(0, 7), date }, 'day').length;
+  assert.deepEqual([sent('2026-10-03'), sent('2026-10-03')], [1, 0], 'повтор в тот же день не дублирует');
+  assert.deepEqual(['2026-10-10', '2026-10-15', '2026-10-31', '2026-11-03', '2026-11-30', '2026-12-31'].map(sent), [0, 1, 1, 1, 1, 1]);
+  assert.equal(rem.planRem(mk({ recurring: [R2({ date: '2026-10-16' })] }), { month: '2026-10', date: '2026-10-15' }, 'day').length, 0, 'до даты отсчёта нет');
+  assert.equal(rem.recNext(R2(), '2026-10-04'), '2026-10-15');
+});

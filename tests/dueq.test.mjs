@@ -449,3 +449,13 @@ test('копия: dueq сохраняется как zset (запись t:z), в
   await db.pipe(cmds);
   assert.deepEqual(__zset('r:dueq'), [[a, at(TODAY, 'h18')]]);
 });
+
+test('nextDueRem с days: ближайшее из выбранных чисел месяца, число больше длины месяца на последний день', () => {
+  const now = { date: TODAY }; // 2026-10-14
+  const D = (days, o) => ({ id: 'a'.repeat(12), date: '2026-10-03', every: 'month', days, slot: 'h09', text: 'x', on: true, sent: {}, ...o });
+  assert.equal(rem.nextDueRem({ custom: [], recurring: [D([3, 20, 31])] }, now), at('2026-10-20', 'h09'));
+  assert.equal(rem.nextDueRem({ custom: [], recurring: [D([14, 20])] }, now), at(TODAY, 'h09'));
+  assert.equal(rem.nextDueRem({ custom: [], recurring: [D([14, 20], { sent: { [TODAY]: true } })] }, now), at('2026-10-20', 'h09'), 'сегодняшнее ушло');
+  assert.equal(rem.nextDueRem({ custom: [], recurring: [D([3])] }, now), at('2026-11-03', 'h09'));
+  assert.equal(rem.nextDueRem({ custom: [], recurring: [D([31], { date: '2026-11-01' })] }, now), at('2026-11-30', 'h09'));
+});

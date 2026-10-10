@@ -413,3 +413,18 @@ test('общие напоминания: слоты сетки принимаю�
   const shr = rem.normShr({ custom: [{ id: 'aaaaaaaaaaaa', date: '2026-10-10', slot: 'h14', text: 'x', on: { a: true, b: true }, sent: { a: false, b: false } }, { id: 'bbbbbbbbbbbb', date: '2026-10-10', slot: 'h15', text: 'y', on: { a: true, b: true }, sent: { a: false, b: false } }] });
   assert.deepEqual(rem.planShr(shr, { month: '2026-10', date: '2026-10-10' }, 'day', 'a').map((x) => x.text), ['x']);
 });
+
+test('общее повторяющееся с days: числа месяца у обоих, ближайшая дата, правка', async (t) => {
+  AT(t);
+  const { a, b } = await mkPair();
+  const r = await post(recurring, a, { days: [20, 12], slot: 'h18', text: 'Платежи', shared: true });
+  assert.equal(r.statusCode, 200);
+  const it = r.body.shared.recurring[0];
+  assert.deepEqual([it.days, it.every, it.date, it.next], [[12, 20], 'month', '2026-10-12', '2026-10-12']);
+  assert.deepEqual((await get(b)).body.shared.recurring[0].days, [12, 20]);
+  const e = await put(recurring, b, { id: it.id, days: [11], shared: true });
+  assert.deepEqual([e.body.shared.recurring[0].days, e.body.shared.recurring[0].next], [[11], '2026-10-11']);
+  const sa = rem.sideOf(a, b);
+  const shr = (await rem.readShr(a, b)).shr;
+  assert.deepEqual([shr.recurring[0].days, shr.recurring[0].on[sa]], [[11], true], 'days хранятся в записи пары');
+});
