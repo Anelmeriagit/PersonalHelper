@@ -9,6 +9,7 @@
 // a — аккаунт с меньшим id, b — с большим (sideOf). Читать и писать можно только через readShr/mutateShr, а доступ давать только после partnerAcc (target).
 import { readRec, writeRec, isPrecond } from './_lib.js';
 import { getLink, partnerAcc, pairId } from './_acc.js';
+import { dueLower, pairMember } from './_due.js';
 
 export const CUSTOM_MAX = 50; // не больше 50 временных напоминаний
 export const RECURRING_MAX = 30; // не больше 30 повторяющихся
@@ -99,16 +100,19 @@ export async function readRem(id) {
 
 // Читает запись, применяет fn(rem) и пишет по версии. Чужая запись между чтением и записью: повтор со свежими данными (до 6 раз).
 // fn меняет rem и возвращает undefined либо { err }; при err ничего не пишется (fn не должна менять rem до проверки).
+// После записи индекс dueq понижается до ближайшей отправки (dueTouch); opt.due === false — не трогать индекс (cron уточняет его сам).
 // → { rem } или { rem, err }
-export async function mutateRem(id, fn) {
+export async function mutateRem(id, fn, opt) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const { rem, etag } = await readRem(id);
     const before = JSON.stringify(rem);
     const r = fn(rem);
     if (r && r.err) return { rem, err: r.err };
     if (JSON.stringify(rem) === before) return { rem };
-    try { await writeRec('rem', id, rem, etag); return { rem }; }
-    catch (e) { if (!isPrecond(e)) throw e; }
+    try { await writeRec('rem', id, rem, etag); }
+    catch (e) { if (!isPrecond(e)) throw e; continue; }
+    if (!opt || opt.due !== false) await dueTouch(id, nextDueRem(rem, mskNow()));
+    return { rem };
   }
   throw new Error('rem busy');
 }
@@ -142,6 +146,47 @@ export async function pubRem(id, rem, ctx) {
     out.shared = pubShr(sideOf(id, pr.id), pr.acc.name || '', shr);
   }
   return out;
+}
+
+/* ---------- индекс dueq: когда ближайшая отправка ---------- */
+// Время слота в мс (UTC): Москва без перехода на летнее, UTC+3. Конец московских суток: dayEndMs.
+export const slotMs = (date, slot) => Date.parse(date + 'T00:00:00Z') + (SLOT_HOUR[slot] - 3) * 3600000;
+export const dayEndMs = (date) => Date.parse(date + 'T00:00:00Z') + 21 * 3600000 - 1;
+// Ближайшая дата повторяющегося, которой ещё нет в отметках: не раньше сегодня и не раньше даты отсчёта; sentToday — сегодняшнее уже ушло.
+function recNextDate(it, today, sentToday) {
+  const d = recNext(it, it.date > today ? it.date : today);
+  return d === today && sentToday ? recNext(it, addDays(today, 1)) : d;
+}
+// Ближайшее время отправки личных напоминаний (мс) или null. Вчерашнее неотправленное не считается: cron его не догоняет. Прошедший час сегодня считается (догонка).
+export function nextDueRem(rem, now) {
+  let best = null;
+  const upd = (ms) => { if (best === null || ms < best) best = ms; };
+  for (const it of rem.custom) if (it.on !== false && !it.sent && it.date >= now.date) upd(slotMs(it.date, it.slot));
+  for (const it of rem.recurring) {
+    if (it.on === false) continue;
+    const d = recNextDate(it, now.date, !!it.sent[now.date]);
+    if (d) upd(slotMs(d, it.slot));
+  }
+  return best;
+}
+// То же для общих напоминаний пары: учитываются только стороны из sides ('a', 'b').
+export function nextDueShr(shr, now, sides) {
+  let best = null;
+  const upd = (ms) => { if (best === null || ms < best) best = ms; };
+  for (const it of shr.custom) if (it.date >= now.date && sides.some((s) => it.on[s] && !it.sent[s])) upd(slotMs(it.date, it.slot));
+  for (const it of shr.recurring) {
+    for (const s of sides) {
+      if (!it.on[s]) continue;
+      const d = recNextDate(it, now.date, !!(it.sent[now.date] && it.sent[now.date][s]));
+      if (d) upd(slotMs(d, it.slot));
+    }
+  }
+  return best;
+}
+// Понизить счёт члена индекса. Сбой индекса не отменяет уже записанные данные: суточная перестройка его исправит.
+async function dueTouch(member, ms) {
+  if (ms === null) return;
+  try { await dueLower(member, ms); } catch (e) { console.error('dueq failed', e && (e.kind || e.name), e && e.message); }
 }
 
 /* ---------- расписание ---------- */
@@ -221,7 +266,8 @@ export async function readShr(a, b) {
 }
 
 // Как mutateRem, но для общей записи пары. fn(shr, me, other): me и other — 'a'/'b' (свой и партнёра для id). Вызывать только после partnerAcc(id).
-export async function mutateShr(id, pid, fn) {
+// Индекс: член p:<id>:<id> пары, счёт — ближайшая отправка любой из двух сторон (у какой стороны привязан Telegram, решает cron).
+export async function mutateShr(id, pid, fn, opt) {
   const me = sideOf(id, pid);
   for (let attempt = 0; attempt < 6; attempt++) {
     const { shr, etag } = await readShr(id, pid);
@@ -229,8 +275,10 @@ export async function mutateShr(id, pid, fn) {
     const r = fn(shr, me, other(me));
     if (r && r.err) return { shr, err: r.err };
     if (JSON.stringify(shr) === before) return { shr };
-    try { await writeRec('shr', pairId(id, pid), shr, etag); return { shr }; }
-    catch (e) { if (!isPrecond(e)) throw e; }
+    try { await writeRec('shr', pairId(id, pid), shr, etag); }
+    catch (e) { if (!isPrecond(e)) throw e; continue; }
+    if (!opt || opt.due !== false) await dueTouch(pairMember(id, pid), nextDueShr(shr, mskNow(), ['a', 'b']));
+    return { shr };
   }
   throw new Error('shr busy');
 }

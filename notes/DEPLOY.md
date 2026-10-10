@@ -7,7 +7,7 @@
 4. Vercel → Settings → Environment Variables: заданы Redis-переменные, `SESSION_SECRET`, `TELEGRAM_BOT_TOKEN`, `CRON_SECRET`. `AUTH_USER` пока оставить.
 5. `git status` (нет ли лишних файлов, особенно с секретами) → `git add -A; git commit -m "Stage 3b part 5"; git push`. Деплой пойдёт сам. После зелёного деплоя: Vercel → Functions, должно быть 11 функций (лимит Hobby 12).
 6. (Разовая чистка данных: скрипт `scripts/purge-3b.mjs` удалён из репозитория 2026-10-08; шаг не повторять, его `--apply` удалил бы документы кэшбэков всех аккаунтов.)
-7. Сухой прогон cron: `$secret = '...'; curl.exe -H "Authorization: Bearer $secret" "https://<домен>/api/cron?dry=1"` → `"dry":true`, `accounts` равен числу привязанных, `would_send` 0, `errors` 0, `left` 0.
+7. Сухой прогон cron: `$secret = '...'; curl.exe -H "Authorization: Bearer $secret" "https://<домен>/api/cron?dry=1"` → `"dry":true`, `would_send` 0, `errors` 0, `left` 0 (с этапа 5, части 3 `accounts` — число аккаунтов из индекса `dueq`, которым пора, а не всех привязанных).
 8. Вебхук и меню бота: `curl.exe -H "Authorization: Bearer $secret" https://<домен>/api/tg-setup` → `"ok":true`, `url` оканчивается на `/api/telegram`.
 9. Привязка Дениса и Жанны: вход на сайт → «Напоминания» → «Привязать Telegram» → «Открыть Telegram» → «Запустить». Если на сайте уже виден «@имя», привязывать заново не нужно: достаточно написать боту `/cashback`.
 10. Проверка по спискам ниже (минимум: привязка, `/cashback`, ответ по магазину, напоминание на завтра после cron).
@@ -25,6 +25,12 @@
 7. Первая копия вручную: `curl.exe -H "Authorization: Bearer $secret" "https://<домен>/api/cron?backup=1"` → `"state":"done"`, `keys` примерно как число ключей в Upstash. Если `partial`, повторить через минуту. Повторный `...?backup=1&dry=1` → `copies` 1, `due` false.
    Если `"state":"off"`: функция не видит `BACKUP_KEY`. Проверить по порядку: имя ровно `BACKUP_KEY`; отмечено окружение Production (деплой из ветки, не из Preview); переменная добавлена до деплоя (после добавления нужен Redeploy: Deployments → ⋯ → Redeploy); вы вызываете боевой адрес, а не адрес старого деплоя. Если `"state":"error","kind":"config"`: переменная есть, но значение негодное (не 64 hex-символа, лишние кавычки или пробелы, слишком простой ключ): создать заново и вставить без кавычек. Если в dry `"blob":false`: токен Blob не виден (подключить хранилище к проекту и сделать Redeploy).
 8. Назавтра в журнале Vercel (Functions → `api/cron`) в 14:00 МСК должна быть строка без `backup failed`. (Это ожидание действовало до этапа 5, части 2, когда копия делалась раз в сутки; теперь копия раз в 7 суток, `skip` в остальные запуски, см. «Открыто» → «Резервная копия Redis».)
+
+## Порядок деплоя: индекс dueq (этап 5, переход на внешний планировщик, часть 3; PowerShell, из корня репозитория)
+1. Распаковать zip поверх репозитория; `git status` (нет ли лишнего) → `git add -A; git commit -m "Cron: due index"; git push`. Функций по-прежнему 11: новые файлы `api/_due.js`, `api/_reindex.js` с `_`.
+2. Сразу после деплоя заполнить индекс (до этого `/api/cron` никого не находит). Значения только в окне PowerShell, в файлы не писать: `$env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; $env:DB_PREFIX=''` (пусто = боевая база). Сухой прогон: `node scripts/fill-dueq.mjs`; затем `node scripts/fill-dueq.mjs --apply` (спросит ввод `REBUILD`).
+3. Проверка: `$secret = '...'; curl.exe -H "Authorization: Bearer $secret" "https://<домен>/api/cron?role=backup&rebuild=1&dry=1"` → `rebuild.state:"ok"`, `add`/`change`/`drop` равны 0.
+4. Частые внешние расписания (QStash, cron-job.org) включать только после этого (часть 4).
 
 ## Порядок деплоя этапа 5, части 3 (вход через Google; PowerShell, из корня репозитория)
 Названия пунктов консоли Google написаны по памяти и могут отличаться: ориентир «OAuth consent screen» и «Credentials → OAuth client ID».

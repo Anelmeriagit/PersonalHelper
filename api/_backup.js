@@ -2,7 +2,7 @@
 // Запуск из cron (4.3) и восстановление (4.4) строятся на этих функциях. Единственное место в api/, где используется Blob (приватный, всё зашифровано).
 // Переменная: BACKUP_KEY — 64 шестнадцатеричных символа (32 байта). Значение нигде не хранится и не логируется.
 //
-// Что копируется: ключи с префиксом DB_PREFIX (в бою пустой). Типы string, hash и set: другие типы код проекта не использует,
+// Что копируется: ключи с префиксом DB_PREFIX (в бою пустой). Типы string, hash, set и zset (индекс dueq): другие типы код проекта не использует,
 // их копия пропускает и считает в stats.other. Известные виды ключей (KNOWN) читаются сразу по типу, без TYPE и PTTL (срока жизни у них нет):
 // одна команда на ключ. Временные виды (TEMP: rl, tgt, tgp, cnt, cnp, cron) не копируются, считаются в stats.temp. Неизвестные виды читаются как раньше:
 // TYPE и PTTL, оставшееся время жизни (PTTL) сохраняется.
@@ -12,7 +12,7 @@
 // Часть копии (одна «страница» файла в Blob) = sealed(gzip(строка-заголовок + по записи на строку)):
 //   байты: «PHB1» (4) | id ключа (4) | iv (12) | тег GCM (16) | шифртекст.
 //   Заголовок и id ключа входят в AAD вместе со snap и n: часть нельзя незаметно подменить или переставить в другой копии.
-// Запись: {k, t:'s', v:'строка'} | {k, t:'h', v:[[поле, значение], ...]} | {k, t:'e', v:[члены]}, плюс ttl (мс, целое > 0), если он есть.
+// Запись: {k, t:'s', v:'строка'} | {k, t:'h', v:[[поле, значение], ...]} | {k, t:'e', v:[члены]} | {k, t:'z', v:[[член, счёт], ...]}, плюс ttl (мс, целое > 0), если он есть.
 // Хэш хранится парами, а не объектом: поле «__proto__» не должно ничего менять в прототипе.
 // SCAN не атомарен: ключ, записанный во время обхода, может попасть в копию в старой или новой версии; повторы ключей возможны
 // (при восстановлении побеждает последняя запись). Документы версионируются (CAS), поэтому копия ключа сама по себе целостна.
@@ -76,6 +76,7 @@ export function validRec(r) {
   if (r.t === 's') return isStr(r.v);
   if (r.t === 'h') return Array.isArray(r.v) && r.v.length > 0 && r.v.every((p) => Array.isArray(p) && p.length === 2 && isStr(p[0]) && isStr(p[1]));
   if (r.t === 'e') return Array.isArray(r.v) && r.v.length > 0 && r.v.every(isStr);
+  if (r.t === 'z') return Array.isArray(r.v) && r.v.length > 0 && r.v.every((p) => Array.isArray(p) && p.length === 2 && isStr(p[0]) && isStr(p[1]) && Number.isFinite(Number(p[1])));
   return false;
 }
 // Размер записи в байтах (для деления на части в 4.2).
@@ -89,6 +90,7 @@ export function restoreCmds(r, to) {
   const out = [['DEL', k]];
   if (r.t === 's') out.push(['SET', k, r.v]);
   else if (r.t === 'h') out.push(['HSET', k, ...r.v.flat()]);
+  else if (r.t === 'z') out.push(['ZADD', k, ...r.v.flatMap(([m, sc]) => [sc, m])]);
   else out.push(['SADD', k, ...r.v]);
   if (r.ttl) out.push(['PEXPIRE', k, r.ttl]);
   return out;
@@ -130,7 +132,9 @@ export function decodePart(buf, { snap, n }) {
 }
 
 /* ---------- чтение базы ---------- */
-const READ = { string: ['GET'], hash: ['HGETALL'], set: ['SMEMBERS'] };
+// Команда чтения ключа по типу. Тип вне списка (list, stream и т.п.) читать нельзя: такой ключ считается в stats.other.
+const READ = { string: (k) => ['GET', k], hash: (k) => ['HGETALL', k], set: (k) => ['SMEMBERS', k], zset: (k) => ['ZRANGE', k, 0, -1, 'WITHSCORES'] };
+const canRead = (type) => Object.prototype.hasOwnProperty.call(READ, type);
 const toPairs = (x) => {
   if (Array.isArray(x)) { const p = []; for (let i = 0; i + 1 < x.length; i += 2) p.push([String(x[i]), String(x[i + 1])]); return p; }
   if (x && typeof x === 'object') return Object.entries(x).map(([f, v]) => [String(f), String(v)]); // на случай ответа объектом
@@ -140,6 +144,7 @@ function toRec(rel, type, raw, pttl) {
   let r = null;
   if (type === 'string') { if (raw !== null && raw !== undefined) r = { k: rel, t: 's', v: String(raw) }; }
   else if (type === 'hash') { const v = toPairs(raw); if (v.length) r = { k: rel, t: 'h', v }; }
+  else if (type === 'zset') { const v = toPairs(raw); if (v.length) r = { k: rel, t: 'z', v }; } // ответ ZRANGE WITHSCORES — плоский [член, счёт, ...], как у хэша
   else { const v = Array.isArray(raw) ? raw.map(String).sort() : []; if (v.length) r = { k: rel, t: 'e', v }; }
   if (r && pttl > 0) r.ttl = Math.round(pttl);
   return r;
@@ -156,12 +161,12 @@ export async function readRecs(keys, types, pttls) {
   const items = keys.map((k, i) => ({ k, type: types[i], pttl: pttls[i] }));
   const raws = new Array(items.length).fill(undefined);
   try {
-    const res = await pipe(items.map((x) => [...READ[x.type], x.k]));
+    const res = await pipe(items.map((x) => READ[x.type](x.k)));
     res.forEach((v, i) => { raws[i] = v; });
   } catch (e) {
     if (!wrongType(e)) throw e;
     for (let i = 0; i < items.length; i++) {
-      try { raws[i] = await cmd(...READ[items[i].type], items[i].k); } catch (e2) { if (wrongType(e2)) raws[i] = undefined; else throw e2; }
+      try { raws[i] = await cmd(...READ[items[i].type](items[i].k)); } catch (e2) { if (wrongType(e2)) raws[i] = undefined; else throw e2; }
     }
   }
   items.forEach((x, i) => {
@@ -177,7 +182,7 @@ const kindOf = (rel) => { const i = rel.indexOf(':'); return i < 0 ? rel : rel.s
 // Известные виды ключей проекта и их типы Redis (см. notes/backup.md). Срока жизни у них нет, поэтому TYPE и PTTL не нужны.
 // Map, а не объект: вид «constructor» или «__proto__» не должен совпасть со свойством прототипа.
 export const KNOWN = new Map([['acc', 'string'], ['nick', 'string'], ['tg', 'string'], ['tgu', 'string'], ['users', 'string'], ['gid', 'string'], ['pair', 'string'],
-  ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['shr', 'hash'], ['tgs', 'set']]);
+  ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['shr', 'hash'], ['tgs', 'set'], ['dueq', 'zset']]);
 // Временные ключи (счётчики лимитов, одноразовые ссылки привязки): не копируются, число идёт в stats.temp.
 export const TEMP = new Set(['rl', 'tgt', 'tgp', 'cnt', 'cnp', 'cron']); // cron: пульс cron:hb, замок cron:lock, отметка копии cron:bk
 
@@ -216,7 +221,7 @@ export async function readBatch(cursor, opts) {
     unknown.forEach((k, i) => {
       const type = String(meta[2 * i]), pttl = Number(meta[2 * i + 1]);
       if (type === 'none' || pttl === -2) stats.gone++;
-      else if (!READ[type]) stats.other[type] = (stats.other[type] || 0) + 1;
+      else if (!canRead(type)) stats.other[type] = (stats.other[type] || 0) + 1;
       else { rk.push(k); rt.push(type); rp.push(pttl); }
     });
     if (rk.length) {

@@ -14,6 +14,8 @@ process.env.TELEGRAM_BOT_TOKEN = 'test-token';
 process.env.CRON_SECRET = 'test-cron-secret';
 const acc = await import('../api/_acc.js');
 const rem = await import('../api/_rem.js');
+const { dueAll } = await import('../api/_due.js');
+const { reindexAccount } = await import('../api/_reindex.js');
 const cron = (await import('../api/cron.js')).default;
 
 beforeEach(() => { __reset(); setEnv(); process.env.TELEGRAM_BOT_TOKEN = 'test-token'; process.env.CRON_SECRET = 'test-cron-secret'; });
@@ -78,7 +80,7 @@ test('рассылка: каждому в свой чат и только сво
   await addCustom(c, 'вчера', 'day', '2020-01-01'); // не сегодня
   const r = await run();
   assert.equal(r.statusCode, 200);
-  assert.deepEqual([r.body.accounts, r.body.sent, r.body.failed, r.body.left], [3, 3, 0, 0]);
+  assert.deepEqual([r.body.accounts, r.body.sent, r.body.failed, r.body.left], [2, 3, 0, 0], 'accounts — аккаунты из индекса: у Клары только вчерашнее, оно в индекс не попадает');
   const by = (chat) => sent(calls).filter((x) => x.body.chat_id === chat).map((x) => x.body.text).sort();
   assert.deepEqual(by(await chatOf(a)), ['🔔 день Анны', '🔔 повтор Анны']);
   assert.deepEqual(by(await chatOf(b)), ['🔔 день Бориса']);
@@ -106,7 +108,7 @@ test('выключенное и уже отправленное не уходя�
   assert.equal(after.custom.find((x) => x.text === 'выкл').sent, false);
 });
 
-test('отвязанный аккаунт и аккаунт без записи tg:<id> не получают рассылку и не теряют напоминание', async (t) => {
+test('отвязанный аккаунт и аккаунт без записи tg:<id> не получают рассылку и не теряют напоминание; новая привязка возвращает напоминание в индекс', async (t) => {
   const calls = mockTg(t);
   const a = await mkUser('anna'), b = await mkUser('boris');
   await addCustom(a, 'Анна'); await addCustom(b, 'Борис');
@@ -116,9 +118,18 @@ test('отвязанный аккаунт и аккаунт без записи 
   const r = await run();
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.sent, 0);
-  assert.equal(r.body.nolink, 1); // b: в множестве, но привязки нет
+  assert.equal(r.body.nolink, 2); // оба в индексе (записаны напоминания), у обоих привязки нет: a отвязан, у b нет tg:<id>
   assert.equal(calls.length, 0);
   assert.equal((await rem.readRem(b)).rem.custom[0].sent, false, 'отметка не поставлена: после новой привязки уйдёт');
+  assert.deepEqual([...(await dueAll()).keys()], [], 'без привязки члены из индекса убраны: слать некому');
+  assert.equal((await run()).body.accounts, 0, 'повторный запуск аккаунтов не трогает');
+  // Новая привязка (в боте после bindTelegram вызывается reindexAccount): напоминание снова в индексе и уходит при ближайшем запуске
+  const { token } = await acc.createLinkToken(a);
+  assert.ok((await acc.bindTelegram(token, { id: ++tidSeq, username: 'anna2' }, tidSeq * 100 + 1)).id);
+  await reindexAccount(a);
+  const r2 = await run();
+  assert.deepEqual([r2.body.accounts, r2.body.sent], [1, 1]);
+  assert.deepEqual(sent(calls).map((x) => x.body.text), ['🔔 Анна']);
 });
 
 test('сбой отправки: отметка снимается, ответ 502, повторный запуск доставляет; доставленным дубль не уходит', async (t) => {
@@ -357,12 +368,13 @@ test('замок снимается и при ошибке запуска (502),
   assert.equal((await run()).body.sent, 1);
 });
 
-test('расход команд: запуск без аккаунтов — пульс, замок, список tgs, отметка копии и снятие замка (6 команд)', async (t) => {
+test('расход команд: запуск без задач — пульс, замок, чтение индекса dueq, отметка копии и снятие замка (6 команд)', async (t) => {
   mockTg(t);
   __cmdLog(true);
   const r = await run();
   assert.equal(r.statusCode, 200);
   const log = __cmdLog();
-  assert.ok(log.length <= 7, log.join(' | '));
-  assert.ok(log[0].startsWith('GET cron:hb') && log.includes('EVAL cron:lock'), log.join(' | '));
+  assert.ok(log.length <= 6, log.join(' | '));
+  assert.ok(log[0].startsWith('GET cron:hb') && log.includes('EVAL cron:lock') && log.includes('ZRANGEBYSCORE dueq'), log.join(' | '));
+  assert.ok(!log.some((c) => /tgs|rem:|pair:|tg:/.test(c)), 'без задач ни одного обращения к аккаунтам: ' + log.join(' | '));
 });

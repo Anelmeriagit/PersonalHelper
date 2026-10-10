@@ -300,15 +300,15 @@ test('префикс «t:»: копируется только он, в запи
   assert.deepEqual((await readAll(5)).recs.map((r) => r.k), ['nick:a']);
 });
 
-test('типы, которых код не использует (list, zset), пропускаются и считаются; пропавший ключ считается gone', async () => {
+test('типы, которых код не использует (list, stream), пропускаются и считаются; пропавший ключ считается gone', async () => {
   await seed();
   __putOther('queue:1', 'list');
-  __putOther('rank:1', 'zset');
+  __putOther('rank:1', 'stream');
   await db.cmd('SET', 'short', '1', 'PX', 1);
   await new Promise((r) => setTimeout(r, 5));
   const { recs, st } = await readAll(100);
   assert.equal(recs.some((r) => r.k === 'queue:1' || r.k === 'rank:1' || r.k === 'short'), false);
-  assert.deepEqual(st.other, { list: 1, zset: 1 });
+  assert.deepEqual(st.other, { list: 1, stream: 1 });
   assert.equal(recs.length, 6);
 });
 

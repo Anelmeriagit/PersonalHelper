@@ -84,6 +84,28 @@ test('аккаунт Google без никнейма: после /start бот о
   assert.match(texts(calls).pop(), /^Привет! Telegram привязан/);
 });
 
+test('привязка Telegram возвращает ждавшие напоминания в индекс cron (dueq); сбой индекса привязку не отменяет', async (t) => {
+  const calls = mockTg(t);
+  const { mutateRem } = await import('../api/_rem.js');
+  const { dueAll } = await import('../api/_due.js');
+  const db = await import('../api/_db.js');
+  const id = await mkAcc('ivan');
+  await mutateRem(id, (r) => { r.custom.push({ id: 'aaaaaaaaaaaa', date: '2099-01-01', slot: 'h10', text: 'x', on: true, sent: false }); });
+  await db.cmd('DEL', db.key('dueq')); // cron убрал член, пока Telegram не был привязан
+  const tok = tokenOf((await call(link, 'POST', id)).body.url);
+  await send(U1, '/start ' + tok);
+  assert.equal(texts(calls).pop(), 'Готово: Telegram привязан к вашему аккаунту.');
+  assert.deepEqual([...(await dueAll()).keys()], [id]);
+  t.mock.method(console, 'error', () => {});
+  await db.cmd('DEL', db.key('dueq'));
+  const id2 = await mkAcc('olga');
+  const tok2 = tokenOf((await call(link, 'POST', id2)).body.url);
+  __fail('http', 'rem:' + id2);
+  await send(U2, '/start ' + tok2);
+  __fail(null);
+  assert.equal(texts(calls).pop(), 'Готово: Telegram привязан к вашему аккаунту.');
+});
+
 test('полный путь: ссылка → /start → привязано; повторное использование токена отвергается', async (t) => {
   const calls = mockTg(t);
   const id = await mkAcc('ivan');

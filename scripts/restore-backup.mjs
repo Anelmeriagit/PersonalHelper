@@ -39,7 +39,7 @@ export async function compareRecs(recs, ageMs) {
   const have = [];
   recs.forEach((r, i) => {
     const type = String(meta[2 * i]);
-    const want = { s: 'string', h: 'hash', e: 'set' }[r.t];
+    const want = { s: 'string', h: 'hash', e: 'set', z: 'zset' }[r.t];
     if (type === 'none') { if (r.ttl && r.ttl <= (ageMs || 0) + 1000) expired++; else mismatches++; return; }
     if (type !== want) { mismatches++; return; }
     const pttl = Number(meta[2 * i + 1]);
@@ -49,7 +49,7 @@ export async function compareRecs(recs, ageMs) {
   if (have.length) {
     const got = await readRecs(have.map((x) => x.key), have.map((x) => x.type), have.map((x) => x.pttl));
     const byKey = new Map(got.recs.map((g) => [g.k, g]));
-    const norm = (r) => JSON.stringify(r.t === 'h' ? r.v.slice().sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)) : r.t === 'e' ? r.v.slice().sort() : r.v);
+    const norm = (r) => JSON.stringify(r.t === 'h' ? r.v.slice().sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)) : r.t === 'e' ? r.v.slice().sort() : r.t === 'z' ? r.v.slice().sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map((p) => [p[0], Number(p[1])]) : r.v);
     for (const { r } of have) { const g = byKey.get(r.k); if (!g || g.t !== r.t || norm(g) !== norm(r)) mismatches++; }
   }
   return { checked: recs.length, mismatches, expired };

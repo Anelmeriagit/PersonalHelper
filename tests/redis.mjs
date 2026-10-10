@@ -2,7 +2,8 @@
 // Подключается через tests/register.mjs: подменяет globalThis.fetch только для адреса KV_REST_API_URL,
 // остальные запросы идут в прежний fetch. Код в api/ менять не нужно.
 // Поддержано то, что использует код проекта: GET, SET (NX, XX, EX, PX), DEL, EXISTS, INCR, DECR, EXPIRE, PEXPIRE, PTTL,
-// HGET, HGETALL, HMGET, HSET, TYPE, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и четыре скрипта EVAL (по первой строке «-- cas», «-- hit», «-- take» и «-- unlock», см. api/_db.js).
+// HGET, HGETALL, HMGET, HSET, TYPE, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, отсортированные множества ZADD (NX, XX, GT, LT, CH), ZREM, ZSCORE, ZCARD, ZRANGE (по номерам, WITHSCORES),
+// ZRANGEBYSCORE (-inf/+inf, WITHSCORES, LIMIT), SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и пять скриптов EVAL (по первой строке «-- cas», «-- hit», «-- take», «-- unlock» и «-- dueset», см. api/_db.js и api/_due.js).
 // Сами Lua-скрипты здесь НЕ исполняются: заглушка повторяет их смысл на JS. Реальный Redis проверяется отдельно (notes/CHECKLIST.md).
 process.env.KV_REST_API_URL = process.env.KV_REST_API_URL || 'https://redis.test';
 process.env.KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN || 'test-redis-token';
@@ -25,9 +26,12 @@ export function __calls() { return calls; }
 // Счёт команд, как в Upstash: число команд (в pipeline каждая считается), и их список. __cmdLog(true) сбрасывает журнал.
 export function __cmds() { return cmdLog.length; }
 export function __cmdLog(clear) { const l = cmdLog.slice(); if (clear) cmdLog = []; return l; }
-// Ключ другого типа Redis (list, zset), которого код проекта не использует: для проверки копии, которая такие типы пропускает.
+// Ключ другого типа Redis (list, stream), которого код проекта не использует: для проверки копии, которая такие типы пропускает.
 export function __putOther(k, t) { store.set(k, { t, v: [], exp: null }); }
-export function __raw(k) { const e = store.get(k); return e ? (e.t === 'h' ? Object.fromEntries(e.v) : e.t === 'set' ? [...e.v].sort() : e.v) : undefined; }
+export function __raw(k) { const e = store.get(k); return e ? (e.t === 'h' ? Object.fromEntries(e.v) : e.t === 'set' ? [...e.v].sort() : e.t === 'zset' ? Object.fromEntries(zsorted(e)) : e.v) : undefined; }
+// Отсортированное множество: члены и счета по возрастанию счёта, при равных по имени (как в Redis).
+function zsorted(e) { return [...e.v].sort((x, y) => x[1] - y[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)); }
+export function __zset(k) { const e = store.get(k); return e && e.t === 'zset' ? zsorted(e) : []; }
 
 const rerr = (msg) => { const e = new Error(msg); e.redis = true; return e; };
 const live = (k) => {
@@ -54,6 +58,13 @@ const set = (k, create) => {
   if (e && e.t !== 'set') throw rerr('WRONGTYPE Operation against a key holding the wrong kind of value');
   return e;
 };
+const zs = (k, create) => {
+  let e = live(k);
+  if (!e && create) { e = { t: 'zset', v: new Map(), exp: null }; store.set(k, e); }
+  if (e && e.t !== 'zset') throw rerr('WRONGTYPE Operation against a key holding the wrong kind of value');
+  return e;
+};
+const bound = (s, inf) => { const x = String(s).toLowerCase(); if (x === '-inf') return -Infinity; if (x === '+inf' || x === 'inf') return Infinity; if (!Number.isFinite(Number(x))) throw rerr('ERR min or max is not a float'); return Number(x); };
 const int = (s) => { if (!/^-?\d+$/.test(String(s))) throw rerr('ERR value is not an integer or out of range'); return Number(s); };
 
 // Шаблон SCAN MATCH → RegExp: * ? и обратная косая черта; классы [...] заглушка не поддерживает (код проекта экранирует их в префиксе).
@@ -97,6 +108,15 @@ function evalScript(script, keys, argv) {
     const e = str(k);
     if (!e || e.v !== String(argv[0])) return 0;
     store.delete(k);
+    return 1;
+  }
+  if (script.startsWith('-- dueset')) { // как api/_due.js DUE_SET: уточнить счёт, только если он не менялся
+    const e = zs(k, false);
+    const cur = e && e.v.has(argv[0]) ? e.v.get(argv[0]) : null;
+    const exp = argv[1] === '' ? null : Number(argv[1]);
+    if (cur !== exp) return 0;
+    if (argv[2] === '') { if (cur !== null) { e.v.delete(argv[0]); if (!e.v.size) store.delete(k); } }
+    else zs(k, true).v.set(argv[0], Number(argv[2]));
     return 1;
   }
   throw rerr('ERR заглушка не знает этот скрипт EVAL');
@@ -158,6 +178,61 @@ function exec(args) {
     case 'SMEMBERS': { const e = set(a[0], false); return e ? [...e.v] : []; }
     case 'SISMEMBER': { const e = set(a[0], false); return e && e.v.has(String(a[1])) ? 1 : 0; }
     case 'SCARD': { const e = set(a[0], false); return e ? e.v.size : 0; }
+    case 'ZADD': {
+      const [k, ...o] = a;
+      let nx = false, xx = false, gt = false, lt = false, ch = false, i = 0;
+      for (; i < o.length; i++) {
+        const f = String(o[i]).toUpperCase();
+        if (f === 'NX') nx = true; else if (f === 'XX') xx = true; else if (f === 'GT') gt = true; else if (f === 'LT') lt = true; else if (f === 'CH') ch = true; else break;
+      }
+      if ((o.length - i) % 2 || o.length === i) throw rerr('ERR syntax error');
+      const e = zs(k, true);
+      let n = 0;
+      for (; i + 1 < o.length; i += 2) {
+        const sc = Number(o[i]), m = String(o[i + 1]);
+        if (!Number.isFinite(sc)) throw rerr('ERR value is not a valid float');
+        const has = e.v.has(m), old = e.v.get(m);
+        if ((nx && has) || (xx && !has) || (has && gt && !(sc > old)) || (has && lt && !(sc < old))) continue;
+        if (!has) n++; else if (ch && sc !== old) n++;
+        e.v.set(m, sc);
+      }
+      if (!e.v.size) store.delete(k);
+      return n;
+    }
+    case 'ZREM': {
+      const e = zs(a[0], false);
+      if (!e) return 0;
+      let n = 0;
+      for (const m of a.slice(1)) if (e.v.delete(String(m))) n++;
+      if (!e.v.size) store.delete(a[0]);
+      return n;
+    }
+    case 'ZSCORE': { const e = zs(a[0], false); return e && e.v.has(String(a[1])) ? String(e.v.get(String(a[1]))) : null; }
+    case 'ZCARD': { const e = zs(a[0], false); return e ? e.v.size : 0; }
+    case 'ZRANGE': {
+      const e = zs(a[0], false);
+      if (!e) return [];
+      const all = zsorted(e), n = all.length;
+      let from = int(a[1]), to = int(a[2]);
+      if (from < 0) from = Math.max(0, n + from);
+      if (to < 0) to = n + to;
+      const part = all.slice(from, to + 1);
+      return String(a[3] || '').toUpperCase() === 'WITHSCORES' ? part.flatMap(([m, sc]) => [m, String(sc)]) : part.map(([m]) => m);
+    }
+    case 'ZRANGEBYSCORE': {
+      const e = zs(a[0], false);
+      if (!e) return [];
+      const lo = bound(a[1]), hi = bound(a[2]);
+      let withScores = false, off = 0, lim = Infinity;
+      for (let i = 3; i < a.length; i++) {
+        const f = String(a[i]).toUpperCase();
+        if (f === 'WITHSCORES') withScores = true;
+        else if (f === 'LIMIT') { off = int(a[++i]); lim = int(a[++i]); }
+        else throw rerr('ERR syntax error');
+      }
+      const part = zsorted(e).filter(([, sc]) => sc >= lo && sc <= hi).slice(off, lim < 0 ? undefined : off + lim);
+      return withScores ? part.flatMap(([m, sc]) => [m, String(sc)]) : part.map(([m]) => m);
+    }
     case 'SCAN': {
       const cur = int(a[0]);
       let pat = '*', count = 10;
@@ -181,7 +256,7 @@ const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, 
 const REAL_FETCH = globalThis.fetch;
 
 // Ключи команды (для фильтра __fail по ключу) и признак записи.
-const WRITES = new Set(['SET', 'DEL', 'INCR', 'DECR', 'EXPIRE', 'PEXPIRE', 'HSET', 'SADD', 'SREM', 'EVAL']);
+const WRITES = new Set(['SET', 'DEL', 'INCR', 'DECR', 'EXPIRE', 'PEXPIRE', 'HSET', 'SADD', 'SREM', 'ZADD', 'ZREM', 'EVAL']);
 const keysOf = (c) => (String(c[0]).toUpperCase() === 'EVAL' ? c.slice(3, 3 + Number(c[2])) : c.slice(1, 2)).map(String);
 const hits = (c) => (!failMatch || keysOf(c).some((k) => k.includes(failMatch))) && (failMode !== 'write' || WRITES.has(String(c[0]).toUpperCase()));
 

@@ -15,8 +15,10 @@
 //   cnt:<хеш токена> → id аккаунта, давшего ссылку (одноразовая ссылка /?join=<токен>, живёт PAIR_TTL секунд; сам токен не хранится)
 //   cnp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
 //   shr:<меньший id>:<больший id> → общие напоминания пары (запись _rem.js: readShr/mutateShr); удаляется при разрыве связи (unpair) и при удалении аккаунта
+//   dueq             → индекс cron «кому пора слать» (см. _due.js); члены аккаунта и пары убираются вместе с их данными (deleteAccount, unpair, joinPair)
 import crypto from 'node:crypto';
 import { key, cmd, setNx, del, take } from './_db.js';
+import { dueDrop, pairMember } from './_due.js';
 
 export const ID_RE = /^[0-9a-f]{32}$/;
 
@@ -80,6 +82,7 @@ export async function deleteAccount(id) {
   if (!acc) return false;
   await unlinkTelegram(id);
   await unpair(id);
+  await dueDrop(id); // индекс cron (dueq, _due.js)
   await del(key('doc', id), key('rem', id), key('agent', id), key('wifi', id), key('bot', id), key('rl', 'tgl', id), key('rl', 'pj', id), key('rl', 'pl', id), key('cnp', id));
   if (acc.nick && (await cmd('GET', key('nick', acc.nick))) === id) await del(key('nick', acc.nick));
   if (acc.gsub && SUB_RE.test(String(acc.gsub)) && (await cmd('GET', key('gid', acc.gsub))) === id) await del(key('gid', acc.gsub));
@@ -219,7 +222,9 @@ export async function joinPair(token, id) {
     if ((await cmd('GET', key('pair', a))) === id) await del(key('pair', a));
     return { error: 'mine' };
   }
-  await del(key('shr', pairId(a, id))); // запись общих напоминаний от прежней связи этой пары (если разрыв не дочистил) новой связи не достаётся
+  // запись общих напоминаний от прежней связи этой пары (если разрыв не дочистил) новой связи не достаётся
+  await del(key('shr', pairId(a, id)));
+  await dueDrop(pairMember(a, id));
   return { id: a, name: from.name || '' };
 }
 
@@ -227,7 +232,7 @@ export async function joinPair(token, id) {
 export async function unpair(id) {
   const p = await cmd('GET', key('pair', id));
   // Общие напоминания пары удаляются первыми: если сбой случится дальше, повтор разрыва (связь ещё есть) дочистит остальное.
-  if (p && ID_RE.test(String(p)) && p !== id) await del(key('shr', pairId(id, String(p))));
+  if (p && ID_RE.test(String(p)) && p !== id) { await del(key('shr', pairId(id, String(p)))); await dueDrop(pairMember(id, String(p))); }
   await del(key('pair', id));
   if (!p || !ID_RE.test(String(p))) return null;
   if ((await cmd('GET', key('pair', p))) === id) await del(key('pair', p));

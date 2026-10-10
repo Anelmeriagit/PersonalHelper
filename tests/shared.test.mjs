@@ -12,6 +12,8 @@ process.env.CRON_SECRET = 'test-cron-secret';
 const lib = await import('../api/_lib.js');
 const acc = await import('../api/_acc.js');
 const rem = await import('../api/_rem.js');
+const { dueAll } = await import('../api/_due.js');
+const { reindexAccount } = await import('../api/_reindex.js');
 const backup = await import('../api/_backup.js');
 const reminders = (await import('../api/reminders.js')).default;
 const custom = (await import('../api/custom.js')).default;
@@ -194,7 +196,7 @@ test('normShr: чужие поля и мусор отбрасываются, г�
 });
 
 /* ---------- расход команд ---------- */
-test('команды Redis: GET без связи 3, со связью 6; общее создание 7', async (t) => {
+test('команды Redis: GET без связи 3, со связью 6; общее создание 8 (в том числе запись в индекс dueq)', async (t) => {
   AT(t);
   const a = await mkAccount(acc, 'anna');
   __cmdLog(true);
@@ -211,7 +213,8 @@ test('команды Redis: GET без связи 3, со связью 6; общ
   __cmdLog(true);
   await post(custom, a, { date: '2026-10-12', slot: 'day', text: 'x', shared: true });
   const mk = __cmdLog();
-  assert.equal(mk.length, 7, 'общее создание (проверка пары 3, общая запись чтение и запись, личная запись, tg): ' + mk.join(' | '));
+  assert.equal(mk.length, 8, 'общее создание (проверка пары 3, общая запись чтение и запись, ZADD dueq, личная запись, tg): ' + mk.join(' | '));
+  assert.equal(mk.filter((c) => c === 'ZADD dueq').length, 1, 'индекс понижается один раз: ' + mk.join(' | '));
   assert.equal(mk.filter((c) => c.startsWith('GET pair:')).length, 2, 'пара проверяется один раз: ' + mk.join(' | '));
 });
 
@@ -335,11 +338,13 @@ tcron('cron: у партнёра нет Telegram — ему ничего не п
   await acc.joinPair(token, b);
   await addShared(a, b, 'общее');
   const r = await run();
-  assert.deepEqual([r.body.accounts, r.body.sent, r.body.nolink], [1, 1, 0]);
+  assert.deepEqual([r.body.accounts, r.body.sent, r.body.nolink], [2, 1, 1], 'член пары даёт обоих аккаунтов; у Бориса привязки нет');
   const sb = rem.sideOf(b, a);
   assert.equal((await rem.readShr(a, b)).shr.custom[0].sent[sb], false, 'у Бориса отметки нет');
+  assert.deepEqual([...(await dueAll()).keys()], [], 'слать больше некому: у Анны ушло, у Бориса нет привязки — член пары убран');
   const { token: lt } = await acc.createLinkToken(b);
   await acc.bindTelegram(lt, { id: ++tid, username: 'boris' }, tid * 100 + 1);
+  await reindexAccount(b); // так делает бот сразу после привязки
   await run();
   assert.equal(calls.filter((c) => c.method === 'sendMessage').length, 2);
 });
@@ -385,13 +390,17 @@ tcron('cron: сухой прогон считает общее и ничего �
   assert.equal(calls.length, 0);
 });
 
-tcron('cron: расход команд — аккаунт без связи платит одним GET pair, без напоминаний на сегодня', async (t) => {
+tcron('cron: расход команд — аккаунт без напоминаний и аккаунт без связи не платят за пару ничего', async (t) => {
   mockTg(t);
   const a = await linkUser(acc, 'anna', { id: ++tid, username: 'anna' });
   __cmdLog(true);
   await run({ dry: '1' });
+  assert.deepEqual(__cmdLog().filter((c) => /pair:|shr:|rem:/.test(c)), [], 'не в индексе — ни одной команды по аккаунту');
+  await rem.mutateRem(a, (r) => { r.custom.push({ id: 'aaaaaaaaaaaa', date: rem.mskNow().date, slot: 'day', text: 'x', on: true, sent: false }); });
+  __cmdLog(true);
+  await run({ dry: '1' });
   const log = __cmdLog().filter((c) => /pair:|shr:/.test(c));
-  assert.deepEqual(log, ['GET pair:' + a]);
+  assert.deepEqual(log, [], 'у аккаунта только личные напоминания: проверка пары не нужна');
 });
 
 test('общие напоминания: слоты сетки принимаются, planShr сверяет слот по часу', async (t) => {

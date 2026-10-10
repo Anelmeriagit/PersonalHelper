@@ -2,6 +2,7 @@ import { loadDoc } from './_lib.js';
 import { bindTelegram, accountOfTelegram, TOKEN_RE } from './_acc.js';
 import { tg, readBot, mutateBot, webhookSecret, safeEq, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
 import { mskNow } from './_rem.js';
+import { reindexAccount } from './_reindex.js';
 import { resolveShop, disp } from './_shops.js';
 
 const SHOP_CB = /^(sk|so|sp|sf|sr|sb)\|[0-9a-f]{8}(\|\d{1,3})?$/; // кнопки ответа по магазину (см. shopKb/pickKb в _bot.js)
@@ -27,6 +28,7 @@ async function onBind(m, token) {
   catch (e) { console.error(e); return say('Что-то пошло не так. Попробуйте ещё раз чуть позже.'); }
   if (r.error === 'busy') return say('Этот Telegram уже привязан к другому аккаунту. Отвяжите его там на сайте или откройте ссылку из другого Telegram.' + NEW_LINK);
   if (r.error) return say('Ссылка недействительна или устарела (она живёт 10 минут).' + NEW_LINK);
+  try { await reindexAccount(r.id); } catch (e) { console.error('dueq reindex failed', e && e.message); } // напоминания, ждавшие привязки, попадают в индекс cron (сбой не отменяет привязку: суточная перестройка исправит)
   return say('Готово: Telegram привязан к вашему аккаунту.');
 }
 

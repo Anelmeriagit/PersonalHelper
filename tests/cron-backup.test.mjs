@@ -149,8 +149,9 @@ test('сбой рассылки не отменяет копию: аккаунт
   assert.equal(r.body.errors, 1);
   assert.equal(r.body.backup.state, 'done');
 });
-async function db_corrupt(id) { // ломаем чтение rem:<id>: запись не того типа
+async function db_corrupt(id) { // ломаем чтение rem:<id>: запись не того типа; член индекса ставим сами (запись в обход mutateRem индекс не трогает), иначе cron аккаунт не увидит
   const db = await import('../api/_db.js');
+  await (await import('../api/_due.js')).dueLower(id, Date.now() - 1000);
   await db.cmd('DEL', db.key('rem', id));
   await db.cmd('SET', db.key('rem', id), 'не хэш');
 }
