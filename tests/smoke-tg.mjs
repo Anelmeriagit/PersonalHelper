@@ -85,47 +85,31 @@ export async function tg({ stand, browser, fail }) {
         // 5. «Запустить» нажато: опрос раз в 4 с замечает привязку, предупреждение исчезает после перезагрузки списка
         const before = st.rem;
         st.linked = true;
-        await page.waitForSelector('#tgBody .tgn b', { timeout: 9000 });
-        check((await text('#tgBody .tgn b')) === '@ivan_k', 'привязан: показан @ivan_k');
-        check((await page.locator('#tgBody [data-t=unlink]').count()) === 1 && (await page.locator('#tgBody a.btn').count()) === 0, 'привязан: есть «Отвязать», ссылки нет');
-        check((await text('#tgMsg')) === 'Telegram привязан', 'привязан: сообщение');
+        await page.waitForSelector('#tgBox.ok #tgBody .tgn', { timeout: 9000 });
+        check((await text('#tgBody .tgn')) === 'Telegram привязан. Бот будет отправлять напоминания.', 'привязан: текст «' + (await text('#tgBody .tgn')) + '»');
+        check((await page.locator('#tgBody button, #tgBody a').count()) === 0, 'привязан: ни «Отвязать», ни ссылки');
+        check(await page.locator('#tgH').isHidden(), 'привязан: заголовка «Telegram» нет');
+        check((await text('#tgMsg')) === '', 'привязан: сообщения нет');
         await page.waitForSelector('#remWarn[hidden]', { state: 'attached', timeout: 5000 });
         check(st.rem > before, 'после привязки список напоминаний перезапрошен');
         check(await page.locator('#remWarn').isHidden(), 'после привязки предупреждения нет');
         await noHScroll('привязан');
 
-        // 6. «Отмена» в диалоге отвязки: запроса нет
-        await page.click('#tgBody [data-t=unlink]');
-        await page.waitForSelector('#dlg[open]', { timeout: 3000 });
-        await page.click('#dlgNo');
-        await page.waitForSelector('#dlg[open]', { state: 'detached', timeout: 3000 });
-        check(st.dels === 0, 'отмена отвязки: DELETE не отправлялся');
-
-        // 7. отказ при отвязке: остаётся «привязан»
-        st.del = '500';
-        await page.click('#tgBody [data-t=unlink]');
-        await page.waitForSelector('#dlg[open]', { timeout: 3000 });
-        await page.click('#dlg .done');
-        await page.waitForFunction(() => /отвязать/.test(document.getElementById('tgMsg').textContent), null, { timeout: 5000 });
-        check((await page.locator('#tgBody .tgn b').count()) === 1, 'отказ отвязки: остаётся «привязан»');
-
-        // 8. отвязка: снова «не привязан», предупреждение вернулось
-        st.del = 'ok';
-        await page.click('#tgBody [data-t=unlink]');
-        await page.waitForSelector('#dlg[open]', { timeout: 3000 });
-        await page.click('#dlg .done');
+        // 6. отвязка сделана в настройках: после перезагрузки снова «не привязан», предупреждение вернулось
+        st.linked = false;
+        await page.reload({ waitUntil: 'load' });
         await page.waitForSelector('#tgBody [data-t=link]', { timeout: 5000 });
         await page.waitForSelector('#remWarn:not([hidden])', { timeout: 5000 });
-        check(st.dels === 2, 'отвязка: два DELETE (отказ и успех), всего ' + st.dels);
+        check((await page.locator('#tgBox.ok').count()) === 0 && await page.locator('#tgH').isVisible(), 'не привязан: обычный блок с заголовком');
+        check(st.dels === 0, 'на странице напоминаний DELETE не отправляется');
         await noHScroll('после отвязки');
 
-        // 9. экранирование имени из ответа сервера
+        // 9. имя из ответа сервера в блоке не показывается (и не создаёт разметку)
         st.linked = true; st.username = '<img src=x onerror=1>';
         await page.reload({ waitUntil: 'load' });
-        await page.waitForSelector('#tgBody .tgn b', { timeout: 5000 });
-        check((await page.locator('#tgBody img').count()) === 0, 'имя экранируется: тега img нет');
-        check((await text('#tgBody .tgn b')) === '@<img src=x onerror=1>', 'имя показано текстом');
-        await noHScroll('длинное имя');
+        await page.waitForSelector('#tgBox.ok #tgBody .tgn', { timeout: 5000 });
+        check((await page.locator('#tgBody img').count()) === 0 && !/img/.test(await text('#tgBody .tgn')), 'имя не выводится, тега img нет');
+        await noHScroll('привязан, длинное имя');
 
         // 10. 401 от /api/tglink: сессии нет, сайт открывается гостем
         st.auth = true;

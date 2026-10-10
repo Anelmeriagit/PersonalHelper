@@ -86,6 +86,7 @@ export async function shared({ stand, browser, fail }) {
         const xs = await box('#remStage .rgrp:not([hidden]) .rcol'), fr = await box('#remStage .rgrp:not([hidden])');
         if (vp.width >= 1100) check(fr[0][0] < fr[1][0] && fr[0][1] === fr[1][1], 'на 1280 px рамки рядом: ' + JSON.stringify(fr));
         else check(fr[0][0] === fr[1][0] && fr[0][1] < fr[1][1], 'на 360 px рамки друг под другом: ' + JSON.stringify(fr));
+        if (vp.width >= 1100) check(xs[0][1] === xs[2][1] && xs[1][1] === xs[3][1], 'колонки «Личных» и «Общих» начинаются на одной высоте: ' + JSON.stringify(xs));
         if (vp.width >= 600) check(xs[0][0] < xs[1][0] && xs[0][1] === xs[1][1] && xs[2][0] < xs[3][0] && xs[2][1] === xs[3][1], 'в рамке повторяющиеся слева, временные справа: ' + JSON.stringify(xs));
         else check(xs[0][0] === xs[1][0] && xs[1][1] < xs[2][1], 'на 360 px колонки друг под другом: ' + JSON.stringify(xs));
         check(await page.locator('#rcols').evaluate((e) => Array.prototype.every.call(e.querySelectorAll('.rgrp'), (g) => getComputedStyle(g).borderTopWidth !== '0px' && parseFloat(getComputedStyle(g).borderTopLeftRadius) >= 12)), 'у обеих рамок есть граница и скругление');

@@ -55,28 +55,28 @@ export async function guest({ stand, browser, fail }) {
         check((await page.locator('#remGuest .gbtn').evaluate((el) => el.getBoundingClientRect().height)) >= 40, 'напоминания гостя: кнопка слишком мелкая');
         await noHScroll('напоминания гостя');
 
-        // WiFi гостя: форма вместо предложения войти, сеть сохраняется в браузере, QR строит сайт, пароль на сервер не уходит
+        // Wi-Fi гостя: форма вместо предложения войти, сеть сохраняется в браузере, QR строит сайт, пароль на сервер не уходит
         await page.goto(stand.url + '/#wifi', { waitUntil: 'load' });
         await page.waitForSelector('#wForm', { state: 'visible', timeout: 5000 });
-        check((await page.locator('#wifiGuest').count()) === 0, 'WiFi гостя: предложения войти нет');
-        check(/в этом браузере/.test(await text('#wForm .wfn')), 'WiFi гостя: в форме сказано, что данные только в браузере');
-        await noHScroll('WiFi гостя: форма');
+        check((await page.locator('#wifiGuest').count()) === 0, 'Wi-Fi гостя: предложения войти нет');
+        check(/в этом браузере/.test(await text('#wForm .wfn')), 'Wi-Fi гостя: в форме сказано, что данные только в браузере');
+        await noHScroll('Wi-Fi гостя: форма');
         await page.fill('#wfSsid', 'GuestNet');
         await page.fill('#wfPw', 'guest-pass-1');
         await page.click('#wForm .done');
         await page.waitForSelector('.wqr svg.qr', { state: 'visible', timeout: 5000 });
         const wq = makeQr('WIFI:T:WPA;S:GuestNet;P:guest-pass-1;H:false;;');
         const wsvg = await page.evaluate(() => { const s = document.querySelector('.wqr svg.qr'); return { vb: s.getAttribute('viewBox'), d: s.querySelector('path').getAttribute('d') }; });
-        check(wsvg.vb === `0 0 ${wq.size + 8} ${wq.size + 8}`, 'WiFi гостя: размер QR как у серверного: ' + wsvg.vb);
+        check(wsvg.vb === `0 0 ${wq.size + 8} ${wq.size + 8}`, 'Wi-Fi гостя: размер QR как у серверного: ' + wsvg.vb);
         const darkWant = wq.rows.join('').split('1').length - 1;
-        check([...wsvg.d.matchAll(/h(\d+)v1/g)].reduce((n, m) => n + Number(m[1]), 0) === darkWant, 'WiFi гостя: тёмные модули QR как у серверного');
-        check(/GuestNet/.test(await text('.wi')) && !/guest-pass-1/.test(await text('.wi')), 'WiFi гостя: название видно, пароль скрыт');
+        check([...wsvg.d.matchAll(/h(\d+)v1/g)].reduce((n, m) => n + Number(m[1]), 0) === darkWant, 'Wi-Fi гостя: тёмные модули QR как у серверного');
+        check(/GuestNet/.test(await text('.wi')) && !/guest-pass-1/.test(await text('.wi')), 'Wi-Fi гостя: название видно, пароль скрыт');
         const wl = await page.evaluate(() => localStorage.getItem('g-wf') || '');
-        check(/GuestNet/.test(wl) && /guest-pass-1/.test(wl) && !/qr/.test(wl), 'WiFi гостя: сеть в браузере, без QR');
-        await noHScroll('WiFi гостя: сеть');
+        check(/GuestNet/.test(wl) && /guest-pass-1/.test(wl) && !/qr/.test(wl), 'Wi-Fi гостя: сеть в браузере, без QR');
+        await noHScroll('Wi-Fi гостя: сеть');
         await page.reload({ waitUntil: 'load' });
         await page.waitForSelector('.wqr svg.qr', { state: 'visible', timeout: 5000 });
-        check(/GuestNet/.test(await text('.wi')), 'WiFi гостя: сеть на месте после перезагрузки');
+        check(/GuestNet/.test(await text('.wi')), 'Wi-Fi гостя: сеть на месте после перезагрузки');
 
         // агент гостя: четыре строки по умолчанию, время сохраняется в браузере, подпись «через …»
         await page.goto(stand.url + '/#agent', { waitUntil: 'load' });

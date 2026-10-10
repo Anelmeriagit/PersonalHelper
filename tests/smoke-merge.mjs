@@ -27,7 +27,7 @@ export async function merge({ stand, browser, fail }) {
       page.on('pageerror', (e) => problems.push('JS: ' + e.message));
       page.on('console', (m) => { if (m.type() === 'error' && !/status of (401|500)/.test(m.text())) problems.push('console: ' + m.text()); });
       const json = (r, status, obj) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(obj) });
-      // у аккаунта нет сети WiFi: слияние переносит гостевую
+      // у аккаунта нет сети Wi-Fi: слияние переносит гостевую
       await page.route('**/api/wifi', (r) => {
         const q = r.request();
         if (q.method() === 'PUT') { const b = q.postDataJSON(); sent.wifi.push(b); return json(r, 200, { configured: true, ssid: b.ssid, password: b.password, security: b.security, hidden: b.hidden, qr: qr }); }
@@ -57,9 +57,9 @@ export async function merge({ stand, browser, fail }) {
       try {
         // 1. первый вход в аккаунт с гостевыми данными: всё сливается, на экране итог и короткое сообщение
         await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
         await page.waitForSelector('#bCur .blk', { timeout: 5000 });
-        check(sent.data.length === 1 && sent.agent.length === 1 && sent.wifi.length === 1, `слияние: по одной записи кэшбэка, агента и WiFi, а было ${sent.data.length}/${sent.agent.length}/${sent.wifi.length}`);
+        check(sent.data.length === 1 && sent.agent.length === 1 && sent.wifi.length === 1, `слияние: по одной записи кэшбэка, агента и Wi-Fi, а было ${sent.data.length}/${sent.agent.length}/${sent.wifi.length}`);
         const d = sent.data[0] || { parts: {} };
         check(JSON.stringify(Object.keys(d.parts).sort()) === JSON.stringify(['custom', cur].sort()), 'слияние кэшбэка: изменены месяц и свои категории: ' + Object.keys(d.parts).join(','));
         check(d.parts[cur] && d.parts[cur].base === 0 && d.parts[cur].value.map((b) => b.bank).join() === 'otp,alfa,sber,vtb', 'слияние кэшбэка: банки аккаунта первыми, затем недостающий банк гостя: ' + JSON.stringify(d.parts[cur] && d.parts[cur].value.map((b) => b.bank)));
@@ -69,13 +69,13 @@ export async function merge({ stand, browser, fail }) {
         check(/гостевого режима/.test(await page.locator('#warn').innerText()), 'слияние: сообщение о добавленных данных');
         const ag = sent.agent[0] ? sent.agent[0].rows : [];
         check(ag.length === 5 && ag[0].app === 'app' && ag[0].h === 7 && ag[0].m === 20 && ag[4].app === 'Chrome' && ag[4].h === 9, 'слияние агента: время гостя у пустой строки, лишняя строка в конце: ' + JSON.stringify(ag.map((r) => [r.app, r.h, r.m])));
-        check(sent.wifi[0] && sent.wifi[0].ssid === 'GuestNet' && sent.wifi[0].password === 'guest-pass-1', 'слияние WiFi: сеть гостя перенесена');
+        check(sent.wifi[0] && sent.wifi[0].ssid === 'GuestNet' && sent.wifi[0].password === 'guest-pass-1', 'слияние Wi-Fi: сеть гостя перенесена');
         check((await ls('g-mg')).indexOf(ACC_ID) > -1, 'слияние: аккаунт отмечен в браузере');
         await noHScroll('слияние: главная');
 
         // 2. тот же аккаунт ещё раз: слияния нет (метка), записей и сообщения нет
         await page.reload({ waitUntil: 'load' });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
         await page.waitForSelector('#bCur .blk', { timeout: 5000 });
         check(sent.data.length === 1 && sent.agent.length === 1 && sent.wifi.length === 1, 'повторный вход: слияния нет');
         check(!/гостевого режима/.test(await page.locator('#warn').innerText()), 'повторный вход: сообщения нет');
@@ -84,7 +84,7 @@ export async function merge({ stand, browser, fail }) {
         await page.evaluate(() => { localStorage.removeItem('g-mg'); });
         dataStatus = 500;
         await page.reload({ waitUntil: 'load' });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
         await page.waitForSelector('#bCur .blk', { timeout: 5000 });
         check(sent.data.length === 2, 'отказ: запись кэшбэка пробовалась');
         check((await page.locator('#bCur .blk').count()) === 3, 'отказ: на странице данные аккаунта без слияния');

@@ -4,18 +4,16 @@
    отдельного запроса нет. GET /api/tglink нужен только опросу привязки, пока показана ссылка. */
 import {$,esc} from './util.js';
 import {api,authFail} from './api.js';
-import {dlgConfirm} from './dialogs.js';
 
 var T={st:null,url:'',until:0,timer:0,busy:false,gen:0,polling:false,n:0},changed=function(){};
 
 function msg(t){var m=$('tgMsg');if(m)m.textContent=t||''}
 function stop(){if(T.timer){clearTimeout(T.timer);T.timer=0}}
 
-function render(){var b=$('tgBody');if(!b)return;
+function render(){var b=$('tgBody'),x=$('tgBox');if(!b)return;
+  if(x)x.classList.toggle('ok',!!(T.st&&T.st.linked));
   if(!T.st){b.innerHTML='';return}
-  if(T.st.linked){
-    b.innerHTML='<p class="tgn">Telegram привязан'+(T.st.username?': <b>@'+esc(T.st.username)+'</b>':'')+'. Бот будет присылать напоминания сюда.</p>'+
-      '<div class="acts"><button class="btn" type="button" data-t="unlink">Отвязать</button></div>';return}
+  if(T.st.linked){b.innerHTML='<p class="tgn">Telegram привязан. Бот будет отправлять напоминания.</p>';return}
   if(T.url){
     b.innerHTML='<p class="tgn">Откройте ссылку и нажмите «Запустить» в Telegram. Ссылка одноразовая и действует 10 минут.</p>'+
       '<div class="acts"><a class="btn" href="'+esc(T.url)+'" target="_blank" rel="noopener noreferrer">Открыть Telegram</a>'+
@@ -31,7 +29,7 @@ function expire(){stop();T.url='';render();msg('Ссылка устарела. �
 function poll(g){if(T.polling)return;T.polling=true;
   api('GET','/api/tglink').then(function(r){T.polling=false;if(r.status===401){authFail();return null}return r.ok?r.json():null}).then(function(j){
     if(g!==T.gen||!j||!j.linked)return;
-    T.st=j;T.url='';stop();render();msg('Telegram привязан');changed()}).catch(function(){T.polling=false})}
+    T.st=j;T.url='';stop();render();msg('');changed()}).catch(function(){T.polling=false})}
 function arm(){stop();T.n=0;var g=T.gen;
   (function next(){T.timer=setTimeout(function(){T.timer=0;
     if(g!==T.gen||!T.url)return;
@@ -49,7 +47,7 @@ export function tgApply(j){if(!j||typeof j.linked!=='boolean')return;
   var was=T.st;
   if(j.linked){var un=typeof j.username==='string'?j.username:'',pend=!!T.url;
     if(was&&was.linked&&was.username===un&&!pend)return;
-    T.st={linked:true,username:un};T.url='';stop();render();if(pend)msg('Telegram привязан');return}
+    T.st={linked:true,username:un};T.url='';stop();render();if(pend)msg('');return}
   if(T.url||(was&&!was.linked))return;
   T.st={linked:false};render()}
 
@@ -64,17 +62,7 @@ function mk(){if(T.busy)return;T.busy=true;msg('');var g=T.gen;
     T.st={linked:false};T.url=j.url;T.until=Date.now()+(j.ttl||600)*1000;render();arm()})
   }).catch(function(){T.busy=false;msg('Нет связи с сервером')})}
 
-function unlink(){
-  dlgConfirm('Отвязать Telegram? Напоминания перестанут приходить, пока не привяжете снова.').then(function(ok){
-    if(!ok)return;var g=T.gen;msg('');
-    api('DELETE','/api/tglink').then(function(r){
-      if(g!==T.gen)return;
-      if(r.status===401){authFail();return}
-      if(!r.ok){msg('Не получилось отвязать. Попробуйте позже.');return}
-      T.st={linked:false};T.url='';render();changed()
-    }).catch(function(){msg('Нет связи с сервером')})})}
-
-/* onChange — вызывается, когда привязка изменилась (привязали или отвязали): страница обновляет предупреждение «не привязан». */
+/* onChange — вызывается, когда привязка изменилась (привязали; отвязка только в настройках аккаунта): страница обновляет предупреждение «не привязан». */
 export function initTg(onChange){changed=onChange||changed;var b=$('tgBody');if(!b)return;
   b.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-t]');if(!el)return;
-    if(el.getAttribute('data-t')==='link')mk();else if(el.getAttribute('data-t')==='unlink')unlink()})}
+    if(el.getAttribute('data-t')==='link')mk()})}

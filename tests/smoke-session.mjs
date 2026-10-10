@@ -24,7 +24,7 @@ export async function session({ stand, browser, fail }) {
         await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
         await page.evaluate(() => localStorage.setItem('g-cb', JSON.stringify({ months: {}, custom: ['Моя гостевая'], rev: {} })));
         await page.reload({ waitUntil: 'load' });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
         check(!(await vis('#gBtn')), 'аккаунт: кнопки Google в шапке нет');
 
         // 2. сессия заканчивается во время правки: несохранённое остаётся, но уже в гостевых данных
@@ -46,7 +46,7 @@ export async function session({ stand, browser, fail }) {
         check(await vis('#editBtn'), '401: кнопка правки доступна гостю');
         await page.goto('about:blank');
         await page.goto(stand.url + '/', { waitUntil: 'load' });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 }); // стенд снова отвечает как аккаунт
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 }); // стенд снова отвечает как аккаунт
 
         // 2b. сессия заканчивается на странице «Агент»: строки (с правкой) и сеть аккаунта заменяют гостевые
         await page.evaluate(() => {
@@ -69,7 +69,7 @@ export async function session({ stand, browser, fail }) {
         await page.goto('about:blank');
         await page.unroute('**/api/agent');
         await page.goto(stand.url + '/', { waitUntil: 'load' });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
 
         // 3. выход: свежие данные аккаунта заменяют гостевые
         await page.unroute('**/api/data');
@@ -80,8 +80,8 @@ export async function session({ stand, browser, fail }) {
         });
         await page.goto('about:blank');
         await page.goto(stand.url + '/', { waitUntil: 'load' });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
-        await page.click('#uBtn'); await page.click('#uMenu [data-u=logout]');
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
+        await page.click((vp.width <= 640 ? '#navAcct' : '#uBtn')); await page.click('#uMenu [data-u=logout]');
         await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
         check(posts.filter((x) => x.action === 'logout').length === 1, 'выход: запрос logout');
         const l2 = await local();

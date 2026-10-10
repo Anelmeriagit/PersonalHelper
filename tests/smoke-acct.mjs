@@ -34,7 +34,7 @@ export async function acct({ stand, browser, fail }) {
         check(r.sw <= r.iw, `${where}: горизонтальная прокрутка ${r.sw} > ${r.iw}`);
       };
       const isOpen = (sel) => page.locator(sel).evaluate((el) => el.open);
-      const openSettings = async () => { await page.click('#uBtn'); await page.click('#uMenu [data-u=settings]'); await page.waitForSelector('#acctDlg .ar', { timeout: 5000 }); };
+      const openSettings = async () => { await page.click((vp.width <= 640 ? '#navAcct' : '#uBtn')); await page.click('#uMenu [data-u=settings]'); await page.waitForSelector('#acctDlg .ar', { timeout: 5000 }); };
       try {
         // --- не вошли: кнопка Google в шапке справа ---
         await page.route('**/api/data', (r) => json(r, { error: 'auth' }, 401), { times: 1 });
@@ -45,36 +45,50 @@ export async function acct({ stand, browser, fail }) {
         check((await page.getAttribute('#gBtn', 'href')) === '/api/auth?action=google', 'ссылка кнопки Google: ' + (await page.getAttribute('#gBtn', 'href')));
         check(/Войти через Google/.test(await page.locator('#gBtn').textContent()) && (await page.getAttribute('#gBtn', 'aria-label')) === 'Войти через Google', 'текст кнопки Google');
         const gb = await page.locator('#gBtn').boundingBox(), tb = await page.locator('#themeBtn').boundingBox();
-        check(gb && tb && gb.x + gb.width <= tb.x && gb.x + gb.width <= vp.width && gb.height >= 44, 'кнопка Google слева от переключателя темы, не выходит за экран, высота ≥ 44 px');
+        check(gb && tb && tb.x + tb.width <= gb.x && gb.x + gb.width <= vp.width && gb.height >= 44, 'кнопка Google справа от переключателя темы, не выходит за экран, высота ≥ 44 px');
         check(gb && gb.x > vp.width / 2 - gb.width, 'кнопка Google в правой части шапки');
         await noHScroll('без входа');
 
         // --- вошли: «Helper User» и галочка ---
         await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
         check(!(await vis('#gBtn')), 'после входа кнопка Google скрыта');
         check((await text('#uName')) === 'Helper User', 'имя в шапке по умолчанию: «' + (await text('#uName')) + '»');
         check((await page.locator('#uBtn svg').count()) === 1, 'у кнопки есть галочка');
         check((await page.locator('#outBtn').count()) === 0, 'старой кнопки выхода нет');
-        const ub = await page.locator('#uBtn').boundingBox();
-        check(ub && ub.height >= 44 && ub.x + ub.width <= vp.width, 'кнопка пользователя: высота ≥ 44 px, не выходит за экран');
+        const MOB = vp.width <= 640, TRIG = MOB ? '#navAcct' : '#uBtn';
+        const brand = await page.locator('.brand').boundingBox();
+        check((await text('.brand')).replace(/\s+/g, ' ').trim().endsWith('Your Personal Helper') && brand && brand.x < 40 + (vp.width > 1000 ? 400 : 20) && brand.x + brand.width <= vp.width, 'в шапке слева подпись «Your Personal Helper» со значком');
+        if (MOB) {
+          const na = await page.locator('#navAcct').boundingBox(), nv = await page.locator('#mainNav').boundingBox();
+          check(await vis('#navAcct') && !(await vis('#uBtn')) && /Аккаунт/.test(await text('#navAcct')), 'телефон: в нижней панели «Аккаунт», кнопки с именем в шапке нет');
+          check(na && nv && na.y >= nv.y && na.x + na.width <= vp.width + 1 && na.x > vp.width / 2, 'телефон: «Аккаунт» в нижней панели, последним');
+        } else {
+          const ub = await page.locator('#uBtn').boundingBox(), tb2 = await page.locator('#themeBtn').boundingBox();
+          check(ub && ub.height >= 44 && ub.x + ub.width <= vp.width, 'кнопка пользователя: высота ≥ 44 px, не выходит за экран');
+          check(ub && tb2 && tb2.x + tb2.width <= ub.x, 'компьютер: кнопка пользователя правее переключателя темы');
+          check(!(await vis('#navAcct')), 'компьютер: «Аккаунт» в нижней панели не показывается');
+          const al = await page.evaluate(() => { const b = document.getElementById('uBtn').getBoundingClientRect(), r = document.createRange(); r.selectNodeContents(document.getElementById('uName')); const t = r.getBoundingClientRect(); return Math.abs((t.top + t.bottom) / 2 - (b.top + b.bottom) / 2); });
+          check(al <= 2.5, 'имя по высоте в центре кнопки, отклонение ' + al.toFixed(1) + ' px');
+        }
         await noHScroll('шапка вошедшего');
 
         // --- меню ---
-        await page.click('#uBtn');
+        await page.click(TRIG);
         check(await vis('#uMenu'), 'меню открывается');
-        check((await page.getAttribute('#uBtn', 'aria-expanded')) === 'true', 'aria-expanded=true');
+        check((await page.getAttribute(TRIG, 'aria-expanded')) === 'true', 'aria-expanded=true');
         check((await page.locator('#uMenu [role=menuitem]').allInnerTexts()).join('|') === 'Настройки аккаунта|Выйти', 'пункты меню');
         const mb = await page.locator('#uMenu').boundingBox();
         check(mb && mb.x >= 0 && mb.x + mb.width <= vp.width, 'меню внутри экрана');
+        if (MOB) { const nv2 = await page.locator('#mainNav').boundingBox(); check(mb && nv2 && mb.y + mb.height <= nv2.y, 'телефон: меню открывается над нижней панелью'); }
         await page.keyboard.press('Escape');
-        check(!(await vis('#uMenu')) && (await page.evaluate(() => document.activeElement.id)) === 'uBtn', 'Escape закрывает меню и возвращает фокус');
-        await page.click('#uBtn');
+        check(!(await vis('#uMenu')) && (await page.evaluate(() => document.activeElement.id)) === TRIG.slice(1), 'Escape закрывает меню и возвращает фокус');
+        await page.click(TRIG);
         await page.mouse.click(4, 400);
         check(!(await vis('#uMenu')), 'клик вне меню закрывает его');
 
         // --- окно настроек: ошибка загрузки ---
-        meFail = true; await page.click('#uBtn'); await page.click('#uMenu [data-u=settings]');
+        meFail = true; await page.click((vp.width <= 640 ? '#navAcct' : '#uBtn')); await page.click('#uMenu [data-u=settings]');
         await page.waitForFunction(() => /Не удалось загрузить/.test(document.getElementById('acctDlg').innerText), null, { timeout: 5000 });
         await page.click('#acctDlg [data-a=close]');
         check(!(await isOpen('#acctDlg')), 'окно закрывается крестиком');
@@ -88,7 +102,7 @@ export async function acct({ stand, browser, fail }) {
         check((await text('#acctDlg .vid')) === '0123456789abcdef0123456789abcdef', 'Account ID');
         const dlgT = await page.locator('#acctDlg').innerText();
         check(/<u>anna<\/u>@example\.com/.test(dlgT), 'Email показан текстом');
-        check(/ID 123456789/.test(dlgT) && /@anna_tg<i>x<\/i>/.test(dlgT), 'Telegram: ID и имя текстом');
+        check(!/ID 123456789/.test(dlgT) && /@anna_tg<i>x<\/i>/.test(dlgT), 'Telegram: ID не показан, имя текстом');
         check((await page.locator('#acctDlg u, #acctDlg i').count()) === 0, 'Email и имя Telegram не создают разметку (экранирование)');
         check((await page.locator('#acctDlg [data-a=unlink]').count()) === 1, 'кнопка «Отвязать»');
         check(/Соединить аккаунты/.test(dlgT) && (await page.locator('#acctDlg .ar [data-a=share]').count()) === 1 && (await page.locator('#acctDlg .ar button[disabled]').count()) === 0, 'поле «Соединить аккаунты»: кнопка «Поделиться»');
@@ -174,8 +188,8 @@ export async function acct({ stand, browser, fail }) {
 
         // --- выход через меню ---
         await page.goto(stand.url + '/', { waitUntil: 'load', timeout: 15000 });
-        await page.waitForSelector('#uBtn', { state: 'visible', timeout: 5000 });
-        await page.click('#uBtn'); await page.click('#uMenu [data-u=logout]');
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
+        await page.click((vp.width <= 640 ? '#navAcct' : '#uBtn')); await page.click('#uMenu [data-u=logout]');
         await page.waitForSelector('#gBtn', { state: 'visible', timeout: 5000 });
         check(posts.filter((x) => x.action === 'logout').length === 1, 'запрос logout');
         check(await vis('#gBtn'), 'после выхода кнопка Google');

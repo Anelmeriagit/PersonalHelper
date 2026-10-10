@@ -129,7 +129,7 @@ export async function writeDoc(user, doc, etag) {
 
 export const loadDoc = readDoc;
 
-// Прочие личные данные пользователя (агент, WiFi): отдельная запись на раздел, ключ <kind>:<id> с префиксом DB_PREFIX.
+// Прочие личные данные пользователя (агент, Wi-Fi): отдельная запись на раздел, ключ <kind>:<id> с префиксом DB_PREFIX.
 // Версия и запись по версии те же, что у документа кэшбэков: чужую запись не затереть. raw — как лежит в Redis (null, если записи нет).
 export async function readRec(kind, user) {
   const { doc, v } = await getDoc(key(kind, user));

@@ -53,7 +53,7 @@ function openAcct(j){S.acct=true;accSetName(j&&j.name);
   mergeGuest(j).then(function(m){openApp(m&&m.j||j);if(m)cbNote(MERGED);joinTry()})}
 function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(function(j){openApp(j);joinTry()})}
 /* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые: {cb, ag, wf}, каждая часть отдельно
-   (cb — кэшбэк; ag — строки агента; wf — сеть WiFi, null: у аккаунта сети нет, гостевая удаляется); часть без значения (null, у wf ещё и undefined) оставляет гостевые данные как были; snap=null — все остаются как были */
+   (cb — кэшбэк; ag — строки агента; wf — сеть Wi-Fi, null: у аккаунта сети нет, гостевая удаляется); часть без значения (null, у wf ещё и undefined) оставляет гостевые данные как были; snap=null — все остаются как были */
 function toGuestMode(snap,notice){var g=snap||{};S.acct=false;S.at={};wifiForget();agClear();tgClear();
   if(g.ag)guestSetAg(g.ag);
   if(g.wf!==undefined)guestSetWf(g.wf);

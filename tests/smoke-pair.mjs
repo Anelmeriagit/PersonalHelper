@@ -56,7 +56,7 @@ export async function pair({ stand, browser, fail }) {
       };
       const home = async (path = '/') => { await page.goto(stand.url + path, { waitUntil: 'load', timeout: 15000 }); await page.waitForFunction(() => !document.getElementById('uWrap').hidden || !document.getElementById('gBtn').hidden, null, { timeout: 5000 }); };
       const openSettings = async () => {
-        await page.click('#uBtn'); await page.click('#uMenu [data-u=settings]');
+        await page.click((vp.width <= 640 ? '#navAcct' : '#uBtn')); await page.click('#uMenu [data-u=settings]');
         await page.waitForFunction(() => document.querySelector('#acctDlg .ar'), null, { timeout: 5000 });
       };
       const closeSettings = async () => { await page.click('#acctDlg [data-a=close]'); };

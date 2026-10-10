@@ -1,7 +1,7 @@
 {
   "name": "Personal Helper",
   "short_name": "Helper",
-  "description": "Личный помощник: кэшбэки, напоминания, WiFi, агент",
+  "description": "Личный помощник: кэшбэки, напоминания, Wi-Fi, агент",
   "lang": "ru",
   "start_url": "/",
   "display": "standalone",

@@ -124,7 +124,7 @@ export async function paircb({ stand, browser, fail }) {
         await page.click('#dlg .done');
 
         // ---------- «Разорвать» в настройках: колонка партнёра исчезает сразу ----------
-        await page.click('#uBtn'); await page.click('#uMenu [data-u=settings]');
+        await page.click((vp.width <= 640 ? '#navAcct' : '#uBtn')); await page.click('#uMenu [data-u=settings]');
         await page.waitForSelector('#acctDlg [data-a=pdrop]', { timeout: 5000 });
         await page.click('#acctDlg [data-a=pdrop]');
         await page.click('#dlg .done');

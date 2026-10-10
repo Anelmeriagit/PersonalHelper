@@ -3,7 +3,7 @@
    Проверка значений та же, что на сервере; править обе части синхронно:
    кэшбэк (/api/data) — api/_lib.js (clean, cleanCustom, cleanBlocks, PART_RE) и api/data.js (PUT);
    агент (/api/agent) — api/agent.js (cleanApp, cleanRows, withAt, nextAt);
-   WiFi (/api/wifi) — api/wifi.js (cleanWifi, wifiString), QR строит js/qr.js (парный файл к api/_qr.js): пароль сети на сервер не уходит.
+   Wi-Fi (/api/wifi) — api/wifi.js (cleanWifi, wifiString), QR строит js/qr.js (парный файл к api/_qr.js): пароль сети на сервер не уходит.
    Остальные пути (напоминания, Telegram, вход) отвечают 401, как сервер без входа.
    Слияние гостевых данных с аккаунтом при входе через Google: чистые функции guestDump, mergeCb, mergeAg и метка «уже сливали» (guestMerged, guestMark) здесь,
    сетевая часть — merge.js. */
@@ -105,7 +105,7 @@ function agentReq(m,b){
   var rows=withAt(cleanRows(b.rows),agRows(),Date.now());
   return write(K_AG,{rows:rows})?out(200,{rows:rows}):out(500,{error:'storage'})}
 
-/* ---------- WiFi (зеркало api/wifi.js; QR — js/qr.js) ---------- */
+/* ---------- Wi-Fi (зеркало api/wifi.js; QR — js/qr.js) ---------- */
 var SEC=['WPA','WEP','nopass'],W_BAD=/[\u0000-\u001f\u007f]/,HEX=/^[0-9a-fA-F]+$/;
 /* экранирование по формату WIFI:... — символы \ ; , : " предваряются обратным слэшем */
 function wesc(s){return String(s).replace(/([\\;,:"])/g,'\\$1')}

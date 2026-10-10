@@ -74,7 +74,7 @@ test('QR: предел длины тот же, ошибка та же', () => {
   assert.ok(last > 2300 && last < 2399, 'граница внутри диапазона: ' + last);
 });
 
-test('гостевой WiFi: ответы и проверка как у сервера', async () => {
+test('гостевой Wi-Fi: ответы и проверка как у сервера', async () => {
   const rand = rng(3);
   const bodies = [
     { ssid: 'HomeNet', password: 'secret-pass-1', security: 'WPA', hidden: false },
@@ -132,7 +132,7 @@ test('гостевой WiFi: ответы и проверка как у серв
   assert.ok(ok > 40 && bad > 20, `верных ${ok}, неверных ${bad}`);
 });
 
-test('гостевой WiFi: GET без сети, DELETE, методы, битая запись, замена данными аккаунта', async () => {
+test('гостевой Wi-Fi: GET без сети, DELETE, методы, битая запись, замена данными аккаунта', async () => {
   assert.deepEqual(await call('GET', '/api/wifi'), { status: 200, body: { configured: false } });
   assert.equal((await call('POST', '/api/wifi', {})).status, 405);
   const net = { ssid: 'HomeNet', password: 'secret-pass-1', security: 'WPA', hidden: false };

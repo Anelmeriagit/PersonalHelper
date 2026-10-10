@@ -203,7 +203,7 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .mb.nologo b{display:block}
 @media(max-width:520px){.cc{flex-direction:column;gap:.1rem}.cn{flex:none;padding-top:.1rem}.cgs{width:100%}}
 
-/* ---------- WiFi ---------- */
+/* ---------- Wi-Fi ---------- */
 .wprint{display:none}
 .wscreen{display:flex;flex-direction:column;align-items:center;gap:1rem}
 .wqr{width:min(100%,320px);background:#fff;border:1px solid var(--line);border-radius:18px;padding:.5rem}
@@ -261,7 +261,7 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .login .alt{text-align:center;margin:1rem 0 0}
 .login .lnk{font-size:.9rem;padding:.6rem .5rem}
 
-/* этап 2: один человек, личная сеть WiFi, вход без навигации */
+/* этап 2: один человек, личная сеть Wi-Fi, вход без навигации */
 .wfm .del{color:var(--err);border-color:var(--err)}
 .wfm{width:100%;margin:0}
 .wfl{margin-bottom:1rem}
@@ -369,3 +369,43 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .rwith{margin:-.4rem 0 .75rem;text-align:center;overflow-wrap:anywhere}
 .rwp>span{min-width:0;overflow-wrap:anywhere}
 .rw.rwp+.rw.rwp{margin-top:0;padding-top:.4rem;border-top:0}
+/* часть 1 (2026-10-10): выравнивание «Личных» и «Общих», компактный блок Telegram, отступы «Соединить аккаунты» */
+@media(min-width:1100px){.rcols.r3{gap:0 1.25rem}.rcols.r3>.rgrp{display:grid;grid-template-rows:subgrid;grid-row:span 3;align-content:start}.rcols.r3>.rgrp>.rgt{grid-row:1}.rcols.r3>.rgrp>.rwith{grid-row:2}.rcols.r3>.rgrp>.rpair{grid-row:3}}
+.tgb.ok{max-width:420px;padding:.6rem .9rem}
+.tgb.ok .et{display:none}
+.tgb.ok .tgn{margin:0;text-align:center}
+.tgb.ok .rmsg:empty{display:none}
+.ar.pr{padding-bottom:.5rem}
+#pOk{margin:.4rem 0 0}
+#pErr{min-height:0;margin:.4rem 0 0}
+#pErr:empty{display:none}
+/* часть 2 (2026-10-10): подпись «Your Personal Helper», имя в кнопке, «Аккаунт» в нижней панели телефона */
+.brand{display:inline-flex;align-items:center;gap:.45rem;margin-right:1.25rem;color:var(--text);font-weight:700;text-decoration:none;white-space:nowrap}
+.brand .bi{font-size:1.25rem;line-height:1}
+header .bar.wrap{width:min(100% - 2rem,1100px)}
+@media(min-width:641px) and (max-width:940px){.brand>span:last-child{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.brand{margin-right:.5rem}}
+.ubtn .un{line-height:1.2}
+@supports (text-box:trim-both cap alphabetic){.ubtn .un{text-box:trim-both cap alphabetic;padding:.25em 0}}
+@supports not (text-box:trim-both cap alphabetic){.ubtn .un{position:relative;top:-1px}}
+.nav .navacct{display:none;--ic:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3Cpath d='M6.2 18.6a7 7 0 0 1 11.6 0'/%3E%3C/svg%3E")}
+@media(max-width:640px){
+  .brand{margin-right:0;gap:.35rem;font-size:.85rem}
+  .bar{column-gap:.4rem;flex-wrap:nowrap}
+  .brand{min-width:0}
+  .brand>span:last-child{overflow:hidden;text-overflow:ellipsis}
+  .tools{flex:none}
+  .nav a,.nav .navacct{font-size:.6rem;letter-spacing:-.03em}
+  .ubtn{display:none}
+  .umw:not([hidden]){display:contents}
+  .umenu{position:fixed;top:auto;right:.5rem;bottom:calc(56px + env(safe-area-inset-bottom,0px) + .5rem)}
+  .nav .navacct{display:flex;flex:1 1 0;min-width:0;min-height:56px;flex-direction:column;align-items:center;justify-content:center;gap:.15rem;padding:.25rem 0;border:0;background:none;font:inherit;font-size:.68rem;letter-spacing:-.01em;font-weight:600;color:var(--muted);cursor:pointer;box-shadow:inset 0 2px 0 transparent}
+  .nav .navacct::before{content:"";width:24px;height:24px;background:currentColor;-webkit-mask:var(--ic) center/contain no-repeat;mask:var(--ic) center/contain no-repeat}
+  .nav .navacct>span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nav .navacct[aria-expanded="true"]{color:var(--accent);box-shadow:inset 0 2px 0 var(--accent)}
+}
+@media(max-width:480px){header .gbtn{width:44px;padding:0;justify-content:center}header .gbtn>span{display:none}}
+@media(max-width:400px){.brand{gap:.3rem;font-size:.78rem}.brand .bi{font-size:1.05rem}.brand>span:last-child{overflow:visible;white-space:normal;line-height:1.15}.tools{gap:.4rem}}
+/* часть 3 (2026-10-10): плавная смена раздела, уже строка компактного кэшбэка */
+main:not([hidden]){animation:pgin .28s ease-out backwards}
+@keyframes pgin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.cmp{max-width:460px}

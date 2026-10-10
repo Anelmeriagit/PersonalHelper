@@ -60,14 +60,14 @@ export async function refresh({ stand, browser, fail }) {
           check(n('GET /api/data', t0) === 2, 'смена месяца: возврат на вкладку обновляет сразу, всего GET /api/data ' + n('GET /api/data', t0));
         }
 
-        // 3. напоминания, WiFi, агент: вход и переход на раздел грузят всегда, возврат на вкладку не чаще раза в 5 минут; привязка Telegram без отдельного запроса
+        // 3. напоминания, Wi-Fi, агент: вход и переход на раздел грузят всегда, возврат на вкладку не чаще раза в 5 минут; привязка Telegram без отдельного запроса
         {
           const t0 = stand.apiCalls.length;
           const page = await openPage('2026-10-15T09:00:00Z', '#reminders');
-          await page.waitForSelector('#tgBody .tgn b', { timeout: 5000 });
+          await page.waitForSelector('#tgBody .tgn', { timeout: 5000 });
           check(n('GET /api/reminders', t0) === 1, 'напоминания: при входе один GET /api/reminders, было ' + n('GET /api/reminders', t0));
           check(n('GET /api/tglink', t0) === 0, 'напоминания: при входе на страницу нет GET /api/tglink, было ' + n('GET /api/tglink', t0));
-          check((await page.locator('#tgBody .tgn b').innerText()) === '@ivan_k', 'блок Telegram показывает @имя из ответа напоминаний');
+          check(/Telegram привязан/.test(await page.locator('#tgBody .tgn').innerText()), 'блок Telegram показывает «привязан» из ответа напоминаний');
           await back(page); await back(page);
           check(n('GET /api/reminders', t0) === 1 && n('GET /api/tglink', t0) === 0, 'напоминания: возвраты на вкладку за 5 минут запросов не делают');
           await page.clock.fastForward(MIN5 + 1000);
@@ -76,12 +76,12 @@ export async function refresh({ stand, browser, fail }) {
           check(n('GET /api/tglink', t0) === 0, 'напоминания: и при возврате на вкладку нет GET /api/tglink, было ' + n('GET /api/tglink', t0));
 
           await page.evaluate(() => { location.hash = '#wifi'; }); await settle(page);
-          check(n('GET /api/wifi', t0) === 1, 'WiFi: переход на раздел грузит данные');
+          check(n('GET /api/wifi', t0) === 1, 'Wi-Fi: переход на раздел грузит данные');
           await back(page);
-          check(n('GET /api/wifi', t0) === 1, 'WiFi: возврат на вкладку за 5 минут запроса не делает');
+          check(n('GET /api/wifi', t0) === 1, 'Wi-Fi: возврат на вкладку за 5 минут запроса не делает');
           await page.clock.fastForward(MIN5 + 1000);
           await back(page);
-          check(n('GET /api/wifi', t0) === 2, 'WiFi: через 5 минут возврат обновляет');
+          check(n('GET /api/wifi', t0) === 2, 'Wi-Fi: через 5 минут возврат обновляет');
 
           await page.evaluate(() => { location.hash = '#reminders'; }); await settle(page);
           check(n('GET /api/reminders', t0) === 3, 'напоминания: переход на раздел грузит сразу, даже если данные свежие, всего ' + n('GET /api/reminders', t0));

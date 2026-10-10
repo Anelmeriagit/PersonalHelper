@@ -1,4 +1,4 @@
-/* WiFi: личная сеть пользователя (ввод и правка), QR-код для подключения, показ и копирование пароля, печатная страница */
+/* Wi-Fi: личная сеть пользователя (ввод и правка), QR-код для подключения, показ и копирование пароля, печатная страница */
 import {$,esc} from './util.js';
 import {api,S,authFail,stamp} from './api.js';
 import {dlgConfirm} from './dialogs.js';
@@ -13,11 +13,11 @@ export function wifiSnapshot(){if(wfPend)return wfPend;var w=wf||wfLast;return w
 export function wifiNote(t){wifiMsg.textContent=t;clearTimeout(wfTimer);if(t)wfTimer=setTimeout(function(){wifiMsg.textContent=''},3000)}
 export function qrSvg(q){var n=q.size+8,d='';
   q.rows.forEach(function(row,y){var x=0,s;while(x<row.length){if(row.charAt(x)==='1'){s=x;while(x<row.length&&row.charAt(x)==='1')x++;d+='M'+(s+4)+' '+(y+4)+'h'+(x-s)+'v1h-'+(x-s)+'z'}else x++}});
-  return '<svg class="qr" viewBox="0 0 '+n+' '+n+'" role="img" aria-label="QR-код для подключения к WiFi" shape-rendering="crispEdges"><rect width="'+n+'" height="'+n+'" fill="#fff"/><path fill="#000" d="'+d+'"/></svg>'}
+  return '<svg class="qr" viewBox="0 0 '+n+' '+n+'" role="img" aria-label="QR-код для подключения к Wi-Fi" shape-rendering="crispEdges"><rect width="'+n+'" height="'+n+'" fill="#fff"/><path fill="#000" d="'+d+'"/></svg>'}
 export function wfOpen(){return wf.security==='nopass'}
 export function wfPwText(){return wfOpen()?'без пароля':(wfShow?esc(wf.password):'••••••••••')}
 export function wfPrintHtml(){
-  return '<h2 class="wpt">Подключение к WiFi</h2>'+qrSvg(wf.qr)+
+  return '<h2 class="wpt">Подключение к Wi-Fi</h2>'+qrSvg(wf.qr)+
     '<p class="wpn">Сеть: <b>'+esc(wf.ssid)+'</b></p>'+
     (!wfOpen()&&wfPrintPass?'<p class="wpn">Пароль: <b>'+esc(wf.password)+'</b></p>':'')+
     '<p class="wph">Откройте камеру телефона и наведите на код</p>'}

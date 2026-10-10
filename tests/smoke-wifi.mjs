@@ -2,7 +2,7 @@
 import { qr } from './fixtures.mjs';
 import { SCHEMES, VIEWPORTS } from './smoke-lib.mjs';
 
-// ---------- личная сеть WiFi: форма, сохранение, правка, удаление ----------
+// ---------- личная сеть Wi-Fi: форма, сохранение, правка, удаление ----------
 
 export async function wifi({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {

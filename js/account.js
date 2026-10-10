@@ -9,7 +9,7 @@ import {dlgConfirm,dlgAlert} from './dialogs.js';
 var DEF='Helper User',WORD='удалить',NAME_MAX=32;
 var TOKEN=/^[A-Za-z0-9_-]{22}$/,SENT='Ссылка отправлена. Она одноразовая и действует 24 часа.',COPIED='Ссылка скопирована. Отправьте её второму человеку: она одноразовая и действует 24 часа.',MANUAL='Скопируйте ссылку и отправьте её второму человеку: она одноразовая и действует 24 часа.';
 var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){}};
-var uBtn,uMenu,acct,del;
+var uBtn,navA,uMenu,acct,del;
 
 /* ---------- имя в шапке ---------- */
 function label(){return A.name||DEF}
@@ -19,14 +19,17 @@ export function accSetName(n){A.name=nrm(n).slice(0,NAME_MAX);paintName()}
 export function accName(){return label()}
 
 /* ---------- шапка: вошёл / не вошёл ---------- */
-export function accShow(on){$('uWrap').hidden=!on;$('gBtn').hidden=on;
+export function accShow(on){$('uWrap').hidden=!on;$('navAcct').hidden=!on;$('gBtn').hidden=on;
   if(!on){menuClose(false);A.gen++;A.me=null;A.edit=false;A.busy=false;pairReset();
     if(acct&&acct.open)acct.close();if(del&&del.open)del.close();accSetName('')}}
 
 /* ---------- меню пользователя ---------- */
-function menuOpen(first){uMenu.hidden=false;uBtn.setAttribute('aria-expanded','true');
+/* кнопка меню: на телефоне «Аккаунт» в нижней панели (navAcct), на компьютере кнопка с именем в шапке (uBtn); меню одно и то же */
+function trig(){return navA&&getComputedStyle(navA).display!=='none'?navA:uBtn}
+function setExp(v){uBtn.setAttribute('aria-expanded',v);if(navA)navA.setAttribute('aria-expanded',v)}
+function menuOpen(first){uMenu.hidden=false;setExp('true');
   if(first){var f=uMenu.querySelector('button');if(f)f.focus()}}
-function menuClose(focus){if(!uMenu||uMenu.hidden)return;uMenu.hidden=true;uBtn.setAttribute('aria-expanded','false');if(focus)uBtn.focus()}
+function menuClose(focus){if(!uMenu||uMenu.hidden)return;uMenu.hidden=true;setExp('false');if(focus)trig().focus()}
 function menuKey(e){var it=uMenu.querySelectorAll('button'),i=Array.prototype.indexOf.call(it,document.activeElement);
   if(e.key==='ArrowDown'){e.preventDefault();it[(i+1)%it.length].focus()}
   else if(e.key==='ArrowUp'){e.preventDefault();it[(i-1+it.length)%it.length].focus()}}
@@ -34,9 +37,9 @@ function menuKey(e){var it=uMenu.querySelectorAll('button'),i=Array.prototype.in
 /* ---------- окно «Настройки аккаунта» ---------- */
 function pairReset(){A.link='';A.pmsg='';A.perr='';A.manual=false}
 function pname(){var p=A.me&&A.me.partner;return nrm(p&&p.name)||DEF}
-function pairRow(){var p=A.me.partner,h='<div class="ar"><div class="al">Соединить аккаунты</div>';
+function pairRow(){var p=A.me.partner,h='<div class="ar pr"><div class="al">Соединить аккаунты</div>';
   if(p&&p.linked)return h+'<div class="av"><span class="vn">'+esc(pname())+'<span class="mut sub">аккаунт соединён</span></span><button class="btn" type="button" data-a="pdrop">Разорвать</button></div><p class="err" id="pErr" role="alert">'+esc(A.perr)+'</p></div>';
-  return h+'<div class="av"><span class="vn mut">Свяжите аккаунт с близким человеком</span><button class="btn" type="button" data-a="share">Поделиться</button></div>'+
+  return h+'<div class="av"><span class="vn mut">Общие кэшбэки и напоминания</span><button class="btn" type="button" data-a="share">Поделиться</button></div>'+
     '<p class="ahint" id="pOk" role="status">'+esc(A.pmsg||'Отправьте второму человеку ссылку: она одноразовая и действует 24 часа.')+'</p>'+
     (A.manual&&A.link?'<input id="pLink" readonly aria-label="Ссылка для соединения" spellcheck="false">':'')+
     '<p class="err" id="pErr" role="alert">'+esc(A.perr)+'</p></div>'}
@@ -50,7 +53,7 @@ function body(){var m=A.me;
   return head()+nameRow()+
     '<div class="ar"><div class="al">Email</div><div class="av"><span class="vn">'+(m.email?esc(m.email):'<span class="mut">не указан</span>')+'</span></div></div>'+
     '<div class="ar"><div class="al">Account ID</div><div class="av"><code class="vid">'+esc(m.id)+'</code></div></div>'+
-    (m.tg?'<div class="ar"><div class="al">Telegram</div><div class="av"><span class="vn">ID '+esc(m.tg.id)+(m.tg.username?'<span class="mut sub">@'+esc(m.tg.username)+'</span>':'')+'</span><button class="btn" type="button" data-a="unlink">Отвязать</button></div></div>':'')+
+    (m.tg?'<div class="ar"><div class="al">Telegram</div><div class="av"><span class="vn">'+(m.tg.username?'@'+esc(m.tg.username):'<span class="mut">привязан</span>')+'</span><button class="btn" type="button" data-a="unlink">Отвязать</button></div></div>':'')+
     pairRow()+
     '<div class="dz"><button class="done danger" type="button" data-a="del">ПЕРМАНЕНТНОЕ УДАЛЕНИЕ АККАУНТА</button><p>Аккаунт и все его данные будут удалены без возможности восстановления.</p></div>'}
 function render(){if(!A.me)return;acct.innerHTML=body();paintName();
@@ -138,7 +141,7 @@ function onAcct(e){var el=e.target.closest&&e.target.closest('[data-a]');if(!el)
 /* ---------- удаление аккаунта: нужно ввести слово «удалить» ---------- */
 function openDel(){
   del.innerHTML='<h2 id="delH">Удалить аккаунт навсегда?</h2>'+
-    '<p>Будут безвозвратно удалены аккаунт и все его данные: кэшбэки, напоминания, WiFi, агент и привязка Telegram. Отменить это нельзя.</p>'+
+    '<p>Будут безвозвратно удалены аккаунт и все его данные: кэшбэки, напоминания, Wi-Fi, агент и привязка Telegram. Отменить это нельзя.</p>'+
     '<label for="delIn">Для подтверждения введите слово «'+WORD+'»</label>'+
     '<input id="delIn" autocomplete="off" autocapitalize="none" spellcheck="false">'+
     '<p class="err" id="delErr" role="alert"></p>'+
@@ -161,17 +164,19 @@ function backdrop(d){d.addEventListener('click',function(e){if(e.target!==d)retu
 /* h: {logout, tg, gone, pair, name} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён», «связь с аккаунтом разорвана», «имя изменено» */
 export function initAccount(h){
   cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;cb.pair=h.pair||cb.pair;cb.name=h.name||cb.name;
-  uBtn=$('uBtn');uMenu=$('uMenu');acct=$('acctDlg');del=$('delDlg');
+  uBtn=$('uBtn');navA=$('navAcct');uMenu=$('uMenu');acct=$('acctDlg');del=$('delDlg');
   uBtn.addEventListener('click',function(){if(uMenu.hidden)menuOpen(false);else menuClose(false)});
   uBtn.addEventListener('keydown',function(e){if(e.key==='ArrowDown'&&uMenu.hidden){e.preventDefault();menuOpen(true)}});
+  navA.addEventListener('click',function(){if(uMenu.hidden)menuOpen(false);else menuClose(false)});
+  navA.addEventListener('keydown',function(e){if(e.key==='ArrowUp'&&uMenu.hidden){e.preventDefault();menuOpen(true)}});
   uMenu.addEventListener('keydown',menuKey);
   uMenu.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-u]');if(!el)return;
     var a=el.getAttribute('data-u');menuClose(false);
     if(a==='settings')openSettings();else if(a==='logout')cb.logout()});
-  document.addEventListener('click',function(e){if(!uMenu.hidden&&!$('uWrap').contains(e.target))menuClose(false)});
+  document.addEventListener('click',function(e){if(!uMenu.hidden&&!$('uWrap').contains(e.target)&&!navA.contains(e.target))menuClose(false)});
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!uMenu.hidden)menuClose(true)});
   acct.addEventListener('click',onAcct);backdrop(acct);
-  acct.addEventListener('close',function(){A.edit=false;A.gen++;if(!$('uWrap').hidden)uBtn.focus()});
+  acct.addEventListener('close',function(){A.edit=false;A.gen++;if(!$('uWrap').hidden)trig().focus()});
   del.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-d]');if(!el)return;
     if(el.getAttribute('data-d')==='no')del.close();else doDelete()});
   del.addEventListener('input',function(){var go=$('delGo');if(go&&!A.busy)go.disabled=!delOk()});

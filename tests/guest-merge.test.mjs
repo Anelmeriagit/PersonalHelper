@@ -196,7 +196,7 @@ test('mergeGuest: все три части сливаются, аккаунт п
   const a = fresh(), calls = server(a);
   guestAll();
   const r = await merge.mergeGuest(jOf(a));
-  assert.equal(r.n, 4, 'кэшбэк (месяц и custom), агент, WiFi');
+  assert.equal(r.n, 4, 'кэшбэк (месяц и custom), агент, Wi-Fi');
   assert.deepEqual(calls.map((c) => c.key).sort(), ['GET /api/agent', 'GET /api/wifi', 'PUT /api/agent', 'PUT /api/data', 'PUT /api/wifi']);
   const put = calls.find((c) => c.key === 'PUT /api/data').body;
   assert.deepEqual(Object.keys(put.parts).sort(), ['custom', CUR].sort());
@@ -215,7 +215,7 @@ test('mergeGuest: все три части сливаются, аккаунт п
   assert.equal(calls.length, 0, 'второй раз на этот аккаунт слияния нет');
 });
 
-test('mergeGuest: сеть WiFi у аккаунта уже есть — не трогается; нет изменений в агенте и кэшбэке — записей нет', async () => {
+test('mergeGuest: сеть Wi-Fi у аккаунта уже есть — не трогается; нет изменений в агенте и кэшбэке — записей нет', async () => {
   const a = fresh(); a.wifi = { ssid: 'Mine', password: 'mine-pass-1', security: 'WPA', hidden: false };
   const calls = server(a);
   localStorage.setItem('g-wf', JSON.stringify({ ssid: 'GuestNet', password: 'guest-pass-1', security: 'WPA', hidden: false }));
@@ -234,10 +234,10 @@ test('mergeGuest: отказ записи (5xx, 409, 429, 401, обрыв) — �
     guestAll();
     const r = await merge.mergeGuest(jOf(a));
     assert.equal(local.guestMerged(ID), false, 'отказ ' + bad + ': метки нет');
-    assert.equal(r.n, 2, 'агент и WiFi записались');
+    assert.equal(r.n, 2, 'агент и Wi-Fi записались');
     assert.equal(r.j, undefined, 'кэшбэк на странице прежний');
     assert.deepEqual(a.data.custom, [], 'кэшбэк на сервере не изменился');
-    // повтор: сервер отвечает, кэшбэк записывается, агент и WiFi уже на месте
+    // повтор: сервер отвечает, кэшбэк записывается, агент и Wi-Fi уже на месте
     server(a);
     const r2 = await merge.mergeGuest(jOf(a));
     assert.equal(local.guestMerged(ID), true);
@@ -258,7 +258,7 @@ test('mergeGuest: окончательный отказ сервера (400) п�
   guestAll();
   const r = await merge.mergeGuest(jOf(a));
   assert.equal(local.guestMerged(ID), false);
-  assert.equal(r.n, 3, 'кэшбэк (две части) и WiFi записались, агент ждёт следующего входа');
+  assert.equal(r.n, 3, 'кэшбэк (две части) и Wi-Fi записались, агент ждёт следующего входа');
 });
 
 test('mergeGuest: конфликт версий (аккаунт изменили на другом устройстве) — метка не ставится', async () => {
