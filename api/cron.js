@@ -6,7 +6,7 @@
 // (догоняем в тот же день). Вызывает внешний планировщик (QStash, запасной cron-job.org) и ежедневный cron Vercel; план — notes/reminders.md.
 // ?role=primary (по умолчанию) — основной, ставит пульс cron:hb; ?role=backup — запасной: если основной сработал меньше 15 минут назад, пропускает запуск
 // ({skipped:'primary alive'}), иначе берёт рассылку сам (took_over:true). Замок cron:lock (SET NX PX 30 с): два запуска не идут одновременно, занято — 200 {busy:true}.
-// ?slot=h15 (или day/evening) — ручной запуск ровно одного слота независимо от времени суток; ?dry=1 — сухой прогон; ?rebuild=1 — перед рассылкой перестроить индекс (не зависит от role и пульса:
+// ?slot=h15 | h15m30 (или day/evening) — ручной запуск ровно одного слота независимо от времени суток; ?dry=1 — сухой прогон; ?rebuild=1 — перед рассылкой перестроить индекс (не зависит от role и пульса:
 // суточный вызов Vercel не должен пропускать перестройку, когда основной жив).
 // Лимиты: общий поток Telegram около 30 сообщений в секунду (шлём не чаще 20), maxDuration функции 30 с (укладываемся в BUDGET_MS).
 // Отметка «отправлено» ставится до отправки (planRem), поэтому повторный запуск не дублирует; не успевшие аккаунты (left) и сбои добираются повторным вызовом.
@@ -18,7 +18,7 @@
 // Нет BACKUP_KEY — копия выключена (state:'off'), рассылка работает как раньше. Ключ задан, но негодный (не 64 hex-символа, слишком простой) —
 // это ошибка настройки (state:'error', kind:'config', код 502), а не тихое отключение: опечатка не должна оставлять базу без копий.
 import { authed, sendCustom } from './_bot.js';
-import { mskNow, SLOT_HOUR, LAST_HOUR, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf, nextDueRem, nextDueShr, dayEndMs } from './_rem.js';
+import { mskNow, SLOT_MIN, LAST_HOUR, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf, nextDueRem, nextDueShr, dayEndMs } from './_rem.js';
 import { dueRange, dueSet, parseMember } from './_due.js';
 import { rebuildDue } from './_reindex.js';
 import { getLink, partnerAcc } from './_acc.js';
@@ -163,8 +163,8 @@ export default async function handler(req, res) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(q.date)) return res.status(400).json({ error: 'date: YYYY-MM-DD' });
       now = { month: q.date.slice(0, 7), date: q.date }; // без часа: весь день
     }
-    // Ручной запуск одного слота: ?slot=h15 | day | evening (ровно этот час, время суток не смотрим). Без slot — всё, чей час уже наступил.
-    if (q.slot !== undefined && !Object.prototype.hasOwnProperty.call(SLOT_HOUR, q.slot)) return res.status(400).json({ error: 'slot: h07…h23, day, evening' });
+    // Ручной запуск одного слота: ?slot=h15 | h15m30 | day | evening (ровно это время, время суток не смотрим). Без slot — всё, чьё время уже наступило.
+    if (q.slot !== undefined && !Object.prototype.hasOwnProperty.call(SLOT_MIN, q.slot)) return res.status(400).json({ error: 'slot: h07, h07m30 … h23, h23m30, day, evening' });
     const slot = q.slot;
     const role = q.role === undefined ? 'primary' : q.role;
     if (role !== 'primary' && role !== 'backup') return res.status(400).json({ error: 'role: primary|backup' });

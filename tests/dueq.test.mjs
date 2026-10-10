@@ -62,6 +62,9 @@ test('slotMs и dayEndMs: Москва UTC+3, старые слоты day и eve
   assert.equal(at(TODAY, 'h07'), Date.parse('2026-10-14T04:00:00Z'));
   assert.equal(at(TODAY, 'day'), at(TODAY, 'h14'));
   assert.equal(at(TODAY, 'evening'), at(TODAY, 'h18'));
+  assert.equal(at(TODAY, 'h15m30'), Date.parse('2026-10-14T12:30:00Z'));
+  assert.equal(at(TODAY, 'h07m30'), Date.parse('2026-10-14T04:30:00Z'));
+  assert.equal(at(TODAY, 'h23m30'), Date.parse('2026-10-14T20:30:00Z'));
   assert.equal(rem.dayEndMs(TODAY), Date.parse('2026-10-14T20:59:59.999Z'));
   assert.equal(rem.dayEndMs(TODAY) + 1, Date.parse('2026-10-15T00:00:00+03:00'));
 });
@@ -81,6 +84,8 @@ test('nextDueRem: ближайшее из временных и повторяю
   assert.equal(rem.nextDueRem({ custom: [], recurring: [R({ date: '2027-04-30', every: 'month' })] }, now), at('2027-04-30', 'h09'), 'первое срабатывание дальше 70 дней: берётся дата отсчёта');
   assert.equal(rem.nextDueRem({ custom: [], recurring: [R({ date: '2026-01-31', every: 'month' })] }, now), at('2026-10-31', 'h09'));
   assert.equal(rem.nextDueRem({ custom: [C({ slot: 'day' })], recurring: [] }, now), at(TODAY, 'h14'));
+  assert.equal(rem.nextDueRem({ custom: [C({ slot: 'h18' }), C({ slot: 'h16m30' }), C({ slot: 'h17' })], recurring: [R()] }, now), at(TODAY, 'h09'), 'повторяющееся на h09 раньше');
+  assert.equal(rem.nextDueRem({ custom: [C({ slot: 'h18' }), C({ slot: 'h16m30' }), C({ slot: 'h17' })], recurring: [] }, now), at(TODAY, 'h16m30'), 'h16m30 раньше h17');
 });
 
 test('nextDueShr: считаются только стороны из списка; отметка и галочка берутся по стороне', () => {

@@ -1,15 +1,15 @@
 import crypto from 'node:crypto';
 import { session } from './_lib.js';
-import { EVERY, RECURRING_MAX, SLOT_HOUR, MAX_TEXT, mskNow, hourMsk, validDate, cleanText, own, idOk, lastDay, target, newShrRec } from './_rem.js';
+import { EVERY, RECURRING_MAX, SLOT_MIN, MAX_TEXT, mskNow, minOf, validDate, cleanText, own, idOk, lastDay, target, newShrRec } from './_rem.js';
 
 // Повторяющиеся напоминания аккаунта из сессии. Данные: rem:<id> (см. _rem.js).
-//   POST   /api/recurring   {date:'YYYY-MM-DD', every:'week'|'2weeks'|'month', slot:'h07'…'h23' (или 'day'|'evening'), text, shared?:true}
+//   POST   /api/recurring   {date:'YYYY-MM-DD', every:'week'|'2weeks'|'month', slot:'h07'|'h07m30' … 'h23'|'h23m30' (или 'day'|'evening'), text, shared?:true}
 //   PUT    /api/recurring   {id, key:'on', value:boolean, shared?:true, who?:'me'|'partner'}   — включить / выключить
 //   PUT    /api/recurring   {id, text?, date?, slot?, every?, shared?:true}                    — правка (date — новая дата отсчёта)
 //   DELETE /api/recurring?id=<id>[&shared=1]
 // shared, who и 409 {error:'nopair'}: как у /api/custom (общее напоминание соединённой пары, у каждого аккаунта своя галочка).
 // Каждый ответ — то же, что GET /api/reminders ({linked, custom, recurring, shared?}).
-// Отправку делает api/cron.js (слоты 14:00 и 18:00 по Москве), расписание считает recDue() в _rem.js.
+// Отправку делает api/cron.js (слоты с шагом 30 минут по Москве), расписание считает recDue() в _rem.js.
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -37,10 +37,10 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const { date, slot, every } = b;
       const text = cleanText(b.text);
-      if (!validDate(date) || !own(SLOT_HOUR, slot) || !EVERY.includes(every) || !text || text.length > MAX_TEXT) return res.status(400).json({ error: 'bad request' });
+      if (!validDate(date) || !own(SLOT_MIN, slot) || !EVERY.includes(every) || !text || text.length > MAX_TEXT) return res.status(400).json({ error: 'bad request' });
       const now = mskNow();
       if (date < now.date || date > lastDay(now.date)) return res.status(400).json({ error: 'bad date' });
-      if (date === now.date && hourMsk() >= SLOT_HOUR[slot]) return res.status(400).json({ error: 'late' });
+      if (date === now.date && minOf(now) >= SLOT_MIN[slot]) return res.status(400).json({ error: 'late' });
       const r = await T.mut((s) => {
         if (s.recurring.length >= RECURRING_MAX) return { err: 'limit' };
         const it = { id: crypto.randomBytes(6).toString('hex'), date, every, slot, text, on: true, sent: {} };
@@ -62,7 +62,7 @@ export default async function handler(req, res) {
       const text = hasText ? cleanText(b.text) : '';
       if (hasText && (!text || text.length > MAX_TEXT)) return res.status(400).json({ error: 'bad request' });
       if (hasDate && !validDate(b.date)) return res.status(400).json({ error: 'bad request' });
-      if (hasSlot && !own(SLOT_HOUR, b.slot)) return res.status(400).json({ error: 'bad request' });
+      if (hasSlot && !own(SLOT_MIN, b.slot)) return res.status(400).json({ error: 'bad request' });
       if (hasEvery && !EVERY.includes(b.every)) return res.status(400).json({ error: 'bad request' });
       const now = mskNow();
       if (hasDate && (b.date < now.date || b.date > lastDay(now.date))) return res.status(400).json({ error: 'bad date' });

@@ -1,5 +1,5 @@
 // Личные напоминания аккаунта (этап 3b). Ключ Redis rem:<id аккаунта> (с префиксом DB_PREFIX), запись по версии (CAS) через readRec/writeRec.
-//   { custom:    [ { id, date:'YYYY-MM-DD', slot:'h07'…'h23' (или старые 'day'|'evening'), text, on, sent:boolean } ],
+//   { custom:    [ { id, date:'YYYY-MM-DD', slot:'h07'|'h07m30' … 'h23'|'h23m30' (или старые 'day'|'evening'), text, on, sent:boolean } ],
 //     recurring: [ { id, date:'YYYY-MM-DD' (дата отсчёта), every:'week'|'2weeks'|'month', slot, text, on, sent:{'YYYY-MM-DD':true} } ] }
 // Получатель один: Telegram, привязанный к аккаунту (tg:<id>, см. _acc.js). Постоянных напоминаний и поля «кому» больше нет.
 // Состояние бота (псевдонимы, ожидающие запросы) лежит отдельно, не здесь: бот пишет его на каждое сообщение, а эту запись читает и пишет cron.
@@ -16,12 +16,12 @@ export const RECURRING_MAX = 30; // не больше 30 повторяющих�
 export const EVERY = ['week', '2weeks', 'month']; // каждую неделю / каждые 2 недели / каждый месяц
 
 /* ---------- время: Москва ---------- */
-// → { month, date, hour }: hour — час по Москве (0–23). Время берётся через Date.now(), чтобы тесты могли его подменять.
+// → { month, date, hour, minute }: hour — час по Москве (0–23), minute — минута (0–59). Время берётся через Date.now(), чтобы тесты могли его подменять.
 export function mskNow(d = new Date(Date.now())) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(d);
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d);
   const g = (t) => parts.find((x) => x.type === t).value;
   const month = g('year') + '-' + g('month');
-  return { month, date: month + '-' + g('day'), hour: parseInt(g('hour'), 10) };
+  return { month, date: month + '-' + g('day'), hour: parseInt(g('hour'), 10), minute: parseInt(g('minute'), 10) };
 }
 
 /* ---------- повторяющиеся: когда срабатывают ---------- */
@@ -41,19 +41,20 @@ export function recNext(it, from) {
   return '';
 }
 
-// Слоты «после HH:00» по Москве: часовая сетка h07…h23 (ключ 'h' + две цифры часа). Старые 'day' (14:00) и 'evening' (18:00) остаются допустимыми и равны h14 и h18:
-// записи не переписываются, расписание сравнивает слоты по часу (planRem, planShr).
+// Слоты «после HH:MM» по Москве: сетка с шагом 30 минут, 07:00…23:30. Ключ: 'h' + две цифры часа для HH:00 ('h07') и 'h' + час + 'm30' для HH:30 ('h07m30').
+// Старые 'day' (14:00) и 'evening' (18:00) остаются допустимыми и равны h14 и h18: записи не переписываются. Расписание сравнивает слоты по минутам от полуночи
+// (SLOT_MIN: planRem, planShr, slotMs, проверка «late»).
 export const FIRST_HOUR = 7, LAST_HOUR = 23;
-export const SLOT_HOUR = (() => {
-  const o = { day: 14, evening: 18 };
-  for (let h = FIRST_HOUR; h <= LAST_HOUR; h++) o['h' + String(h).padStart(2, '0')] = h;
+export const SLOT_MIN = (() => {
+  const o = { day: 14 * 60, evening: 18 * 60 };
+  for (let h = FIRST_HOUR; h <= LAST_HOUR; h++) { const k = 'h' + String(h).padStart(2, '0'); o[k] = h * 60; o[k + 'm30'] = h * 60 + 30; }
   return o;
 })();
 export const MAX_DAYS = 370; // чуть больше года вперёд (на сайте 365)
 export const MAX_TEXT = 300;
 
-export const hourMsk = () =>
-  parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Moscow', hour: '2-digit', hourCycle: 'h23' }).format(new Date()), 10);
+// Минуты от московской полуночи по результату mskNow() (для проверки «сегодня этот слот уже наступил»: date и минуты из одного замера).
+export const minOf = (now) => now.hour * 60 + now.minute;
 
 export function validDate(s) {
   if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
@@ -78,11 +79,11 @@ const addDays = (date, n) => new Date(Date.parse(date + 'T00:00:00Z') + n * 864e
 /* ---------- запись аккаунта: чтение, нормализация, изменение ---------- */
 // Из Redis берём только допустимые записи с допустимыми полями: чужое и испорченное отбрасывается при первой же записи.
 function custom1(it) {
-  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_HOUR, it.slot) || typeof it.text !== 'string' || !it.text) return null;
+  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_MIN, it.slot) || typeof it.text !== 'string' || !it.text) return null;
   return { id: it.id, date: it.date, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: it.on !== false, sent: it.sent === true };
 }
 function rec1(it) {
-  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_HOUR, it.slot) || !EVERY.includes(it.every) || typeof it.text !== 'string' || !it.text) return null;
+  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_MIN, it.slot) || !EVERY.includes(it.every) || typeof it.text !== 'string' || !it.text) return null;
   const sent = {};
   if (it.sent && typeof it.sent === 'object' && !Array.isArray(it.sent)) for (const d of Object.keys(it.sent)) if (validDate(d) && it.sent[d]) sent[d] = true;
   return { id: it.id, date: it.date, every: it.every, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: it.on !== false, sent };
@@ -118,7 +119,7 @@ export async function mutateRem(id, fn, opt) {
 }
 
 /* ---------- вид для сайта ---------- */
-const slotKey = (it) => String(SLOT_HOUR[it.slot]).padStart(2, '0'); // для сортировки: час слота
+const slotKey = (it) => String(SLOT_MIN[it.slot]).padStart(4, '0'); // для сортировки: минуты слота от полуночи
 const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
 
 export const publicCustom = (rem) => rem.custom
@@ -150,7 +151,7 @@ export async function pubRem(id, rem, ctx) {
 
 /* ---------- индекс dueq: когда ближайшая отправка ---------- */
 // Время слота в мс (UTC): Москва без перехода на летнее, UTC+3. Конец московских суток: dayEndMs.
-export const slotMs = (date, slot) => Date.parse(date + 'T00:00:00Z') + (SLOT_HOUR[slot] - 3) * 3600000;
+export const slotMs = (date, slot) => Date.parse(date + 'T00:00:00Z') + (SLOT_MIN[slot] - 180) * 60000;
 export const dayEndMs = (date) => Date.parse(date + 'T00:00:00Z') + 21 * 3600000 - 1;
 // Ближайшая дата повторяющегося, которой ещё нет в отметках: не раньше сегодня и не раньше даты отсчёта; sentToday — сегодняшнее уже ушло.
 function recNextDate(it, today, sentToday) {
@@ -190,23 +191,23 @@ async function dueTouch(member, ms) {
 }
 
 /* ---------- расписание ---------- */
-// Пора ли слать: slot задан (ручной запуск /api/cron?slot=…) — только слот ровно этого часа, время суток не смотрим; slot не задан и в now есть hour —
-// всё, чей час уже наступил (догоняем в тот же день, пометка «отправлено» не даёт дубля); нет ни того ни другого (сухой прогон с date) — весь день.
-const hourDue = (it, now, slot) => (slot ? SLOT_HOUR[it.slot] === SLOT_HOUR[slot] : typeof now.hour !== 'number' || SLOT_HOUR[it.slot] <= now.hour);
+// Пора ли слать: slot задан (ручной запуск /api/cron?slot=…) — только слот ровно этого времени (h15 не берёт h15m30), время суток не смотрим; slot не задан и в now есть hour —
+// всё, чьё время уже наступило (минуты берутся из now.minute, нет — 0; догоняем в тот же день, пометка «отправлено» не даёт дубля); нет ни того ни другого (сухой прогон с date) — весь день.
+const slotDue = (it, now, slot) => (slot ? SLOT_MIN[it.slot] === SLOT_MIN[slot] : typeof now.hour !== 'number' || SLOT_MIN[it.slot] <= now.hour * 60 + (now.minute || 0));
 
-// Что отправить сегодня: см. hourDue. Меняет rem: помечает отправки заранее, чтобы повторный запуск cron не дублировал.
+// Что отправить сегодня: см. slotDue. Меняет rem: помечает отправки заранее, чтобы повторный запуск cron не дублировал.
 // → [{ kind:'custom'|'rec', cid, text, date }]. Вызывать внутри mutateRem и только для аккаунтов с привязанным Telegram.
 export function planRem(rem, now, slot) {
   const out = [];
   for (const it of rem.custom) {
     if (it.on === false || it.sent || it.date !== now.date) continue;
-    if (!hourDue(it, now, slot)) continue;
+    if (!slotDue(it, now, slot)) continue;
     it.sent = true;
     out.push({ kind: 'custom', cid: it.id, text: it.text, date: now.date });
   }
   for (const it of rem.recurring) {
     if (it.on === false || it.sent[now.date] || !recDue(it, now.date)) continue;
-    if (!hourDue(it, now, slot)) continue;
+    if (!slotDue(it, now, slot)) continue;
     it.sent[now.date] = true;
     out.push({ kind: 'rec', cid: it.id, text: it.text, date: now.date });
   }
@@ -233,11 +234,11 @@ const flag = (x) => x !== false; // галочка: нет значения = в
 const done = (x) => x === true; // отправлено: только явное true
 
 function scustom1(it) {
-  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_HOUR, it.slot) || typeof it.text !== 'string' || !it.text) return null;
+  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_MIN, it.slot) || typeof it.text !== 'string' || !it.text) return null;
   return { id: it.id, date: it.date, slot: it.slot, text: it.text.slice(0, MAX_TEXT), on: two(it.on, flag), sent: two(it.sent, done) };
 }
 function srec1(it) {
-  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_HOUR, it.slot) || !EVERY.includes(it.every) || typeof it.text !== 'string' || !it.text) return null;
+  if (!it || !idOk(it.id) || !validDate(it.date) || !own(SLOT_MIN, it.slot) || !EVERY.includes(it.every) || typeof it.text !== 'string' || !it.text) return null;
   const sent = {};
   if (it.sent && typeof it.sent === 'object' && !Array.isArray(it.sent)) {
     for (const d of Object.keys(it.sent)) {
@@ -307,13 +308,13 @@ export function planShr(shr, now, slot, side) {
   const out = [];
   for (const it of shr.custom) {
     if (!it.on[side] || it.sent[side] || it.date !== now.date) continue;
-    if (!hourDue(it, now, slot)) continue;
+    if (!slotDue(it, now, slot)) continue;
     it.sent[side] = true;
     out.push({ kind: 'custom', cid: it.id, text: it.text, date: now.date, shared: true });
   }
   for (const it of shr.recurring) {
     if (!it.on[side] || (it.sent[now.date] && it.sent[now.date][side]) || !recDue(it, now.date)) continue;
-    if (!hourDue(it, now, slot)) continue;
+    if (!slotDue(it, now, slot)) continue;
     it.sent[now.date] = { ...(it.sent[now.date] || { a: false, b: false }), [side]: true };
     out.push({ kind: 'rec', cid: it.id, text: it.text, date: now.date, shared: true });
   }

@@ -262,6 +262,23 @@ test('по времени: уходит всё, чей час наступил, 
   assert.equal(sent(calls).length, 5);
 });
 
+test('по времени: слот HH:30 уходит с 30-й минуты, не раньше; ручной slot различает h14 и h14m30', async (t) => {
+  const calls = mockTg(t);
+  const a = await mkUser('anna');
+  for (const s of ['h14', 'h14m30', 'h15m30']) await addCustom(a, s, s);
+  pinMsk(t, 14, 20);
+  const r0 = await run();
+  assert.deepEqual([r0.body.sent, r0.body.hour], [1, 14]);
+  assert.deepEqual(TXT(calls), ['🔔 h14'], 'до 14:30 слот h14m30 не уходит');
+  pinMsk(t, 14, 40);
+  assert.equal((await run()).body.sent, 1);
+  assert.deepEqual(TXT(calls).slice(1), ['🔔 h14m30']);
+  const r2 = await run({ slot: 'h15m30' });
+  assert.deepEqual([r2.statusCode, r2.body.sent, r2.body.slot], [200, 1, 'h15m30'], 'ручной запуск слота: время суток не смотрим');
+  assert.deepEqual(TXT(calls).slice(2), ['🔔 h15m30']);
+  for (const bad of ['h14m00', 'h14m15', 'h24m30', 'h06m30', 'h14m3']) assert.equal((await run({ slot: bad })).statusCode, 400, bad);
+});
+
 test('по времени: вчерашнее неотправленное не догоняется, завтрашнее не уходит', async (t) => {
   const calls = mockTg(t);
   const a = await mkUser('anna');

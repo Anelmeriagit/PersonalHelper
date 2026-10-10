@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import { session } from './_lib.js';
-import { CUSTOM_MAX, SLOT_HOUR, MAX_TEXT, mskNow, hourMsk, validDate, cleanText, own, idOk, lastDay, target, newShrCustom, anySent } from './_rem.js';
+import { CUSTOM_MAX, SLOT_MIN, MAX_TEXT, mskNow, minOf, validDate, cleanText, own, idOk, lastDay, target, newShrCustom, anySent } from './_rem.js';
 
 // Временные (разовые) напоминания аккаунта из сессии. Данные: rem:<id> (см. _rem.js).
-//   POST   /api/custom           {date:'YYYY-MM-DD', slot:'h07'…'h23' (или 'day'|'evening'), text, shared?:true}
+//   POST   /api/custom           {date:'YYYY-MM-DD', slot:'h07'|'h07m30' … 'h23'|'h23m30' (или 'day'|'evening'), text, shared?:true}
 //   PUT    /api/custom           {id, key:'on', value:boolean, shared?:true, who?:'me'|'partner'}   — включить / выключить
 //   PUT    /api/custom           {id, text?, date?, slot?, shared?:true}                            — правка текста, даты, времени
 //   DELETE /api/custom?id=<id>[&shared=1]
@@ -38,10 +38,10 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const { date, slot } = b;
       const text = cleanText(b.text);
-      if (!validDate(date) || !own(SLOT_HOUR, slot) || !text || text.length > MAX_TEXT) return res.status(400).json({ error: 'bad request' });
+      if (!validDate(date) || !own(SLOT_MIN, slot) || !text || text.length > MAX_TEXT) return res.status(400).json({ error: 'bad request' });
       const now = mskNow();
       if (date < now.date || date > lastDay(now.date)) return res.status(400).json({ error: 'bad date' });
-      if (date === now.date && hourMsk() >= SLOT_HOUR[slot]) return res.status(400).json({ error: 'late' });
+      if (date === now.date && minOf(now) >= SLOT_MIN[slot]) return res.status(400).json({ error: 'late' });
       const r = await T.mut((s) => {
         if (s.custom.length >= CUSTOM_MAX) return { err: 'limit' };
         const it = { id: crypto.randomBytes(6).toString('hex'), date, slot, text, on: true, sent: false };
@@ -63,8 +63,8 @@ export default async function handler(req, res) {
       const text = hasText ? cleanText(b.text) : '';
       if (hasText && (!text || text.length > MAX_TEXT)) return res.status(400).json({ error: 'bad request' });
       if (hasDate && !validDate(b.date)) return res.status(400).json({ error: 'bad request' });
-      if (hasSlot && !own(SLOT_HOUR, b.slot)) return res.status(400).json({ error: 'bad request' });
-      const now = mskNow(), hour = hourMsk(), last = lastDay(now.date);
+      if (hasSlot && !own(SLOT_MIN, b.slot)) return res.status(400).json({ error: 'bad request' });
+      const now = mskNow(), mins = minOf(now), last = lastDay(now.date);
       r = await T.mut((s) => {
         const it = s.custom.find((x) => x.id === id);
         if (!it) return { err: 'gone' };
@@ -73,7 +73,7 @@ export default async function handler(req, res) {
         if (date !== it.date || slot !== it.slot) {
           // перенос: те же проверки, что при создании
           if (date < now.date || date > last) return { err: 'bad date' };
-          if (date === now.date && hour >= SLOT_HOUR[slot]) return { err: 'late' };
+          if (date === now.date && mins >= SLOT_MIN[slot]) return { err: 'late' };
           it.date = date; it.slot = slot;
         }
         if (hasText) it.text = text;
