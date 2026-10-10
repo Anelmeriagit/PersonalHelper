@@ -21,6 +21,15 @@ export function mockRes() {
   };
 }
 
+// Подменяет Date.now: по Москве 2026-10-14, час hour:minute, дальше время идёт как настоящее (даты и час в cron не зависят от запуска теста).
+// Снимается сама в конце теста (t.mock). fakeClock после неё сдвигает уже это время. Повторный вызов в том же тесте ставит новое время.
+export function pinMsk(t, hour = 14, minute = 30) {
+  const real = Date.now.bind(Date), start = real();
+  const pad = (n) => String(n).padStart(2, '0');
+  const base = Date.parse('2026-10-14T' + pad(hour) + ':' + pad(minute) + ':00+03:00');
+  t.mock.method(Date, 'now', () => base + (real() - start));
+}
+
 // Один раз подменяет Date.now в тесте и даёт сдвигать время вперёд.
 // Подмена снимается сама в конце теста (t.mock). Не вызывать дважды в одном тесте.
 export function fakeClock(t) {

@@ -409,3 +409,5 @@ header .bar.wrap{width:min(100% - 2rem,1100px)}
 main:not([hidden]){animation:pgin .28s ease-out backwards}
 @keyframes pgin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .cmp{max-width:460px}
+.slots.hrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(4.1rem,1fr));gap:.4rem}
+.slots.hrs .chip{padding:.4rem .2rem;text-align:center;font-variant-numeric:tabular-nums}

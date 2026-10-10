@@ -11,7 +11,12 @@ var shrCol=$('shrCol'),shrWith=$('shrWith'),rcols=$('rcols'),shrTmpList=$('shrTm
 var FORMS=[tmpForm,recForm,shrTmpForm,shrRecForm],ADDS=[tmpAdd,recAdd,shrTmpAdd,shrRecAdd];
 var NOPAIR='Аккаунты больше не соединены: общих напоминаний нет.';
 var WDV=['в воскресенье','в понедельник','во вторник','в среду','в четверг','в пятницу','в субботу'];
-var SL={day:'после 14:00',evening:'после 18:00'},SLH={day:14,evening:18};
+/* слоты «после HH:00»: сетка h07…h23; старые 'day' и 'evening' равны h14 и h18 (сервер их не переписывает) */
+var LASTH=23,HRS=[];for(var hi=7;hi<=LASTH;hi++)HRS.push(hi);
+function p2(n){return(n<10?'0':'')+n}
+function slotNorm(s){return s==='day'?'h14':s==='evening'?'h18':s}
+function slotHour(s){return parseInt(String(slotNorm(s)).slice(1),10)||0}
+function slotLbl(s){return 'после '+p2(slotHour(s))+':00'}
 var EV={week:'каждую неделю','2weeks':'каждые 2 недели',month:'каждый месяц'},EVK=['week','2weeks','month'];
 var CHEV={'-1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>','1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>'};
 function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,add:shrRecAdd,url:'/api/recurring'}:{form:shrTmpForm,list:shrTmpList,add:shrTmpAdd,url:'/api/custom'};
@@ -19,8 +24,8 @@ function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,a
 /* sh — общие напоминания пары (rem.shared), иначе личные (rem) */
 function src(kind,sh){var o=sh?R.rem&&R.rem.shared:R.rem;return(o&&(kind==='rec'?o.recurring:o.custom))||[]}
 function pname(){var s=R.rem&&R.rem.shared;return nrm(s&&s.name)||'Helper User'}
-function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskHour()>=SLH[slot])}
-function slotOff(date,slot){return slotPassed(date,slot)&&!(R.fm&&R.fm.id&&date===R.fm.od&&slot===R.fm.os)}
+function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskHour()>=slotHour(slot))}
+function slotOff(date,slot){return slotPassed(date,slot)&&!(R.fm&&R.fm.id&&date===R.fm.od&&slotNorm(slot)===slotNorm(R.fm.os))}
 function tmpFind(id,sh){return src('tmp',sh).filter(function(x){return x.id===id})[0]}
 function recFind(id,sh){return src('rec',sh).filter(function(x){return x.id===id})[0]}
 function tmpPast(it){return it.sent||it.psent||it.date<clock().day}
@@ -31,7 +36,7 @@ function calHtml(){
       n=new Date(Date.UTC(y,m,0)).getUTCDate(),max=addDays(c.day,365),h='';
   ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(w){h+='<span class="wd" aria-hidden="true">'+w+'</span>'});
   for(var i=0;i<first;i++)h+='<span></span>';
-  for(var d=1;d<=n;d++){var s=ymd(y,m,d),off=s<c.day||s>max||(s===c.day&&mskHour()>=SLH.evening);
+  for(var d=1;d<=n;d++){var s=ymd(y,m,d),off=s<c.day||s>max||(s===c.day&&mskHour()>=LASTH);
     h+='<button type="button" data-d="'+s+'"'+(off?' disabled':'')+(s===c.day?' class="today"':'')+' aria-pressed="'+(R.fm.date===s)+'" aria-label="'+dLabel(s)+'">'+d+'</button>'}
   return '<div class="cal-h"><button class="icon-btn" type="button" data-nav="-1" aria-label="Предыдущий месяц"'+(vm<=c.cur?' disabled':'')+'>'+CHEV['-1']+'</button>'+
     '<b>'+MN[m-1]+' '+y+'</b>'+
@@ -52,9 +57,9 @@ export function fmRender(focus){
       (R.fm.every?'<p class="rd">'+evHint()+'</p>':'')}
   if(R.fm.date&&(!rec||R.fm.every)){
     var free=0;
-    h+='<h4>'+(n++)+'. Время</h4><div class="slots" role="group" aria-label="Время отправки">'+['day','evening'].map(function(s){var off=slotOff(R.fm.date,s);if(!off)free++;
-      return '<button class="chip'+(R.fm.slot===s?' on':'')+'" type="button" data-s="'+s+'"'+(off?' disabled':'')+' aria-pressed="'+(R.fm.slot===s)+'">'+cap(SL[s])+'</button>'}).join('')+'</div>'+
-      '<p class="rd">'+(free?'Сообщение приходит в Telegram в течение часа после выбранного времени.':'На сегодня оба времени уже прошли. Выберите другую дату.')+'</p>'}
+    h+='<h4>'+(n++)+'. Время</h4><div class="slots hrs" role="group" aria-label="Время отправки">'+HRS.map(function(x){var s='h'+p2(x),off=slotOff(R.fm.date,s),on=slotNorm(R.fm.slot)===s;if(!off)free++;
+      return '<button class="chip'+(on?' on':'')+'" type="button" data-s="'+s+'"'+(off?' disabled':'')+' aria-pressed="'+on+'">'+p2(x)+':00</button>'}).join('')+'</div>'+
+      '<p class="rd">'+(free?'Сообщение приходит в Telegram вскоре после выбранного времени.':'На сегодня все времена уже прошли. Выберите другую дату.')+'</p>'}
   if(R.fm.date&&R.fm.slot&&(!rec||R.fm.every)){ready=true;
     h+='<h4>'+(n++)+'. Текст</h4><label class="sr" for="tText">Текст напоминания</label>'+
       '<textarea class="tta" id="tText" maxlength="300" rows="3" placeholder="Текст напоминания">'+esc(R.fm.text)+'</textarea>'+
@@ -126,12 +131,12 @@ function tmpItemHtml(it,sh){
   var all=sh?!!(it.sent||it.psent):it.sent===true,missed=!all&&it.date<clock().day,past=all||missed,on=sh?(it.on||it.pon):it.on,
       status=all?(sh?shSent(it):' · Отправлено ✓'):missed?' · Не отправлено':(on?'':' · Выключено'),armed=R.delArm===it.id;
   return '<section class="rc tmp'+(sh?' shr':'')+(past?' past':'')+(on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
-    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+dLabel(it.date)+', '+SL[it.slot]+status+'</p></div>'+delBtns(it,sh,armed,!all)+'</div>'+
+    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+dLabel(it.date)+', '+slotLbl(it.slot)+status+'</p></div>'+delBtns(it,sh,armed,!all)+'</div>'+
     swRows(it,sh,past)+'</section>'}
 function recItemHtml(it,sh){
   var armed=R.delArm===it.id,on=sh?(it.on||it.pon):it.on;
   return '<section class="rc tmp rec'+(sh?' shr':'')+(on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
-    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+cap(EV[it.every]||'')+', '+SL[it.slot]+(on?'':' · Выключено')+'</p>'+
+    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+cap(EV[it.every]||'')+', '+slotLbl(it.slot)+(on?'':' · Выключено')+'</p>'+
     (it.next?'<p class="rd">Ближайшее: '+dLabel(it.next)+'</p>':'')+'</div>'+delBtns(it,sh,armed,true)+'</div>'+
     swRows(it,sh,false)+'</section>'}
 function listRender(kind,sh){

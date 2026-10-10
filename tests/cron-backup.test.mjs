@@ -1,11 +1,14 @@
-// Этап 4.3: резервная копия внутри api/cron.js (оба слота, ручной ?backup=1, бюджет времени, сбои не мешают рассылке).
+// Этап 4.3: резервная копия внутри api/cron.js (каждый запуск, не чаще раза в 6 часов по отметке cron:bk, ручной ?backup=1, бюджет времени, сбои не мешают рассылке).
 // Заглушки Redis, Blob и мок Telegram. Запуск: node --import ./tests/register.mjs --test "tests/*.test.mjs"
-import { test, beforeEach } from 'node:test';
+import { test as rawTest, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { __keys, __raw } from './redis.mjs';
+import { __keys, __raw, __cmdLog } from './redis.mjs';
 import { __reset, __keys as blobKeys, __failPutOn, __puts } from './blob.mjs'; // __reset заглушки Blob сбрасывает и Redis
-import { mockReq, mockRes, setEnv, linkUser, fakeClock, mockTg } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, linkUser, fakeClock, mockTg, pinMsk } from './helpers.mjs';
+
+// Каждый тест идёт в 14:30 по Москве: cron берёт время суток из часов (дневное напоминание «day» уже можно слать).
+const test = (name, fn) => rawTest(name, (t) => { pinMsk(t, 14, 30); return fn(t); });
 
 const KEY1 = 'a1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00';
 setEnv();
@@ -24,7 +27,10 @@ const hex = () => crypto.randomBytes(6).toString('hex');
 let tidSeq = 5000;
 const mkUser = (nick) => linkUser(acc, nick, { id: ++tidSeq, username: nick });
 const addCustom = (id, text) => rem.mutateRem(id, (r) => { r.custom.push({ id: hex(), date: TODAY(), slot: 'day', text, on: true, sent: false }); });
-async function run(query = {}, headers = AUTH) {
+// Отметка cron:bk (проверка копии не чаще раза в 6 часов) перед каждым запуском снимается, чтобы тесты шли подряд; keep — оставить её.
+async function run(query = {}, headers = AUTH, keep = false) {
+  const db = await import('../api/_db.js');
+  if (!keep) await db.cmd('DEL', db.key('cron', 'bk'));
   const res = mockRes();
   const req = mockReq({ method: 'GET', headers });
   req.query = query;
@@ -173,7 +179,7 @@ test('мало времени после рассылки: копия пропу
   assert.equal(__puts(), 0);
 });
 
-test('незаконченная копия (partial): вечером 502, днём 200 (вечер доделает)', async (t) => {
+test('незаконченная копия (partial): в последний запуск дня (23 ч) 502, раньше 200 (следующий запуск доделает)', async (t) => {
   mockTg(t);
   const db = await import('../api/_db.js');
   const fill = async () => { for (let i = 0; i < 3000; i += 100) await db.pipe(Array.from({ length: 100 }, (_, j) => ['HSET', 'doc:' + (i + j).toString(16).padStart(32, '0'), 'd', 'x'.repeat(400), 'v', '1'])); };
@@ -184,14 +190,46 @@ test('незаконченная копия (partial): вечером 502, дн�
   const day = await run();
   assert.equal(day.body.backup.state, 'partial', JSON.stringify(day.body.backup));
   assert.equal(day.statusCode, 200);
+  assert.equal(__raw(db.key('cron', 'bk')), undefined, 'незаконченная копия снимает отметку: следующий запуск продолжит сразу');
   t.mock.restoreAll();
   mockTg(t);
   __reset(); setEnv(); process.env.TELEGRAM_BOT_TOKEN = 'test-token'; process.env.CRON_SECRET = 'test-cron-secret'; process.env.BACKUP_KEY = KEY1;
   await fill();
+  pinMsk(t, 23, 10);
   slowClock();
-  const eve = await run({ slot: 'evening' });
-  assert.equal(eve.body.backup.state, 'partial');
-  assert.equal(eve.statusCode, 502);
+  const last = await run();
+  assert.equal(last.body.backup.state, 'partial');
+  assert.equal(last.body.hour, 23);
+  assert.equal(last.statusCode, 502);
+});
+
+test('проверка копии не чаще раза в 6 часов: между запусками skipped/recent без обращения к Blob; через 6 часов снова проверяет', async (t) => {
+  mockTg(t);
+  const clock = fakeClock(t);
+  await mkUser('anna');
+  const first = await run({}, AUTH, true);
+  assert.equal(first.body.backup.state, 'done');
+  __cmdLog(true);
+  const puts = __puts();
+  for (let i = 0; i < 5; i++) { // каждые 10 минут
+    clock.advance(10 * 60 * 1000);
+    const r = await run({}, AUTH, true);
+    assert.deepEqual([r.statusCode, r.body.backup], [200, { state: 'skipped', reason: 'recent' }], 'запуск ' + i);
+  }
+  assert.equal(__puts(), puts);
+  clock.advance(6 * 3600 * 1000);
+  assert.equal((await run({}, AUTH, true)).body.backup.state, 'skip', 'через 6 часов проверка есть: копия свежая');
+});
+
+test('ключи cron:hb, cron:lock, cron:bk — временные: в копию не попадают, считаются в stats.temp', async (t) => {
+  mockTg(t);
+  await mkUser('anna');
+  const r = await run({}, AUTH, true);
+  assert.equal(r.body.backup.state, 'done');
+  assert.ok(__keys().some((k) => k.includes('cron:hb')) && __keys().some((k) => k.includes('cron:bk')));
+  assert.equal(B.TEMP.has('cron'), true);
+  assert.ok(r.body.backup.stats.temp >= 2, JSON.stringify(r.body.backup.stats));
+  assert.equal((await B.verifyBackup(r.body.backup.snap)).ok, true);
 });
 
 /* ---------- ручной запуск ---------- */

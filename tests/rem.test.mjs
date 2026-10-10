@@ -377,3 +377,86 @@ test('POST /api/custom тоже отдаёт username (клиент заменя
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.username, 'ivan_k');
 });
+
+/* ---------- часовая сетка слотов h07…h23 ---------- */
+test('сетка слотов: допустимы h07…h23 и старые day/evening, остальное отклоняется', async (t) => {
+  AT(t);
+  const id = await mkAcc('ivan');
+  const ok = { date: '2026-10-15', text: 'x' };
+  assert.deepEqual(Object.keys(rem.SLOT_HOUR).length, 17 + 2);
+  for (const slot of ['h07', 'h15', 'h23', 'day', 'evening']) assert.equal((await post(custom, id, { ...ok, slot })).statusCode, 200, slot);
+  for (const slot of ['h06', 'h24', 'h7', 'H15', '15', 'h15 ', 'constructor']) assert.equal((await post(custom, id, { ...ok, slot })).body.error, 'bad request', slot);
+  const rr = await post(recurring, id, { date: '2026-10-15', every: 'week', slot: 'h09', text: 'р' });
+  assert.equal(rr.statusCode, 200);
+  assert.equal(rr.body.recurring[0].slot, 'h09');
+});
+
+test('сетка слотов: «late» по часу слота, сегодня в 12:00 доступны h13 и позже', async (t) => {
+  AT(t); // 12:00 МСК
+  const id = await mkAcc('ivan');
+  const today = (slot) => post(custom, id, { date: '2026-10-10', slot, text: 'x' });
+  assert.equal((await today('h07')).body.error, 'late');
+  assert.equal((await today('h12')).body.error, 'late', 'в 12:00 слот «после 12:00» уже начался');
+  assert.equal((await today('h13')).statusCode, 200);
+  assert.equal((await today('h23')).statusCode, 200);
+  const one = (await post(custom, id, { date: '2026-10-15', slot: 'h20', text: 'y' })).body.custom.find((c) => c.text === 'y');
+  assert.equal((await call(custom, 'PUT', id, { id: one.id, date: '2026-10-10', slot: 'h09' })).body.error, 'late', 'правка тоже проверяет час');
+  assert.equal((await call(custom, 'PUT', id, { id: one.id, slot: 'h21' })).statusCode, 200);
+});
+
+test('сетка слотов: список сортируется по дате и часу, старые слоты равны своим часам', async (t) => {
+  AT(t);
+  const id = await mkAcc('ivan');
+  for (const slot of ['h22', 'evening', 'h08', 'day', 'h15']) await post(custom, id, { date: '2026-10-12', slot, text: slot });
+  const r = await call(reminders, 'GET', id);
+  assert.deepEqual(r.body.custom.map((c) => c.text), ['h08', 'day', 'h15', 'evening', 'h22'], 'day = 14:00, evening = 18:00');
+});
+
+test('planRem: слот сетки совпадает со старым по часу (cron «day» берёт h14, «evening» берёт h18)', () => {
+  const r = mk({ custom: [C('a', { slot: 'h14' }), C('b', { slot: 'day' }), C('c', { slot: 'h15' }), C('d', { slot: 'h18' }), C('e', { slot: 'evening' })] });
+  assert.deepEqual(rem.planRem(r, NOW, 'day').map((x) => x.text).sort(), ['тa', 'тb']);
+  assert.deepEqual(rem.planRem(r, NOW, 'evening').map((x) => x.text).sort(), ['тd', 'тe']);
+  assert.equal(r.custom.find((x) => x.text === 'тc').sent, false, 'h15 в эти слоты не попал');
+  const rr = mk({ recurring: [R('a', { slot: 'h14' }), R('b', { slot: 'h09' })] });
+  assert.deepEqual(rem.planRem(rr, NOW, 'day').map((x) => x.text), ['рa']);
+});
+
+test('planRem по часу: всё, чей час наступил (с догонянием), без slot; slot — ровно один час; без часа — весь день', () => {
+  const mkR = () => mk({ custom: [C('a', { slot: 'h07' }), C('b', { slot: 'day' }), C('c', { slot: 'h15' }), C('d', { slot: 'evening' }), C('e', { slot: 'h23' })], recurring: [R('f', { slot: 'h09' }), R('1', { slot: 'h20' })] });
+  const names = (r, now, slot) => rem.planRem(r, now, slot).map((x) => x.text).sort();
+  assert.deepEqual(names(mkR(), { ...NOW, hour: 6 }), [], 'до 07:00 ничего');
+  assert.deepEqual(names(mkR(), { ...NOW, hour: 7 }), ['тa']);
+  assert.deepEqual(names(mkR(), { ...NOW, hour: 14 }), ['рf', 'тa', 'тb'], 'день: утреннее догоняется');
+  assert.deepEqual(names(mkR(), { ...NOW, hour: 18 }), ['рf', 'тa', 'тb', 'тc', 'тd']);
+  assert.deepEqual(names(mkR(), { ...NOW, hour: 23 }), ['р1', 'рf', 'тa', 'тb', 'тc', 'тd', 'тe']);
+  assert.equal(names(mkR(), NOW).length, 7, 'без часа (сухой прогон с date) — весь день');
+  assert.deepEqual(names(mkR(), { ...NOW, hour: 7 }, 'h23'), ['тe'], 'slot — ровно этот час, время суток не смотрим');
+  const r = mkR();
+  assert.equal(rem.planRem(r, { ...NOW, hour: 14 }).length, 3);
+  assert.deepEqual(rem.planRem(r, { ...NOW, hour: 14 }), [], 'повтор не дублирует');
+  assert.deepEqual(rem.planRem(r, { ...NOW, hour: 16 }).map((x) => x.text), ['тc'], 'следующий запуск добирает только новое');
+  assert.equal(rem.planRem(mkR(), { month: '2026-10', date: '2026-10-17', hour: 23 }).length, 2, 'другой день: временные на 10 окт не идут, повторяющиеся (неделя от 3 окт) идут');
+});
+
+test('planShr по часу: то же для общих, отдельно по сторонам', () => {
+  const shr = () => rem.normShr({ custom: ['h08', 'h14', 'h16'].map((slot, i) => ({ id: 'abcdef00000' + i, date: '2026-10-10', slot, text: 'о' + i, on: { a: true, b: true }, sent: { a: false, b: false } })) });
+  const s = shr();
+  assert.deepEqual(rem.planShr(s, { ...NOW, hour: 14 }, undefined, 'a').map((x) => x.text), ['о0', 'о1']);
+  assert.deepEqual(rem.planShr(s, { ...NOW, hour: 14 }, undefined, 'a'), []);
+  assert.deepEqual(rem.planShr(s, { ...NOW, hour: 14 }, undefined, 'b').map((x) => x.text), ['о0', 'о1'], 'сторона b не затронута');
+  assert.deepEqual(rem.planShr(s, { ...NOW, hour: 16 }, undefined, 'a').map((x) => x.text), ['о2']);
+  assert.deepEqual(rem.planShr(shr(), { ...NOW, hour: 16 }, 'h16', 'a').map((x) => x.text), ['о2'], 'slot — ровно этот час');
+});
+
+test('mskNow: дата, месяц и час по Москве; время берётся из Date.now', (t) => {
+  assert.deepEqual(rem.mskNow(new Date('2026-10-14T20:59:59Z')), { month: '2026-10', date: '2026-10-14', hour: 23 });
+  assert.deepEqual(rem.mskNow(new Date('2026-10-14T21:00:00Z')), { month: '2026-10', date: '2026-10-15', hour: 0 });
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-31T21:30:00Z'));
+  assert.deepEqual(rem.mskNow(), { month: '2026-11', date: '2026-11-01', hour: 0 });
+});
+
+test('нормализация: слот вне сетки отбрасывает запись, слот сетки сохраняется как есть', () => {
+  const n = rem.normRem({ custom: [C('a', { slot: 'h06' }), C('b', { slot: 'h23' }), C('c', { slot: 'day' })], recurring: [R('d', { slot: 'h24' }), R('e', { slot: 'h07' })] });
+  assert.deepEqual(n.custom.map((x) => [x.text, x.slot]), [['тb', 'h23'], ['тc', 'day']]);
+  assert.deepEqual(n.recurring.map((x) => [x.text, x.slot]), [['рe', 'h07']]);
+});

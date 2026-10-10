@@ -1,5 +1,9 @@
 // Рассылка личных и общих напоминаний (этап 3b; общие пары — этап 5, «Соединить аккаунты», часть 4) и ежедневная резервная копия Redis (этап 4.3, см. notes/backup.md). Обход: множество tgs (аккаунты с привязанным Telegram, см. _acc.js) → rem:<id> → отправка в tg:<id>.chat.
-// Hobby: cron раз в сутки, два слота (vercel.json: 11:00 UTC — «day», 15:00 UTC — «evening»). Точное время отправки сервер не гарантирует.
+// Запуск по текущему времени (этап 5, переход на внешний планировщик, часть 2): каждый вызов берёт час по Москве и шлёт всё, чей час уже наступил и что не помечено
+// (догоняем в тот же день). Вызывает внешний планировщик (QStash, запасной cron-job.org) и ежедневный cron Vercel; план — notes/reminders.md.
+// ?role=primary (по умолчанию) — основной, ставит пульс cron:hb; ?role=backup — запасной: если основной сработал меньше 15 минут назад, пропускает запуск
+// ({skipped:'primary alive'}), иначе берёт рассылку сам (took_over:true). Замок cron:lock (SET NX PX 30 с): два запуска не идут одновременно, занято — 200 {busy:true}.
+// ?slot=h15 (или day/evening) — ручной запуск ровно одного слота независимо от времени суток; ?dry=1 — сухой прогон.
 // Лимиты: общий поток Telegram около 30 сообщений в секунду (шлём не чаще 20), maxDuration функции 30 с (укладываемся в BUDGET_MS).
 // Отметка «отправлено» ставится до отправки (planRem), поэтому повторный запуск не дублирует; не успевшие аккаунты (left) и сбои добираются повторным вызовом.
 // Общие напоминания (shr:<id>:<id>): у каждого аккаунта своя галочка и своя отметка отправки, поэтому каждый аккаунт пары при своём обходе забирает только свою сторону
@@ -10,8 +14,9 @@
 // Нет BACKUP_KEY — копия выключена (state:'off'), рассылка работает как раньше. Ключ задан, но негодный (не 64 hex-символа, слишком простой) —
 // это ошибка настройки (state:'error', kind:'config', код 502), а не тихое отключение: опечатка не должна оставлять базу без копий.
 import { authed, sendCustom } from './_bot.js';
-import { mskNow, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf } from './_rem.js';
+import { mskNow, SLOT_HOUR, LAST_HOUR, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf } from './_rem.js';
 import { linkedIds, getLink, partnerAcc } from './_acc.js';
+import { cmd, key, lock, unlock, del } from './_db.js';
 import { backupReady, backupStatus, backupIfDue, runBackup, DUE_GAP_MS } from './_backup.js';
 
 const BUDGET_MS = 24000; // из 30 с maxDuration: запас на последнюю отправку и ответ
@@ -21,6 +26,10 @@ const TOTAL_MS = 30000; // maxDuration из vercel.json
 const BACKUP_BUDGET_MS = 20000; // сколько копия обходит базу за вызов
 const BACKUP_TAIL_MS = 8000; // запас после обхода: последняя часть, манифест, ротация, ответ
 const BACKUP_MIN_MS = 3000; // меньше этого времени копию не начинаем (доделает следующий слот)
+const LOCK_MS = 30000; // замок cron:lock (равен maxDuration; снимается в конце запуска)
+const HB_FRESH_MS = 15 * 60 * 1000; // основной считается живым, если сработал не позже
+const HB_TTL_MS = 3 * 24 * 3600 * 1000; // пульс хранится 3 суток (для поля last)
+const BK_GAP_MS = 6 * 3600 * 1000; // проверка «пора ли копию» не чаще раза в 6 часов (список Blob считается дорогой операцией); незаконченная копия снимает отметку
 const DEAD = /blocked|deactivated|chat not found|kicked/i; // человек заблокировал бота или удалил чат: повторять бессмысленно
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -48,9 +57,12 @@ async function backupStep(t0, force) {
   if (ks === 'bad') { console.error('backup failed: BACKUP_KEY задан, но негоден'); return { state: 'error', kind: 'config' }; }
   const budgetMs = Math.min(BACKUP_BUDGET_MS, TOTAL_MS - (Date.now() - t0) - BACKUP_TAIL_MS);
   if (budgetMs < BACKUP_MIN_MS) return { state: 'skipped', reason: 'time' };
+  const gk = key('cron', 'bk');
+  if (!force && (await cmd('SET', gk, '1', 'NX', 'PX', BK_GAP_MS)) !== 'OK') return { state: 'skipped', reason: 'recent' };
   const t1 = Date.now();
   try {
     const r = await (force ? runBackup : backupIfDue)({ budgetMs });
+    if (!force && r.state === 'partial') await del(gk).catch(() => {}); // продолжит следующий запуск
     const out = { state: r.state, ms: Date.now() - t1 };
     for (const k of ['snap', 'parts', 'keys', 'bytes', 'pruned', 'lastAt']) if (r[k] !== undefined) out[k] = r[k];
     if (r.stats) out.stats = r.stats; // scanned, copied, gone, changed, foreign, other
@@ -130,34 +142,54 @@ export default async function handler(req, res) {
     if (q.date) {
       if (!dry) return res.status(400).json({ error: 'date работает только с dry=1' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(q.date)) return res.status(400).json({ error: 'date: YYYY-MM-DD' });
-      now = { month: q.date.slice(0, 7), date: q.date };
+      now = { month: q.date.slice(0, 7), date: q.date }; // без часа: весь день
     }
-    // Два запуска в сутки: «day» (14:00–15:00 МСК) и «evening» (18:00–19:00 МСК, /api/cron?slot=evening); сухой прогон без slot смотрит оба.
-    const slot = dry && !q.slot ? undefined : q.slot === 'evening' ? 'evening' : 'day';
+    // Ручной запуск одного слота: ?slot=h15 | day | evening (ровно этот час, время суток не смотрим). Без slot — всё, чей час уже наступил.
+    if (q.slot !== undefined && !Object.prototype.hasOwnProperty.call(SLOT_HOUR, q.slot)) return res.status(400).json({ error: 'slot: h07…h23, day, evening' });
+    const slot = q.slot;
+    const role = q.role === undefined ? 'primary' : q.role;
+    if (role !== 'primary' && role !== 'backup') return res.status(400).json({ error: 'role: primary|backup' });
 
-    const ids = await linkedIds();
-    const turn = makePacer(GAP_MS);
-    const deadline = Date.now() + BUDGET_MS;
-    const st = { accounts: ids.length, sent: 0, failed: 0, blocked: 0, nolink: 0, errors: 0 };
-    let next = 0;
-    const worker = async () => {
-      for (;;) {
-        if (Date.now() > deadline) return;
-        const k = next++;
-        if (k >= ids.length) return;
-        try {
-          const r = await one(ids[k], now, slot, dry, turn);
-          st.sent += r.n; st.failed += r.failed; st.blocked += r.blocked; if (r.nolink) st.nolink++;
-        } catch (e) { st.errors++; console.error('account failed', short(ids[k]), e && e.message); }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(WORKERS, ids.length) }, worker));
-    const left = Math.max(0, ids.length - next);
-    if (dry) return res.status(200).json({ dry: true, date: now.date, accounts: st.accounts, would_send: st.sent, nolink: st.nolink, errors: st.errors, left, backup: await backupInfo() });
-    const backup = await backupStep(t0, false);
-    // Вечером копия обязана закончиться: незаконченная («partial») означает, что следующая попытка только завтра, поэтому 502.
-    const backupBad = backup.state === 'error' || (backup.state === 'partial' && slot === 'evening');
-    return res.status(st.failed || st.errors || left || backupBad ? 502 : 200).json({ date: now.date, slot, ...st, left, backup });
+    // Пульс: когда в последний раз сработал основной. Запасной при живом основном ничего не делает; иначе берёт рассылку сам.
+    const hbk = key('cron', 'hb');
+    const hb = Number(await cmd('GET', hbk)) || 0;
+    const last = hb ? new Date(hb).toISOString() : null;
+    const info = { role, took_over: role === 'backup', last };
+    if (role === 'backup' && hb && Date.now() - hb < HB_FRESH_MS) return res.status(200).json({ ...(dry ? { dry: true } : {}), skipped: 'primary alive', ...info, took_over: false });
+    if (!dry && role === 'primary' && !slot) await cmd('SET', hbk, Date.now(), 'PX', HB_TTL_MS); // ручной запуск слота пульсом не считается
+
+    // Замок: рассылка и копия не идут одновременно в двух запусках. Сухой прогон ничего не пишет и замок не берёт.
+    const lk = key('cron', 'lock');
+    const token = dry ? null : await lock(lk, LOCK_MS);
+    if (!dry && !token) return res.status(200).json({ busy: true, ...info });
+    try {
+      const ids = await linkedIds();
+      const turn = makePacer(GAP_MS);
+      const deadline = Date.now() + BUDGET_MS;
+      const st = { accounts: ids.length, sent: 0, failed: 0, blocked: 0, nolink: 0, errors: 0 };
+      let next = 0;
+      const worker = async () => {
+        for (;;) {
+          if (Date.now() > deadline) return;
+          const k = next++;
+          if (k >= ids.length) return;
+          try {
+            const r = await one(ids[k], now, slot, dry, turn);
+            st.sent += r.n; st.failed += r.failed; st.blocked += r.blocked; if (r.nolink) st.nolink++;
+          } catch (e) { st.errors++; console.error('account failed', short(ids[k]), e && e.message); }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(WORKERS, ids.length) }, worker));
+      const left = Math.max(0, ids.length - next);
+      const when = { date: now.date, ...(now.hour !== undefined ? { hour: now.hour } : {}), ...(slot ? { slot } : {}) };
+      if (dry) return res.status(200).json({ dry: true, ...when, ...info, accounts: st.accounts, would_send: st.sent, nolink: st.nolink, errors: st.errors, left, backup: await backupInfo() });
+      const backup = await backupStep(t0, false);
+      // Последний запуск дня (час 23) не успел дописать копию: следующая попытка только завтра утром, поэтому 502. Раньше её доделает следующий запуск.
+      const backupBad = backup.state === 'error' || (backup.state === 'partial' && now.hour >= LAST_HOUR);
+      return res.status(st.failed || st.errors || left || backupBad ? 502 : 200).json({ ...when, ...info, ...st, left, backup });
+    } finally {
+      if (token) await unlock(lk, token).catch((e) => console.error('unlock failed', e && e.message));
+    }
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'failed', message: e.message });

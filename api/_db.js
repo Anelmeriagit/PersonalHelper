@@ -67,6 +67,11 @@ local v = redis.call('GET', KEYS[1])
 if v then redis.call('DEL', KEYS[1]) end
 return v`;
 
+// Снять замок только если он ещё наш (значение совпадает): истёкший и взятый другим запуском замок не трогаем.
+export const UNLOCK = `-- unlock
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
+
 /* ---------- документ: хэш {d: JSON, v: версия}; запись только при совпадении версии ---------- */
 // getDoc → { doc: объект | null, v: номер версии (0, если документа нет) }
 export async function getDoc(k) {
@@ -93,3 +98,10 @@ export const take = async (k) => { const v = await cmd('EVAL', TAKE, 1, k); retu
 
 export const setNx = async (k, v) => (await cmd('SET', k, v, 'NX')) === 'OK';
 export const del = (...ks) => cmd('DEL', ...ks);
+
+// Замок на время (SET NX PX): → метка владельца или null, если занято. Снимать unlock(k, метка).
+export async function lock(k, ms) {
+  const id = globalThis.crypto.randomUUID();
+  return (await cmd('SET', k, id, 'NX', 'PX', ms)) === 'OK' ? id : null;
+}
+export const unlock = (k, id) => cmd('EVAL', UNLOCK, 1, k, id);

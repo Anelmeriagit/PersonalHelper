@@ -1,5 +1,5 @@
 // Личные напоминания аккаунта (этап 3b). Ключ Redis rem:<id аккаунта> (с префиксом DB_PREFIX), запись по версии (CAS) через readRec/writeRec.
-//   { custom:    [ { id, date:'YYYY-MM-DD', slot:'day'|'evening', text, on, sent:boolean } ],
+//   { custom:    [ { id, date:'YYYY-MM-DD', slot:'h07'…'h23' (или старые 'day'|'evening'), text, on, sent:boolean } ],
 //     recurring: [ { id, date:'YYYY-MM-DD' (дата отсчёта), every:'week'|'2weeks'|'month', slot, text, on, sent:{'YYYY-MM-DD':true} } ] }
 // Получатель один: Telegram, привязанный к аккаунту (tg:<id>, см. _acc.js). Постоянных напоминаний и поля «кому» больше нет.
 // Состояние бота (псевдонимы, ожидающие запросы) лежит отдельно, не здесь: бот пишет его на каждое сообщение, а эту запись читает и пишет cron.
@@ -15,11 +15,12 @@ export const RECURRING_MAX = 30; // не больше 30 повторяющих�
 export const EVERY = ['week', '2weeks', 'month']; // каждую неделю / каждые 2 недели / каждый месяц
 
 /* ---------- время: Москва ---------- */
-export function mskNow(d = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+// → { month, date, hour }: hour — час по Москве (0–23). Время берётся через Date.now(), чтобы тесты могли его подменять.
+export function mskNow(d = new Date(Date.now())) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(d);
   const g = (t) => parts.find((x) => x.type === t).value;
   const month = g('year') + '-' + g('month');
-  return { month, date: month + '-' + g('day') };
+  return { month, date: month + '-' + g('day'), hour: parseInt(g('hour'), 10) };
 }
 
 /* ---------- повторяющиеся: когда срабатывают ---------- */
@@ -39,7 +40,14 @@ export function recNext(it, from) {
   return '';
 }
 
-export const SLOT_HOUR = { day: 14, evening: 18 }; // слоты: после 14:00 и после 18:00 по Москве
+// Слоты «после HH:00» по Москве: часовая сетка h07…h23 (ключ 'h' + две цифры часа). Старые 'day' (14:00) и 'evening' (18:00) остаются допустимыми и равны h14 и h18:
+// записи не переписываются, расписание сравнивает слоты по часу (planRem, planShr).
+export const FIRST_HOUR = 7, LAST_HOUR = 23;
+export const SLOT_HOUR = (() => {
+  const o = { day: 14, evening: 18 };
+  for (let h = FIRST_HOUR; h <= LAST_HOUR; h++) o['h' + String(h).padStart(2, '0')] = h;
+  return o;
+})();
 export const MAX_DAYS = 370; // чуть больше года вперёд (на сайте 365)
 export const MAX_TEXT = 300;
 
@@ -106,7 +114,7 @@ export async function mutateRem(id, fn) {
 }
 
 /* ---------- вид для сайта ---------- */
-const slotKey = (it) => it.slot === 'evening' ? 'b' : 'a';
+const slotKey = (it) => String(SLOT_HOUR[it.slot]).padStart(2, '0'); // для сортировки: час слота
 const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
 
 export const publicCustom = (rem) => rem.custom
@@ -137,19 +145,23 @@ export async function pubRem(id, rem, ctx) {
 }
 
 /* ---------- расписание ---------- */
-// Что отправить сегодня в этом слоте. Меняет rem: помечает отправки заранее, чтобы повторный запуск cron не дублировал.
+// Пора ли слать: slot задан (ручной запуск /api/cron?slot=…) — только слот ровно этого часа, время суток не смотрим; slot не задан и в now есть hour —
+// всё, чей час уже наступил (догоняем в тот же день, пометка «отправлено» не даёт дубля); нет ни того ни другого (сухой прогон с date) — весь день.
+const hourDue = (it, now, slot) => (slot ? SLOT_HOUR[it.slot] === SLOT_HOUR[slot] : typeof now.hour !== 'number' || SLOT_HOUR[it.slot] <= now.hour);
+
+// Что отправить сегодня: см. hourDue. Меняет rem: помечает отправки заранее, чтобы повторный запуск cron не дублировал.
 // → [{ kind:'custom'|'rec', cid, text, date }]. Вызывать внутри mutateRem и только для аккаунтов с привязанным Telegram.
 export function planRem(rem, now, slot) {
   const out = [];
   for (const it of rem.custom) {
     if (it.on === false || it.sent || it.date !== now.date) continue;
-    if (slot && it.slot !== slot) continue;
+    if (!hourDue(it, now, slot)) continue;
     it.sent = true;
     out.push({ kind: 'custom', cid: it.id, text: it.text, date: now.date });
   }
   for (const it of rem.recurring) {
     if (it.on === false || it.sent[now.date] || !recDue(it, now.date)) continue;
-    if (slot && it.slot !== slot) continue;
+    if (!hourDue(it, now, slot)) continue;
     it.sent[now.date] = true;
     out.push({ kind: 'rec', cid: it.id, text: it.text, date: now.date });
   }
@@ -247,13 +259,13 @@ export function planShr(shr, now, slot, side) {
   const out = [];
   for (const it of shr.custom) {
     if (!it.on[side] || it.sent[side] || it.date !== now.date) continue;
-    if (slot && it.slot !== slot) continue;
+    if (!hourDue(it, now, slot)) continue;
     it.sent[side] = true;
     out.push({ kind: 'custom', cid: it.id, text: it.text, date: now.date, shared: true });
   }
   for (const it of shr.recurring) {
     if (!it.on[side] || (it.sent[now.date] && it.sent[now.date][side]) || !recDue(it, now.date)) continue;
-    if (slot && it.slot !== slot) continue;
+    if (!hourDue(it, now, slot)) continue;
     it.sent[now.date] = { ...(it.sent[now.date] || { a: false, b: false }), [side]: true };
     out.push({ kind: 'rec', cid: it.id, text: it.text, date: now.date, shared: true });
   }

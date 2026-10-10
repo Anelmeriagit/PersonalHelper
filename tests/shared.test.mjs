@@ -4,7 +4,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { __reset, __keys, __raw, __cmdLog } from './redis.mjs';
-import { mockReq, mockRes, setEnv, mkAccount, linkUser } from './helpers.mjs';
+import { mockReq, mockRes, setEnv, mkAccount, linkUser, pinMsk } from './helpers.mjs';
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -264,6 +264,8 @@ test('вид ключа shr известен резервной копии (hash
 });
 
 /* ---------- рассылка cron ---------- */
+// cron берёт время суток из часов: эти тесты идут в 14:30 по Москве (дневной слот наступил, вечерний нет).
+const tcron = (name, fn) => test(name, (t) => { pinMsk(t, 14, 30); return fn(t); });
 const AUTH = { authorization: 'Bearer test-cron-secret' };
 const TODAY = () => rem.mskNow().date;
 const hex = (() => { let n = 0; return () => (++n).toString(16).padStart(12, '0'); })();
@@ -299,7 +301,7 @@ async function tgPair() {
 const addShared = (a, b, text, o = {}) => rem.mutateShr(a, b, (s) => { s.custom.push({ id: hex(), date: TODAY(), slot: 'day', text, on: { a: true, b: true }, sent: { a: false, b: false }, ...o }); });
 const addSharedRec = (a, b, text) => rem.mutateShr(a, b, (s) => { s.recurring.push({ id: hex(), date: TODAY(), every: 'week', slot: 'day', text, on: { a: true, b: true }, sent: {} }); });
 
-test('cron: общее уходит каждому в свой Telegram один раз, повторный запуск не дублирует; личное и общее раздельно', async (t) => {
+tcron('cron: общее уходит каждому в свой Telegram один раз, повторный запуск не дублирует; личное и общее раздельно', async (t) => {
   const calls = mockTg(t);
   const { a, b, ca, cb } = await tgPair();
   await addShared(a, b, 'общее'); await addSharedRec(a, b, 'общий повтор');
@@ -314,7 +316,7 @@ test('cron: общее уходит каждому в свой Telegram один
   assert.equal(calls.filter((c) => c.method === 'sendMessage').length, 5);
 });
 
-test('cron: галочка партнёра выключена — ему не шлём, себе шлём; слот evening не трогает дневное', async (t) => {
+tcron('cron: галочка партнёра выключена — ему не шлём, себе шлём; слот evening не трогает дневное', async (t) => {
   const calls = mockTg(t);
   const { a, b, ca, cb } = await tgPair();
   await addShared(a, b, 'без Бориса', { on: { [rem.sideOf(a, b)]: true, [rem.sideOf(b, a)]: false } });
@@ -326,7 +328,7 @@ test('cron: галочка партнёра выключена — ему не �
   assert.deepEqual(sentTo(calls, cb), ['🔔 вечернее']);
 });
 
-test('cron: у партнёра нет Telegram — ему ничего не помечается и не уходит; привязал позже в тот же день — получит при повторном запуске', async (t) => {
+tcron('cron: у партнёра нет Telegram — ему ничего не помечается и не уходит; привязал позже в тот же день — получит при повторном запуске', async (t) => {
   const calls = mockTg(t);
   const a = await linkUser(acc, 'anna', { id: ++tid, username: 'anna' }), b = await mkAccount(acc, 'boris');
   const { token } = await acc.createPairToken(a);
@@ -342,7 +344,7 @@ test('cron: у партнёра нет Telegram — ему ничего не п�
   assert.equal(calls.filter((c) => c.method === 'sendMessage').length, 2);
 });
 
-test('cron: сбой отправки одной стороне снимает отметку только у неё, повтор доставляет; блокировка бота отметку оставляет', async (t) => {
+tcron('cron: сбой отправки одной стороне снимает отметку только у неё, повтор доставляет; блокировка бота отметку оставляет', async (t) => {
   let failFor = null;
   const calls = mockTg(t, (body) => (String(body.chat_id) === failFor ? { status: 500, body: { ok: false, description: 'Internal error' } } : null));
   const { a, b, ca, cb } = await tgPair();
@@ -368,7 +370,7 @@ test('cron: сбой отправки одной стороне снимает �
   assert.equal((await rem.readShr(a, b)).shr.custom.find((x) => x.text === 'второе').sent[sb], true);
 });
 
-test('cron: сухой прогон считает общее и ничего не пишет; после разрыва общее не рассылается', async (t) => {
+tcron('cron: сухой прогон считает общее и ничего не пишет; после разрыва общее не рассылается', async (t) => {
   const calls = mockTg(t);
   const { a, b } = await tgPair();
   await addShared(a, b, 'общее');
@@ -383,11 +385,22 @@ test('cron: сухой прогон считает общее и ничего н
   assert.equal(calls.length, 0);
 });
 
-test('cron: расход команд — аккаунт без связи платит одним GET pair, без напоминаний на сегодня', async (t) => {
+tcron('cron: расход команд — аккаунт без связи платит одним GET pair, без напоминаний на сегодня', async (t) => {
   mockTg(t);
   const a = await linkUser(acc, 'anna', { id: ++tid, username: 'anna' });
   __cmdLog(true);
   await run({ dry: '1' });
   const log = __cmdLog().filter((c) => /pair:|shr:/.test(c));
   assert.deepEqual(log, ['GET pair:' + a]);
+});
+
+test('общие напоминания: слоты сетки принимаются, planShr сверяет слот по часу', async (t) => {
+  AT(t);
+  const { a } = await mkPair();
+  const r = await post(custom, a, { date: '2026-10-12', slot: 'h16', text: 'общее', shared: true });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.body.shared.custom[0].slot, 'h16');
+  assert.equal((await post(custom, a, { date: '2026-10-12', slot: 'h06', text: 'x', shared: true })).body.error, 'bad request');
+  const shr = rem.normShr({ custom: [{ id: 'aaaaaaaaaaaa', date: '2026-10-10', slot: 'h14', text: 'x', on: { a: true, b: true }, sent: { a: false, b: false } }, { id: 'bbbbbbbbbbbb', date: '2026-10-10', slot: 'h15', text: 'y', on: { a: true, b: true }, sent: { a: false, b: false } }] });
+  assert.deepEqual(rem.planShr(shr, { month: '2026-10', date: '2026-10-10' }, 'day', 'a').map((x) => x.text), ['x']);
 });

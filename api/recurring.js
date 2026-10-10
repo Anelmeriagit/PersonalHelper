@@ -3,7 +3,7 @@ import { session } from './_lib.js';
 import { EVERY, RECURRING_MAX, SLOT_HOUR, MAX_TEXT, mskNow, hourMsk, validDate, cleanText, own, idOk, lastDay, target, newShrRec } from './_rem.js';
 
 // Повторяющиеся напоминания аккаунта из сессии. Данные: rem:<id> (см. _rem.js).
-//   POST   /api/recurring   {date:'YYYY-MM-DD', every:'week'|'2weeks'|'month', slot:'day'|'evening', text, shared?:true}
+//   POST   /api/recurring   {date:'YYYY-MM-DD', every:'week'|'2weeks'|'month', slot:'h07'…'h23' (или 'day'|'evening'), text, shared?:true}
 //   PUT    /api/recurring   {id, key:'on', value:boolean, shared?:true, who?:'me'|'partner'}   — включить / выключить
 //   PUT    /api/recurring   {id, text?, date?, slot?, every?, shared?:true}                    — правка (date — новая дата отсчёта)
 //   DELETE /api/recurring?id=<id>[&shared=1]

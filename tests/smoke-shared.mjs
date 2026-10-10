@@ -72,7 +72,7 @@ export async function shared({ stand, browser, fail }) {
         if ((await cnt(`${formSel} [data-d="${tomorrow}"]`)) === 0) await page.click(`${formSel} [data-nav="1"]`);
         await page.click(`${formSel} [data-d="${tomorrow}"]`);
       };
-      const save = async (formSel) => { await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); }); await page.click(formSel + ' [data-f=save]'); };
+      const save = async (formSel) => { await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); }); await page.locator(formSel + ' [data-f=save]').evaluate((el) => el.scrollIntoView({ block: 'center' })); await page.click(formSel + ' [data-f=save]'); };
       const arm = () => page.evaluate(() => { document.getElementById('remMsg').textContent = ''; });
       const lastCall = (m, kind) => calls.filter((c) => c[0] === m && c[1] === kind).pop();
       const saved = () => page.waitForFunction(() => /Сохранено/.test(document.getElementById('remMsg').textContent), null, { timeout: 5000 });
@@ -128,14 +128,14 @@ export async function shared({ stand, browser, fail }) {
         await page.click('#shrTmpAdd');
         check((await cnt('#shrTmpForm:not([hidden])')) === 1 && (await cnt('#tmpForm:not([hidden])')) === 0, 'форма открыта только у общих');
         await pickDay('#shrTmpForm');
-        await page.click('#shrTmpForm [data-s=day]');
+        await page.click('#shrTmpForm [data-s=h14]');
         check(/Новое общее напоминание/.test(await page.locator('#shrTmpForm').innerText()) && /Придёт вам и «/.test(await page.locator('#shrTmpForm').innerText()), 'форма: заголовок и подсказка про обоих');
         await noHScroll('форма общего');
         await page.fill('#tText', 'Вместе в кино');
         await save('#shrTmpForm');
         await page.waitForFunction(() => document.querySelectorAll('#shrTmpList .rc').length === 3, null, { timeout: 5000 });
         c = lastCall('POST', 'custom');
-        check(c[2] === true && JSON.stringify(c[3]) === JSON.stringify({ date: tomorrow, slot: 'day', text: 'Вместе в кино', shared: true }), 'POST общего временного: ' + JSON.stringify(c));
+        check(c[2] === true && JSON.stringify(c[3]) === JSON.stringify({ date: tomorrow, slot: 'h14', text: 'Вместе в кино', shared: true }), 'POST общего временного: ' + JSON.stringify(c));
         const made = page.locator('#shrTmpList .rc', { hasText: 'Вместе в кино' });
         check((await made.locator('.sw[aria-checked=true]').count()) === 2, 'новое общее: обе галочки включены');
         check((await cnt('#tmpList .rc')) === 1, 'в личные оно не попало');
@@ -144,12 +144,12 @@ export async function shared({ stand, browser, fail }) {
         await page.click('#shrRecAdd');
         await pickDay('#shrRecForm');
         await page.click('#shrRecForm [data-e=week]');
-        await page.click('#shrRecForm [data-s=evening]');
+        await page.click('#shrRecForm [data-s=h18]');
         await page.fill('#tText', 'Счётчики');
         await save('#shrRecForm');
         await page.waitForFunction(() => document.querySelectorAll('#shrRecList .rc').length === 2, null, { timeout: 5000 });
         c = lastCall('POST', 'recurring');
-        check(c[2] === true && JSON.stringify(c[3]) === JSON.stringify({ date: tomorrow, slot: 'evening', text: 'Счётчики', every: 'week', shared: true }), 'POST общего повторяющегося: ' + JSON.stringify(c));
+        check(c[2] === true && JSON.stringify(c[3]) === JSON.stringify({ date: tomorrow, slot: 'h18', text: 'Счётчики', every: 'week', shared: true }), 'POST общего повторяющегося: ' + JSON.stringify(c));
 
         // ---------- правка ----------
         await page.click('#shrTmpList [data-edit="dddddddddddd"]');
@@ -182,6 +182,7 @@ export async function shared({ stand, browser, fail }) {
         // ---------- не соединён: shared нет в ответе ----------
         await page.reload({ waitUntil: 'load' });
         await page.waitForSelector('#tmpList .rc', { timeout: 5000 });
+        await page.waitForSelector('#mainNav:not([hidden])', { timeout: 5000 }); // нижняя панель на телефоне появляется после проверки сессии: без ожидания она накрывает кнопки внизу экрана посреди клика
         check((await page.locator('#shrCol').isHidden()) && (await page.locator('#remStage .rgrp:not([hidden])').count()) === 1, 'без shared рамки «Общие» нет');
         check(!/Общие/.test(await page.locator('#remStage').evaluate((e) => Array.prototype.filter.call(e.querySelectorAll('*'), (x) => x.offsetParent !== null).map((x) => x.children.length ? '' : x.textContent).join(' '))), 'слова «Общие» на экране нет');
         await noHScroll('не соединён');

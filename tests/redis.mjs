@@ -2,7 +2,7 @@
 // Подключается через tests/register.mjs: подменяет globalThis.fetch только для адреса KV_REST_API_URL,
 // остальные запросы идут в прежний fetch. Код в api/ менять не нужно.
 // Поддержано то, что использует код проекта: GET, SET (NX, XX, EX, PX), DEL, EXISTS, INCR, DECR, EXPIRE, PEXPIRE, PTTL,
-// HGET, HGETALL, HMGET, HSET, TYPE, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и три скрипта EVAL (по первой строке «-- cas», «-- hit» и «-- take», см. api/_db.js).
+// HGET, HGETALL, HMGET, HSET, TYPE, SADD, SREM, SMEMBERS, SISMEMBER, SCARD, SCAN (MATCH, COUNT; курсор — смещение в отсортированном списке ключей) и четыре скрипта EVAL (по первой строке «-- cas», «-- hit», «-- take» и «-- unlock», см. api/_db.js).
 // Сами Lua-скрипты здесь НЕ исполняются: заглушка повторяет их смысл на JS. Реальный Redis проверяется отдельно (notes/CHECKLIST.md).
 process.env.KV_REST_API_URL = process.env.KV_REST_API_URL || 'https://redis.test';
 process.env.KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN || 'test-redis-token';
@@ -92,6 +92,12 @@ function evalScript(script, keys, argv) {
     if (!e) return null;
     store.delete(k);
     return e.v;
+  }
+  if (script.startsWith('-- unlock')) {
+    const e = str(k);
+    if (!e || e.v !== String(argv[0])) return 0;
+    store.delete(k);
+    return 1;
   }
   throw rerr('ERR заглушка не знает этот скрипт EVAL');
 }

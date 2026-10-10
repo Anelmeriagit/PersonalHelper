@@ -1,10 +1,13 @@
 // Этап 3b: рассылка api/cron.js по привязанным аккаунтам (tgs → rem:<id> → tg:<id>.chat), лимит скорости, бюджет времени, сбои.
 // Заглушка Redis и мок-fetch к Telegram. Запуск: node --import ./tests/register.mjs --test "tests/*.test.mjs"
-import { test, beforeEach } from 'node:test';
+import { test as rawTest, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { __reset, __keys } from './redis.mjs';
-import { mockReq, mockRes, setEnv, linkUser, fakeClock } from './helpers.mjs';
+import { __reset, __keys, __raw, __cmdLog } from './redis.mjs';
+import { mockReq, mockRes, setEnv, linkUser, fakeClock, pinMsk } from './helpers.mjs';
+
+// Каждый тест идёт в 14:30 по Москве (дневной слот наступил, вечерний нет): cron берёт время суток из часов.
+const test = (name, fn) => rawTest(name, (t) => { pinMsk(t, 14, 30); return fn(t); });
 
 setEnv();
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
@@ -198,8 +201,9 @@ test('сухой прогон: считает, но не отправляет и
   const keysBefore = __keys().join();
   const r = await run({ dry: '1' });
   assert.equal(r.statusCode, 200);
-  assert.deepEqual([r.body.dry, r.body.accounts, r.body.would_send], [true, 1, 2], 'без slot считаются оба слота');
+  assert.deepEqual([r.body.dry, r.body.accounts, r.body.would_send], [true, 1, 1], 'без slot: то, чей час наступил (14:30: дневное, вечернее ещё нет)');
   assert.equal((await run({ dry: '1', slot: 'evening' })).body.would_send, 1);
+  assert.equal((await run({ dry: '1', date: TODAY() })).body.would_send, 2, 'с date без часа считается весь день');
   assert.equal((await run({ dry: '1', date: '2020-01-01' })).body.would_send, 0);
   assert.equal(calls.length, 0);
   assert.equal(JSON.stringify((await rem.readRem(a)).rem), before);
@@ -217,4 +221,148 @@ test('заголовки: ответ не кэшируется; без Redis —
   const bad = await run();
   __fail(null);
   assert.equal(bad.statusCode, 500);
+});
+
+/* ---------- запуск по текущему времени, role, пульс, замок (этап 5, переход на внешний планировщик, часть 2) ---------- */
+const db = await import('../api/_db.js');
+const hbKey = () => db.key('cron', 'hb');
+const lockKey = () => db.key('cron', 'lock');
+const TXT = (calls) => sent(calls).map((x) => x.body.text);
+
+test('по времени: уходит всё, чей час наступил, с догонянием в тот же день; раньше срока и повторно не уходит', async (t) => {
+  const calls = mockTg(t);
+  const a = await mkUser('anna');
+  for (const s of ['h07', 'h14', 'h15', 'h23']) await addCustom(a, s, s);
+  await addRec(a, 'повтор h09', 'h09');
+  pinMsk(t, 6, 50);
+  const r0 = await run();
+  assert.deepEqual([r0.body.sent, r0.body.hour, r0.body.date], [0, 6, '2026-10-14'], 'до 07:00 ничего');
+  pinMsk(t, 14, 30);
+  const r1 = await run();
+  assert.deepEqual(TXT(calls).sort(), ['🔔 h07', '🔔 h14', '🔔 повтор h09'], 'догнали утренние');
+  assert.equal(r1.body.slot, undefined);
+  assert.equal((await run()).body.sent, 0, 'повтор не дублирует');
+  pinMsk(t, 15, 5);
+  assert.equal((await run()).body.sent, 1);
+  assert.equal(TXT(calls).at(-1), '🔔 h15');
+  pinMsk(t, 23, 50);
+  assert.equal((await run()).body.sent, 1);
+  assert.equal(TXT(calls).at(-1), '🔔 h23');
+  assert.equal(sent(calls).length, 5);
+});
+
+test('по времени: вчерашнее неотправленное не догоняется, завтрашнее не уходит', async (t) => {
+  const calls = mockTg(t);
+  const a = await mkUser('anna');
+  await addCustom(a, 'вчера', 'h07', '2026-10-13'); await addCustom(a, 'завтра', 'h07', '2026-10-15');
+  pinMsk(t, 20, 0);
+  assert.equal((await run()).body.sent, 0);
+  assert.equal(calls.length, 0);
+});
+
+test('slot: ручной запуск одного слота ровно этого часа, время суток не смотрим; мусорный slot — 400', async (t) => {
+  const calls = mockTg(t);
+  const a = await mkUser('anna');
+  await addCustom(a, 'в 10', 'h10'); await addCustom(a, 'в 20', 'h20');
+  const r = await run({ slot: 'h20' });
+  assert.deepEqual([r.statusCode, r.body.sent, r.body.slot], [200, 1, 'h20']);
+  assert.deepEqual(TXT(calls), ['🔔 в 20']);
+  for (const bad of ['h06', 'h24', 'night', '', 'constructor']) assert.equal((await run({ slot: bad })).statusCode, 400, bad);
+  assert.equal(calls.length, 1);
+});
+
+test('role: основной ставит пульс, ручной слот и сухой прогон пульс не ставят; неизвестная роль — 400', async (t) => {
+  mockTg(t);
+  await mkUser('anna');
+  assert.equal((await run({ role: 'boss' })).statusCode, 400);
+  assert.equal(__keys().some((k) => k.includes('cron:')), false, 'при ошибке параметров ничего не записано');
+  await run({ dry: '1' }); await run({ slot: 'h10' });
+  assert.equal(__raw(hbKey()), undefined, 'сухой прогон и ручной слот пульса не ставят');
+  const r = await run({ role: 'primary' });
+  assert.deepEqual([r.statusCode, r.body.role, r.body.took_over, r.body.last], [200, 'primary', false, null]);
+  assert.ok(Number(__raw(hbKey())) > 0);
+  const r2 = await run();
+  assert.match(r2.body.last, /^2026-10-14T11:3\d:/, 'last — когда основной сработал до этого запуска (14:30 МСК = 11:30 UTC)');
+});
+
+test('запасной: основной сработал меньше 15 минут назад — пропуск без работы; молчит дольше — берёт рассылку сам (took_over)', async (t) => {
+  const calls = mockTg(t);
+  const clock = fakeClock(t);
+  const a = await mkUser('anna'); await addCustom(a, 'Анна', 'h14');
+  await run(); // основной: пульс
+  await addCustom(a, 'новое', 'h14');
+  clock.advance(14 * 60 * 1000);
+  __cmdLog(true);
+  const sk = await run({ role: 'backup' });
+  assert.deepEqual([sk.statusCode, sk.body.skipped, sk.body.took_over, sk.body.role], [200, 'primary alive', false, 'backup']);
+  assert.match(sk.body.last, /^\d{4}-\d\d-\d\dT/);
+  assert.equal(sent(calls).length, 1, 'запасной ничего не отправил');
+  assert.deepEqual(__cmdLog(), ['GET cron:hb'], 'пропуск стоит одной команды');
+  clock.advance(2 * 60 * 1000); // 16 минут тишины
+  const tk = await run({ role: 'backup' });
+  assert.deepEqual([tk.statusCode, tk.body.took_over, tk.body.sent, tk.body.skipped], [200, true, 1, undefined]);
+  assert.deepEqual(TXT(calls), ['🔔 Анна', '🔔 новое']);
+  assert.equal((await run({ role: 'backup' })).body.took_over, true, 'запасной не ставит пульс: основной по-прежнему считается молчащим');
+});
+
+test('запасной без единого пульса (основной ещё не подключён) берёт рассылку сам; сухой прогон показывает took_over и last, ничего не пишет', async (t) => {
+  const calls = mockTg(t);
+  const a = await mkUser('anna'); await addCustom(a, 'Анна', 'h14');
+  const keys = __keys().join();
+  const d = await run({ dry: '1', role: 'backup' });
+  assert.deepEqual([d.body.dry, d.body.took_over, d.body.last, d.body.would_send, d.body.hour], [true, true, null, 1, 14]);
+  assert.equal(__keys().join(), keys, 'сухой прогон не писал: ни пульса, ни замка');
+  const r = await run({ role: 'backup' });
+  assert.deepEqual([r.body.took_over, r.body.sent], [true, 1]);
+  assert.equal(sent(calls).length, 1);
+  await run(); // основной ожил
+  const d2 = await run({ dry: '1', role: 'backup' });
+  assert.deepEqual([d2.body.skipped, d2.body.took_over, d2.body.dry], ['primary alive', false, true]);
+});
+
+test('замок: занято — 200 {busy:true} без работы; после запуска замок снят; просроченный замок не мешает', async (t) => {
+  const calls = mockTg(t);
+  const clock = fakeClock(t);
+  const a = await mkUser('anna'); await addCustom(a, 'Анна', 'h14');
+  await db.cmd('SET', lockKey(), 'чужой', 'NX', 'PX', 30000);
+  const b = await run();
+  assert.deepEqual([b.statusCode, b.body.busy, b.body.sent], [200, true, undefined]);
+  assert.equal(calls.length, 0);
+  assert.equal(__raw(lockKey()), 'чужой', 'чужой замок не тронут');
+  assert.ok(Number(__raw(hbKey())) > 0, 'пульс основного ставится и при занятом замке: он жив');
+  assert.equal((await run({ dry: '1' })).statusCode, 200, 'сухой прогон замок не берёт');
+  clock.advance(30001); // замок истёк
+  const r = await run();
+  assert.equal(r.body.sent, 1);
+  assert.equal(__raw(lockKey()), undefined, 'замок снят в конце запуска');
+  // снятие не трогает замок, который успел взять другой запуск
+  const tok = await db.lock(lockKey(), 30000);
+  assert.ok(tok);
+  assert.equal(await db.lock(lockKey(), 30000), null);
+  await db.unlock(lockKey(), 'не тот');
+  assert.equal(__raw(lockKey()), tok);
+  await db.unlock(lockKey(), tok);
+  assert.equal(__raw(lockKey()), undefined);
+});
+
+test('замок снимается и при ошибке запуска (502), повторный вызов сразу работает', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  mockTg(t);
+  const a = await mkUser('anna'); await addCustom(a, 'Анна', 'h14');
+  const { __fail } = await import('./redis.mjs');
+  __fail('network', 'rem:' + a);
+  assert.equal((await run()).statusCode, 502);
+  __fail(null);
+  assert.equal(__raw(lockKey()), undefined);
+  assert.equal((await run()).body.sent, 1);
+});
+
+test('расход команд: запуск без аккаунтов — пульс, замок, список tgs, отметка копии и снятие замка (6 команд)', async (t) => {
+  mockTg(t);
+  __cmdLog(true);
+  const r = await run();
+  assert.equal(r.statusCode, 200);
+  const log = __cmdLog();
+  assert.ok(log.length <= 7, log.join(' | '));
+  assert.ok(log[0].startsWith('GET cron:hb') && log.includes('EVAL cron:lock'), log.join(' | '));
 });

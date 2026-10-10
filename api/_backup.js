@@ -4,7 +4,7 @@
 //
 // Что копируется: ключи с префиксом DB_PREFIX (в бою пустой). Типы string, hash и set: другие типы код проекта не использует,
 // их копия пропускает и считает в stats.other. Известные виды ключей (KNOWN) читаются сразу по типу, без TYPE и PTTL (срока жизни у них нет):
-// одна команда на ключ. Временные виды (TEMP: rl, tgt, tgp, cnt, cnp) не копируются, считаются в stats.temp. Неизвестные виды читаются как раньше:
+// одна команда на ключ. Временные виды (TEMP: rl, tgt, tgp, cnt, cnp, cron) не копируются, считаются в stats.temp. Неизвестные виды читаются как раньше:
 // TYPE и PTTL, оставшееся время жизни (PTTL) сохраняется.
 // В записях ключ хранится БЕЗ префикса: копию боевой базы можно проверить в тестовом префиксе («t:»), см. restoreCmds.
 // При пустом префиксе пропускаются чужие ключи тестового проекта (SKIP_PREFIXES), иначе они попали бы в боевую копию.
@@ -179,7 +179,7 @@ const kindOf = (rel) => { const i = rel.indexOf(':'); return i < 0 ? rel : rel.s
 export const KNOWN = new Map([['acc', 'string'], ['nick', 'string'], ['tg', 'string'], ['tgu', 'string'], ['users', 'string'], ['gid', 'string'], ['pair', 'string'],
   ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['shr', 'hash'], ['tgs', 'set']]);
 // Временные ключи (счётчики лимитов, одноразовые ссылки привязки): не копируются, число идёт в stats.temp.
-export const TEMP = new Set(['rl', 'tgt', 'tgp', 'cnt', 'cnp']);
+export const TEMP = new Set(['rl', 'tgt', 'tgp', 'cnt', 'cnp', 'cron']); // cron: пульс cron:hb, замок cron:lock, отметка копии cron:bk
 
 // Один шаг обхода: SCAN от курсора → записи найденных ключей. Вызывать, пока done не станет true; курсор — строка, его можно
 // сохранить и продолжить позже (4.2). → {recs, cursor, done, stats:{scanned, copied, gone, changed, foreign, temp, other:{тип: число}}}

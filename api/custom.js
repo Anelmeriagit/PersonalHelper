@@ -3,7 +3,7 @@ import { session } from './_lib.js';
 import { CUSTOM_MAX, SLOT_HOUR, MAX_TEXT, mskNow, hourMsk, validDate, cleanText, own, idOk, lastDay, target, newShrCustom, anySent } from './_rem.js';
 
 // Временные (разовые) напоминания аккаунта из сессии. Данные: rem:<id> (см. _rem.js).
-//   POST   /api/custom           {date:'YYYY-MM-DD', slot:'day'|'evening', text, shared?:true}
+//   POST   /api/custom           {date:'YYYY-MM-DD', slot:'h07'…'h23' (или 'day'|'evening'), text, shared?:true}
 //   PUT    /api/custom           {id, key:'on', value:boolean, shared?:true, who?:'me'|'partner'}   — включить / выключить
 //   PUT    /api/custom           {id, text?, date?, slot?, shared?:true}                            — правка текста, даты, времени
 //   DELETE /api/custom?id=<id>[&shared=1]
