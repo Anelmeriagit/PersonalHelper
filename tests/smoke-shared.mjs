@@ -20,6 +20,7 @@ export async function shared({ stand, browser, fail }) {
       const page = await ctx.newPage();
       const problems = [];
       const calls = [];
+      let seq = 0; // id созданных записей: уникальные, даже после удаления
       const tomorrow = mskDay(1);
       const state = {
         custom: [{ id: 'aaaaaaaaaaaa', date: mskDay(3), slot: 'day', text: 'Личное', on: true, sent: false }],
@@ -48,7 +49,7 @@ export async function shared({ stand, browser, fail }) {
           const list = sh ? state.shared[kind] : state[kind];
           if (m === 'POST') {
             const b = { ...body }; delete b.shared;
-            list.push({ id: String(list.length + 1).padStart(12, sh ? 'd' : 'c'), on: true, ...(sh ? { pon: true } : {}), ...(kind === 'custom' ? { sent: false, ...(sh ? { psent: false } : {}) } : { next: b.date }), ...b });
+            list.push({ id: String(++seq).padStart(12, sh ? 'd' : 'c'), on: true, ...(sh ? { pon: true } : {}), ...(kind === 'custom' ? { sent: false, ...(sh ? { psent: false } : {}) } : b.days ? { every: 'month', date: tomorrow, next: tomorrow } : { next: b.date }), ...b });
           } else if (m === 'PUT') {
             const it = list.find((x) => x.id === body.id);
             if (it && body.key === 'on') { if (sh && body.who === 'partner') it.pon = body.value; else it.on = body.value; }
@@ -151,6 +152,21 @@ export async function shared({ stand, browser, fail }) {
         c = lastCall('POST', 'recurring');
         check(c[2] === true && JSON.stringify(c[3]) === JSON.stringify({ date: tomorrow, slot: 'h18', text: 'Счётчики', every: 'week', shared: true }), 'POST общего повторяющегося: ' + JSON.stringify(c));
 
+        // ---------- создание общего повторяющегося по числам месяца ----------
+        await page.click('#shrRecAdd');
+        await page.click('#shrRecForm [data-by="days"]');
+        await page.click('#shrRecForm [data-n="15"]');
+        await page.click('#shrRecForm [data-n="1"]');
+        check((await cnt('#shrRecForm [data-e]')) === 0 && (await cnt('#shrRecForm [data-h]:disabled')) === 0, 'общее по числам: частоты нет, время не заблокировано');
+        await page.click('#shrRecForm [data-h="9"]');
+        await page.fill('#tText', 'Квартплата');
+        await noHScroll('общая форма по числам месяца');
+        await save('#shrRecForm');
+        await page.waitForFunction(() => document.querySelectorAll('#shrRecList .rc').length === 3, null, { timeout: 5000 });
+        c = lastCall('POST', 'recurring');
+        check(c[2] === true && JSON.stringify(c[3]) === JSON.stringify({ days: [1, 15], slot: 'h09', text: 'Квартплата', shared: true }), 'POST общего по числам: ' + JSON.stringify(c));
+        check(/1, 15 числа, после 09:00/.test(await page.locator('#shrRecList .rc', { hasText: 'Квартплата' }).innerText()), 'общая карточка: «1, 15 числа, после 09:00»');
+
         // ---------- правка ----------
         await page.click('#shrTmpList [data-edit="dddddddddddd"]');
         check(/Изменение общего напоминания/.test(await page.locator('#shrTmpForm').innerText()), 'правка: заголовок про общее');
@@ -166,7 +182,7 @@ export async function shared({ stand, browser, fail }) {
         await page.click('#shrRecList [data-del="ffffffffffff"]');
         check((await cnt('#shrRecList [data-del="ffffffffffff"].arm')) === 1, 'удаление общего: «Уверены?»');
         await page.click('#shrRecList [data-del="ffffffffffff"]');
-        await page.waitForFunction(() => document.querySelectorAll('#shrRecList .rc').length === 1, null, { timeout: 5000 });
+        await page.waitForFunction(() => document.querySelectorAll('#shrRecList .rc').length === 2, null, { timeout: 5000 });
         c = lastCall('DELETE', 'recurring');
         check(c[2] === true && /shared=1/.test(c[4]) && c[3] === 'ffffffffffff', 'DELETE общего с shared=1: ' + JSON.stringify(c));
         await noHScroll('после правок');

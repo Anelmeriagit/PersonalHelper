@@ -1,6 +1,7 @@
 /* «Напоминания»: временные (/api/custom) и повторяющиеся (/api/recurring) — форма «календарь → частота → время → текст» и списки.
    Те же списки и форма есть у общих напоминаний пары (третья колонка «Общие», ответ сервера: rem.shared; запросы с shared:true, галочка у каждого из двоих).
-   Открыта может быть только одна форма: R.fm.kind — 'tmp' или 'rec', R.fm.sh — общее ли. */
+   Открыта может быть только одна форма: R.fm.kind — 'tmp' или 'rec', R.fm.sh — общее ли.
+   У повторяющегося два способа задать дни: по дате (календарь + частота, R.fm.by==='date') и по числам месяца (сетка 1…31, R.fm.by==='days', R.fm.days; сервер сам ставит every и первую дату). */
 import {$,esc,cap,nrm,IC} from '../util.js';
 import {MN,clock,mskMins,ymd,addDays,shiftM,dLabel} from '../time.js';
 import {api,authFail} from '../api.js';
@@ -28,7 +29,10 @@ function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,a
 function src(kind,sh){var o=sh?R.rem&&R.rem.shared:R.rem;return(o&&(kind==='rec'?o.recurring:o.custom))||[]}
 function pname(){var s=R.rem&&R.rem.shared;return nrm(s&&s.name)||'Helper User'}
 function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskMins()>=slotMins(slot))}
-function slotOff(date,slot){return slotPassed(date,slot)&&!(R.fm&&R.fm.id&&date===R.fm.od&&slotNorm(slot)===slotNorm(R.fm.os))}
+/* повторяющееся «по числам месяца»: даты и частоты в форме нет, «время уже прошло» считает сервер */
+function isDays(){return!!R.fm&&R.fm.kind==='rec'&&R.fm.by==='days'}
+function hasDays(it){return!!it&&Array.isArray(it.days)&&it.days.length>0}
+function slotOff(date,slot){if(isDays())return false;return slotPassed(date,slot)&&!(R.fm&&R.fm.id&&date===R.fm.od&&slotNorm(slot)===slotNorm(R.fm.os))}
 function tmpFind(id,sh){return src('tmp',sh).filter(function(x){return x.id===id})[0]}
 function recFind(id,sh){return src('rec',sh).filter(function(x){return x.id===id})[0]}
 function tmpPast(it){return it.sent||it.psent||it.date<clock().day}
@@ -47,18 +51,32 @@ function calHtml(){
     '<div class="cal">'+h+'</div>'}
 function evHint(){var a=R.fm.date.split('-'),d=+a[2],w=WDV[new Date(Date.UTC(+a[0],+a[1]-1,d)).getUTCDay()];
   return 'Первое напоминание — '+dLabel(R.fm.date)+', дальше '+EV[R.fm.every]+(R.fm.every==='month'?', '+d+'-го числа'+(d>28?' (если такого числа в месяце нет, то в последний день месяца)':''):' '+w)+'.'}
+function daysHtml(){var h='';
+  for(var d=1;d<=31;d++){var on=R.fm.days.indexOf(d)>=0;
+    h+='<button type="button" data-n="'+d+'" aria-pressed="'+on+'" aria-label="'+d+'-е число">'+d+'</button>'}
+  return '<div class="cal cal-n" role="group" aria-label="Числа месяца">'+h+'</div>'}
+function daysHint(){var a=R.fm.days;
+  if(!a.length)return 'Выберите одно или несколько чисел месяца.';
+  return 'Напоминание придёт '+(a.length>1?'в каждое из выбранных чисел':a[0]+'-го числа')+' каждый месяц'+(a[a.length-1]>28?' (если такого числа в месяце нет, то в последний день месяца)':'')+'.'}
+function byHtml(){
+  return '<div class="slots bys" role="group" aria-label="Как задать дни">'+[['date','По дате'],['days','По числам месяца']].map(function(x){
+    var on=(R.fm.by||'date')===x[0];
+    return '<button class="chip'+(on?' on':'')+'" type="button" data-by="'+x[0]+'" aria-pressed="'+on+'">'+x[1]+'</button>'}).join('')+'</div>'}
 export function fmRender(focus){
   var k=R.fm?K(R.fm.kind,R.fm.sh):null,rec=!!R.fm&&R.fm.kind==='rec';
   FORMS.forEach(function(f){if(!k||f!==k.form){f.hidden=true;f.innerHTML=''}});
   ADDS.forEach(function(a){a.hidden=!!k&&a===k.add});
   if(!R.fm)return;
   k.form.hidden=false;
-  var n=1,h=(R.fm.id||R.fm.sh?'<h4 class="et">'+(R.fm.id?'Изменение '+(R.fm.sh?'общего напоминания':'напоминания'):'Новое общее напоминание')+'</h4>':'')+'<h4>'+(n++)+'. Дата'+(R.fm.date?': '+dLabel(R.fm.date):'')+'</h4>'+calHtml(),ready=false;
-  if(rec&&R.fm.date){
+  var byD=isDays(),n=1,h=(R.fm.id||R.fm.sh?'<h4 class="et">'+(R.fm.id?'Изменение '+(R.fm.sh?'общего напоминания':'напоминания'):'Новое общее напоминание')+'</h4>':'')+
+    (byD?'<h4>'+(n++)+'. Числа месяца'+(R.fm.days.length?': '+R.fm.days.join(', '):'')+'</h4>'+byHtml()+daysHtml()+'<p class="rd">'+daysHint()+'</p>'
+        :'<h4>'+(n++)+'. Дата'+(R.fm.date?': '+dLabel(R.fm.date):'')+'</h4>'+(rec?byHtml():'')+calHtml()),ready=false,
+      dateOk=byD?R.fm.days.length>0:!!R.fm.date;
+  if(rec&&!byD&&R.fm.date){
     h+='<h4>'+(n++)+'. Как часто повторять</h4><div class="slots" role="group" aria-label="Частота повторения">'+EVK.map(function(e){
       return '<button class="chip'+(R.fm.every===e?' on':'')+'" type="button" data-e="'+e+'" aria-pressed="'+(R.fm.every===e)+'">'+cap(EV[e])+'</button>'}).join('')+'</div>'+
       (R.fm.every?'<p class="rd">'+evHint()+'</p>':'')}
-  if(R.fm.date&&(!rec||R.fm.every)){
+  if(dateOk&&(!rec||byD||R.fm.every)){
     var free=0,mn=R.fm.mn||'00',sh=R.fm.slot?slotHour(R.fm.slot):-1;
     h+='<h4>'+(n++)+'. Время</h4><div class="tpick" role="group" aria-label="Время отправки"><div class="tcol" data-hc="1" role="group" aria-label="Час">'+HRS.map(function(x){
       var off=slotOff(R.fm.date,slotKey(x,'00'))&&slotOff(R.fm.date,slotKey(x,'30')),on=sh===x;if(!off)free++;
@@ -67,7 +85,7 @@ export function fmRender(focus){
       var off=sh>=0&&slotOff(R.fm.date,slotKey(sh,m)),on=mn===m;
       return '<button class="chip'+(on?' on':'')+'" type="button" data-m="'+m+'"'+(off?' disabled':'')+' aria-pressed="'+on+'">'+m+'</button>'}).join('')+'</div></div>'+
       '<p class="rd">'+(free?'Сообщение приходит в Telegram в течение примерно 10 минут после выбранного времени.':'На сегодня все времена уже прошли. Выберите другую дату.')+'</p>'}
-  if(R.fm.date&&R.fm.slot&&(!rec||R.fm.every)){ready=true;
+  if(dateOk&&R.fm.slot&&(!rec||byD||R.fm.every)){ready=true;
     h+='<h4>'+(n++)+'. Текст</h4><label class="sr" for="tText">Текст напоминания</label>'+
       '<textarea class="tta" id="tText" maxlength="300" rows="3" placeholder="Текст напоминания">'+esc(R.fm.text)+'</textarea>'+
       (R.fm.sh&&!R.fm.id?'<p class="rd">Придёт вам и «'+esc(pname())+'» в Telegram. Обе галочки включены, их можно поменять в списке.</p>':'')+
@@ -78,10 +96,12 @@ export function fmRender(focus){
   var nc=k.form.querySelector('[data-hc]');
   if(nc){var tb=nc.querySelector('.chip.on')||nc.querySelector('.chip:not(:disabled)');nc.scrollTop=st>=0?st:(tb?Math.max(0,tb.offsetTop-6):0)}
   if(focus){var f=k.form.querySelector(focus);if(f&&!f.disabled)f.focus()}}
-function openForm(kind,sh){var c=clock();R.fm={kind:kind,sh:!!sh,vm:c.cur,date:'',slot:'',every:'',text:''};fmRender('[data-d="'+c.day+'"]');listsRender()}
+function openForm(kind,sh){var c=clock();R.fm={kind:kind,sh:!!sh,vm:c.cur,date:'',slot:'',every:'',text:'',by:'date',days:[]};fmRender('[data-d="'+c.day+'"]');listsRender()}
 function formClick(e){var b=e.target.closest('button');if(!b||!R.fm||b.disabled)return;
   if(b.dataset.d){R.fm.date=b.dataset.d;if(R.fm.slot&&slotOff(R.fm.date,R.fm.slot))R.fm.slot='';fmRender('[data-d="'+R.fm.date+'"]')}
   else if(b.dataset.nav){R.fm.vm=shiftM(R.fm.vm,+b.dataset.nav);fmRender('[data-nav="'+b.dataset.nav+'"]')}
+  else if(b.dataset.by){R.fm.by=b.dataset.by==='days'?'days':'date';if(R.fm.by==='date'&&R.fm.date&&R.fm.slot&&slotOff(R.fm.date,R.fm.slot))R.fm.slot='';fmRender('[data-by="'+R.fm.by+'"]')}
+  else if(b.dataset.n){var dn=+b.dataset.n,di=R.fm.days.indexOf(dn);if(di>=0)R.fm.days.splice(di,1);else{R.fm.days.push(dn);R.fm.days.sort(function(x,y){return x-y})}fmRender('[data-n="'+dn+'"]')}
   else if(b.dataset.e){R.fm.every=b.dataset.e;fmRender('[data-e="'+R.fm.every+'"]')}
   else if(b.dataset.h){var hh=+b.dataset.h,mm=R.fm.mn||'00';if(slotOff(R.fm.date,slotKey(hh,mm)))mm=mm==='00'?'30':'00';R.fm.mn=mm;R.fm.slot=slotKey(hh,mm);fmRender('[data-h="'+hh+'"]')}
   else if(b.dataset.m){R.fm.mn=b.dataset.m;if(R.fm.slot)R.fm.slot=slotKey(slotHour(R.fm.slot),R.fm.mn);fmRender('[data-m="'+R.fm.mn+'"]')}
@@ -93,16 +113,22 @@ function fmSave(){
   var kind=R.fm.kind,sh=!!R.fm.sh,k=K(kind,sh),rec=kind==='rec',err=$('fmErr'),btn=k.form.querySelector('[data-f="save"]'),text=R.fm.text.trim(),id=R.fm.id,m='POST',body;
   if(!text){err.textContent='Напишите текст напоминания.';return}
   if(id){m='PUT';body={id:id};
-    var evCh=rec&&R.fm.every!==R.fm.oe;
-    // смена частоты без смены даты: отсчёт идёт от показанной ближайшей даты, иначе расписание «поедет»
-    if(R.fm.date!==R.fm.od||evCh)body.date=R.fm.date;
+    var byD=isDays(),evCh=rec&&!byD&&R.fm.every!==R.fm.oe,toDate=rec&&!byD&&!!R.fm.ods;
+    if(byD){
+      // по числам месяца: date и every сервер ставит сам, их не шлём; days — только если числа изменились
+      if(R.fm.days.join(',')!==R.fm.ods)body.days=R.fm.days.slice()}
+    else if(toDate){body.date=R.fm.date;body.every=R.fm.every}// из чисел месяца обратно в расписание по дате: date и every вместе убирают days
+    else{
+      // смена частоты без смены даты: отсчёт идёт от показанной ближайшей даты, иначе расписание «поедет»
+      if(R.fm.date!==R.fm.od||evCh)body.date=R.fm.date;
+      if(evCh)body.every=R.fm.every}
     if(R.fm.slot!==R.fm.os)body.slot=R.fm.slot;
-    if(evCh)body.every=R.fm.every;
     if(text!==R.fm.ot)body.text=text;
     if(Object.keys(body).length<2){R.fm=null;fmRender();listsRender();var q=k.list.querySelector('[data-edit="'+id+'"]');if(q)q.focus();return}
   }else{
-    body={date:R.fm.date,slot:R.fm.slot,text:text};
-    if(rec)body.every=R.fm.every}
+    if(isDays())body={days:R.fm.days.slice(),slot:R.fm.slot,text:text};
+    else{body={date:R.fm.date,slot:R.fm.slot,text:text};
+      if(rec)body.every=R.fm.every}}
   if(sh)body.shared=true;
   err.textContent='';btn.disabled=true;
   api(m,k.url,body).then(function(r){
@@ -122,8 +148,10 @@ function tmpEdit(id,sh){var it=tmpFind(id,sh),c=clock();
 function recEdit(id,sh){var it=recFind(id,sh),c=clock();
   if(!it)return;
   var d=it.next&&it.next>=c.day?it.next:c.day;
-  R.fm={kind:'rec',sh:!!sh,id:id,vm:d.slice(0,7),date:d,slot:it.slot,mn:slotMinute(it.slot)?'30':'00',every:it.every,od:d,os:it.slot,oe:it.every,ot:it.text,text:it.text};
-  listsRender();fmRender('[data-d="'+d+'"]');K('rec',sh).form.scrollIntoView({block:'nearest'})}
+  var dd=hasDays(it);
+  R.fm={kind:'rec',sh:!!sh,id:id,vm:d.slice(0,7),date:d,slot:it.slot,mn:slotMinute(it.slot)?'30':'00',every:it.every,od:d,os:it.slot,oe:it.every,ot:it.text,text:it.text,
+    by:dd?'days':'date',days:dd?it.days.slice():[],ods:dd?it.days.join(','):''};
+  listsRender();fmRender(dd?'[data-n="'+it.days[0]+'"]':'[data-d="'+d+'"]');K('rec',sh).form.scrollIntoView({block:'nearest'})}
 
 /* списки */
 /* строка с переключателем: у личного одна («Включено»), у общего две — своя и партнёра (менять может любой из двоих) */
@@ -147,7 +175,7 @@ function tmpItemHtml(it,sh){
 function recItemHtml(it,sh){
   var armed=R.delArm===it.id,on=sh?(it.on||it.pon):it.on;
   return '<section class="rc tmp rec'+(sh?' shr':'')+(on?'':' off')+(R.fm&&R.fm.id===it.id?' editing':'')+'" data-t="'+esc(it.id)+'">'+
-    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+cap(EV[it.every]||'')+', '+slotLbl(it.slot)+(on?'':' · Выключено')+'</p>'+
+    '<div class="rh"><div><p class="tt">'+esc(it.text)+'</p><p class="rd">'+(hasDays(it)?esc(it.days.join(', '))+' числа':cap(EV[it.every]||''))+', '+slotLbl(it.slot)+(on?'':' · Выключено')+'</p>'+
     (it.next?'<p class="rd">Ближайшее: '+dLabel(it.next)+'</p>':'')+'</div>'+delBtns(it,sh,armed,true)+'</div>'+
     swRows(it,sh,false)+'</section>'}
 function listRender(kind,sh){

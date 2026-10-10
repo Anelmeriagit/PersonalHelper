@@ -417,3 +417,6 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .tcol .chip{flex:none;min-width:4.6rem;padding:.65rem .6rem;text-align:center;font-variant-numeric:tabular-nums;scroll-snap-align:start}
 .tcol.tmin{max-height:none;overflow:visible}
 .tsep{align-self:center;font-weight:700;color:var(--muted,inherit)}
+/* повторяющееся: способ задать дни (по дате / по числам месяца) и сетка чисел 1…31 */
+.bys{margin:0 0 .6rem}
+.cal-n{margin-bottom:.25rem}
