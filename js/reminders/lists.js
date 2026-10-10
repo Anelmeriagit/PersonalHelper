@@ -59,7 +59,7 @@ export function fmRender(focus){
     var free=0;
     h+='<h4>'+(n++)+'. Время</h4><div class="slots hrs" role="group" aria-label="Время отправки">'+HRS.map(function(x){var s='h'+p2(x),off=slotOff(R.fm.date,s),on=slotNorm(R.fm.slot)===s;if(!off)free++;
       return '<button class="chip'+(on?' on':'')+'" type="button" data-s="'+s+'"'+(off?' disabled':'')+' aria-pressed="'+on+'">'+p2(x)+':00</button>'}).join('')+'</div>'+
-      '<p class="rd">'+(free?'Сообщение приходит в Telegram вскоре после выбранного времени.':'На сегодня все времена уже прошли. Выберите другую дату.')+'</p>'}
+      '<p class="rd">'+(free?'Сообщение приходит в Telegram в течение примерно 10 минут после начала выбранного часа.':'На сегодня все времена уже прошли. Выберите другую дату.')+'</p>'}
   if(R.fm.date&&R.fm.slot&&(!rec||R.fm.every)){ready=true;
     h+='<h4>'+(n++)+'. Текст</h4><label class="sr" for="tText">Текст напоминания</label>'+
       '<textarea class="tta" id="tText" maxlength="300" rows="3" placeholder="Текст напоминания">'+esc(R.fm.text)+'</textarea>'+

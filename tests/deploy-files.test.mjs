@@ -54,3 +54,14 @@ test('.gitignore закрывает архивы, патчи, логи и вре
   const lines = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8').split(/\r?\n/).map((l) => l.trim());
   for (const must of ['.env', 'node_modules/', '*.zip', '*.patch', '*.log', 'tree.txt']) assert.ok(lines.includes(must), '.gitignore должен содержать ' + must);
 });
+
+test('vercel.json: на Hobby один ежедневный вызов cron (страховка и перестройка индекса), частые запуски идут снаружи', () => {
+  const crons = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8')).crons;
+  assert.equal(crons.length, 1, 'Hobby: cron раз в сутки, лишние записи не нужны');
+  const u = new URL(crons[0].path, 'https://x.invalid');
+  assert.equal(u.pathname, '/api/cron');
+  assert.equal(u.searchParams.get('role'), 'backup', 'ежедневный вызов запасной: при живом основном он ничего не шлёт');
+  assert.equal(u.searchParams.get('rebuild'), '1', 'суточная перестройка индекса dueq');
+  assert.equal(u.searchParams.get('slot'), null);
+  assert.match(crons[0].schedule, /^\d+ \d+ \* \* \*$/, 'раз в сутки: минута и час заданы, остальное звёздочки');
+});
