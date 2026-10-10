@@ -79,9 +79,9 @@ export async function rem({ stand, browser, fail }) {
         // создание временного
         await page.click('#tmpAdd');
         await pickDay('#tmpForm');
-        check((await page.locator('#tmpForm [data-s]').count()) === 17, 'сетка времени: 17 часов');
-        check((await page.locator('#tmpForm [data-s]').first().innerText()) === '07:00' && (await page.locator('#tmpForm [data-s]').last().innerText()) === '23:00', 'сетка времени: от 07:00 до 23:00');
-        await page.click('#tmpForm [data-s=h14]');
+        check((await page.locator('#tmpForm [data-h]').count()) === 17 && (await page.locator('#tmpForm [data-m]').count()) === 2, 'сетка времени: 17 часов и минуты 00 и 30');
+        check((await page.locator('#tmpForm [data-h]').first().innerText()) === '07' && (await page.locator('#tmpForm [data-h]').last().innerText()) === '23', 'сетка времени: часы от 07 до 23');
+        await page.click('#tmpForm [data-h="14"]');
         await save('#tmpForm');
         check(/Напишите текст/.test(await page.locator('#fmErr').innerText()), 'пустой текст: сообщение');
         check(!calls.some((c) => c[0] === 'POST'), 'пустой текст: запроса нет');
@@ -96,13 +96,14 @@ export async function rem({ stand, browser, fail }) {
         await page.click('#recAdd');
         await pickDay('#recForm');
         await page.click('#recForm [data-e=week]');
-        await page.click('#recForm [data-s=h18]');
+        await page.click('#recForm [data-h="18"]');
+        await page.click('#recForm [data-m="30"]');
         await page.fill('#tText', 'Счётчики');
         await noHScroll('форма повторяющегося');
         await save('#recForm');
         await page.waitForFunction(() => document.querySelectorAll('#recList .rc').length === 2, null, { timeout: 5000 });
         const pr = calls.filter((c) => c[0] === 'POST' && c[1] === 'recurring')[0];
-        check(JSON.stringify(pr && pr[2]) === JSON.stringify({ date: tomorrow, slot: 'h18', text: 'Счётчики', every: 'week' }), 'POST /api/recurring без who: ' + JSON.stringify(pr && pr[2]));
+        check(JSON.stringify(pr && pr[2]) === JSON.stringify({ date: tomorrow, slot: 'h18m30', text: 'Счётчики', every: 'week' }), 'POST /api/recurring без who: ' + JSON.stringify(pr && pr[2]));
 
         // удаление с подтверждением «Уверены?»
         await page.click('#recList [data-del="bbbbbbbbbbbb"]');

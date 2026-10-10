@@ -2,7 +2,7 @@
    Те же списки и форма есть у общих напоминаний пары (третья колонка «Общие», ответ сервера: rem.shared; запросы с shared:true, галочка у каждого из двоих).
    Открыта может быть только одна форма: R.fm.kind — 'tmp' или 'rec', R.fm.sh — общее ли. */
 import {$,esc,cap,nrm,IC} from '../util.js';
-import {MN,clock,mskHour,ymd,addDays,shiftM,dLabel} from '../time.js';
+import {MN,clock,mskMins,ymd,addDays,shiftM,dLabel} from '../time.js';
 import {api,authFail} from '../api.js';
 import {R} from './state.js';
 
@@ -11,12 +11,15 @@ var shrCol=$('shrCol'),shrWith=$('shrWith'),rcols=$('rcols'),shrTmpList=$('shrTm
 var FORMS=[tmpForm,recForm,shrTmpForm,shrRecForm],ADDS=[tmpAdd,recAdd,shrTmpAdd,shrRecAdd];
 var NOPAIR='Аккаунты больше не соединены: общих напоминаний нет.';
 var WDV=['в воскресенье','в понедельник','во вторник','в среду','в четверг','в пятницу','в субботу'];
-/* слоты «после HH:00»: сетка h07…h23; старые 'day' и 'evening' равны h14 и h18 (сервер их не переписывает) */
+/* слоты «после HH:MM»: сетка с шагом 30 минут, h07…h23 и h07m30…h23m30; старые 'day' и 'evening' равны h14 и h18 (сервер их не переписывает) */
 var LASTH=23,HRS=[];for(var hi=7;hi<=LASTH;hi++)HRS.push(hi);
 function p2(n){return(n<10?'0':'')+n}
 function slotNorm(s){return s==='day'?'h14':s==='evening'?'h18':s}
 function slotHour(s){return parseInt(String(slotNorm(s)).slice(1),10)||0}
-function slotLbl(s){return 'после '+p2(slotHour(s))+':00'}
+function slotMinute(s){return /m30$/.test(String(slotNorm(s)))?30:0}
+function slotMins(s){return slotHour(s)*60+slotMinute(s)}
+function slotKey(h,mn){return 'h'+p2(h)+(mn==='30'?'m30':'')}
+function slotLbl(s){return 'после '+p2(slotHour(s))+':'+p2(slotMinute(s))}
 var EV={week:'каждую неделю','2weeks':'каждые 2 недели',month:'каждый месяц'},EVK=['week','2weeks','month'];
 var CHEV={'-1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>','1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>'};
 function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,add:shrRecAdd,url:'/api/recurring'}:{form:shrTmpForm,list:shrTmpList,add:shrTmpAdd,url:'/api/custom'};
@@ -24,7 +27,7 @@ function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,a
 /* sh — общие напоминания пары (rem.shared), иначе личные (rem) */
 function src(kind,sh){var o=sh?R.rem&&R.rem.shared:R.rem;return(o&&(kind==='rec'?o.recurring:o.custom))||[]}
 function pname(){var s=R.rem&&R.rem.shared;return nrm(s&&s.name)||'Helper User'}
-function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskHour()>=slotHour(slot))}
+function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskMins()>=slotMins(slot))}
 function slotOff(date,slot){return slotPassed(date,slot)&&!(R.fm&&R.fm.id&&date===R.fm.od&&slotNorm(slot)===slotNorm(R.fm.os))}
 function tmpFind(id,sh){return src('tmp',sh).filter(function(x){return x.id===id})[0]}
 function recFind(id,sh){return src('rec',sh).filter(function(x){return x.id===id})[0]}
@@ -36,7 +39,7 @@ function calHtml(){
       n=new Date(Date.UTC(y,m,0)).getUTCDate(),max=addDays(c.day,365),h='';
   ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(w){h+='<span class="wd" aria-hidden="true">'+w+'</span>'});
   for(var i=0;i<first;i++)h+='<span></span>';
-  for(var d=1;d<=n;d++){var s=ymd(y,m,d),off=s<c.day||s>max||(s===c.day&&mskHour()>=LASTH);
+  for(var d=1;d<=n;d++){var s=ymd(y,m,d),off=s<c.day||s>max||(s===c.day&&mskMins()>=LASTH*60+30);
     h+='<button type="button" data-d="'+s+'"'+(off?' disabled':'')+(s===c.day?' class="today"':'')+' aria-pressed="'+(R.fm.date===s)+'" aria-label="'+dLabel(s)+'">'+d+'</button>'}
   return '<div class="cal-h"><button class="icon-btn" type="button" data-nav="-1" aria-label="Предыдущий месяц"'+(vm<=c.cur?' disabled':'')+'>'+CHEV['-1']+'</button>'+
     '<b>'+MN[m-1]+' '+y+'</b>'+
@@ -56,24 +59,32 @@ export function fmRender(focus){
       return '<button class="chip'+(R.fm.every===e?' on':'')+'" type="button" data-e="'+e+'" aria-pressed="'+(R.fm.every===e)+'">'+cap(EV[e])+'</button>'}).join('')+'</div>'+
       (R.fm.every?'<p class="rd">'+evHint()+'</p>':'')}
   if(R.fm.date&&(!rec||R.fm.every)){
-    var free=0;
-    h+='<h4>'+(n++)+'. Время</h4><div class="slots hrs" role="group" aria-label="Время отправки">'+HRS.map(function(x){var s='h'+p2(x),off=slotOff(R.fm.date,s),on=slotNorm(R.fm.slot)===s;if(!off)free++;
-      return '<button class="chip'+(on?' on':'')+'" type="button" data-s="'+s+'"'+(off?' disabled':'')+' aria-pressed="'+on+'">'+p2(x)+':00</button>'}).join('')+'</div>'+
-      '<p class="rd">'+(free?'Сообщение приходит в Telegram в течение примерно 10 минут после начала выбранного часа.':'На сегодня все времена уже прошли. Выберите другую дату.')+'</p>'}
+    var free=0,mn=R.fm.mn||'00',sh=R.fm.slot?slotHour(R.fm.slot):-1;
+    h+='<h4>'+(n++)+'. Время</h4><div class="tpick" role="group" aria-label="Время отправки"><div class="tcol" data-hc="1" role="group" aria-label="Час">'+HRS.map(function(x){
+      var off=slotOff(R.fm.date,slotKey(x,'00'))&&slotOff(R.fm.date,slotKey(x,'30')),on=sh===x;if(!off)free++;
+      return '<button class="chip'+(on?' on':'')+'" type="button" data-h="'+x+'"'+(off?' disabled':'')+' aria-pressed="'+on+'">'+p2(x)+'</button>'}).join('')+'</div><span class="tsep" aria-hidden="true">:</span>'+
+      '<div class="tcol tmin" role="group" aria-label="Минуты">'+['00','30'].map(function(m){
+      var off=sh>=0&&slotOff(R.fm.date,slotKey(sh,m)),on=mn===m;
+      return '<button class="chip'+(on?' on':'')+'" type="button" data-m="'+m+'"'+(off?' disabled':'')+' aria-pressed="'+on+'">'+m+'</button>'}).join('')+'</div></div>'+
+      '<p class="rd">'+(free?'Сообщение приходит в Telegram в течение примерно 10 минут после выбранного времени.':'На сегодня все времена уже прошли. Выберите другую дату.')+'</p>'}
   if(R.fm.date&&R.fm.slot&&(!rec||R.fm.every)){ready=true;
     h+='<h4>'+(n++)+'. Текст</h4><label class="sr" for="tText">Текст напоминания</label>'+
       '<textarea class="tta" id="tText" maxlength="300" rows="3" placeholder="Текст напоминания">'+esc(R.fm.text)+'</textarea>'+
       (R.fm.sh&&!R.fm.id?'<p class="rd">Придёт вам и «'+esc(pname())+'» в Telegram. Обе галочки включены, их можно поменять в списке.</p>':'')+
       '<p class="err" id="fmErr" role="alert"></p>'}
   h+='<div class="acts">'+(ready?'<button class="done" type="button" data-f="save">'+(R.fm.id?'Сохранить':'Добавить')+'</button>':'')+'<button class="btn" type="button" data-f="cancel">Отмена</button></div>';
+  var oc=k.form.querySelector('[data-hc]'),st=oc?oc.scrollTop:-1;
   k.form.innerHTML=h;
+  var nc=k.form.querySelector('[data-hc]');
+  if(nc){var tb=nc.querySelector('.chip.on')||nc.querySelector('.chip:not(:disabled)');nc.scrollTop=st>=0?st:(tb?Math.max(0,tb.offsetTop-6):0)}
   if(focus){var f=k.form.querySelector(focus);if(f&&!f.disabled)f.focus()}}
 function openForm(kind,sh){var c=clock();R.fm={kind:kind,sh:!!sh,vm:c.cur,date:'',slot:'',every:'',text:''};fmRender('[data-d="'+c.day+'"]');listsRender()}
 function formClick(e){var b=e.target.closest('button');if(!b||!R.fm||b.disabled)return;
   if(b.dataset.d){R.fm.date=b.dataset.d;if(R.fm.slot&&slotOff(R.fm.date,R.fm.slot))R.fm.slot='';fmRender('[data-d="'+R.fm.date+'"]')}
   else if(b.dataset.nav){R.fm.vm=shiftM(R.fm.vm,+b.dataset.nav);fmRender('[data-nav="'+b.dataset.nav+'"]')}
   else if(b.dataset.e){R.fm.every=b.dataset.e;fmRender('[data-e="'+R.fm.every+'"]')}
-  else if(b.dataset.s){R.fm.slot=b.dataset.s;fmRender('#tText')}
+  else if(b.dataset.h){var hh=+b.dataset.h,mm=R.fm.mn||'00';if(slotOff(R.fm.date,slotKey(hh,mm)))mm=mm==='00'?'30':'00';R.fm.mn=mm;R.fm.slot=slotKey(hh,mm);fmRender('[data-h="'+hh+'"]')}
+  else if(b.dataset.m){R.fm.mn=b.dataset.m;if(R.fm.slot)R.fm.slot=slotKey(slotHour(R.fm.slot),R.fm.mn);fmRender('[data-m="'+R.fm.mn+'"]')}
   else if(b.dataset.f==='cancel'){var eid=R.fm.id,k=K(R.fm.kind,R.fm.sh),en;R.fm=null;fmRender();listsRender();en=eid&&k.list.querySelector('[data-edit="'+eid+'"]');(en||k.add).focus()}
   else if(b.dataset.f==='save')fmSave()}
 function formInput(e){if(R.fm&&e.target.id==='tText')R.fm.text=e.target.value}
@@ -105,13 +116,13 @@ function fmSave(){
   }).catch(function(){btn.disabled=false;err.textContent='Не удалось сохранить. Проверьте соединение.'})}
 function tmpEdit(id,sh){var it=tmpFind(id,sh),c=clock();
   if(!it||it.sent||it.psent)return;
-  R.fm={kind:'tmp',sh:!!sh,id:id,vm:it.date<c.day?c.cur:it.date.slice(0,7),date:it.date,slot:it.slot,od:it.date,os:it.slot,ot:it.text,text:it.text};
+  R.fm={kind:'tmp',sh:!!sh,id:id,vm:it.date<c.day?c.cur:it.date.slice(0,7),date:it.date,slot:it.slot,mn:slotMinute(it.slot)?'30':'00',od:it.date,os:it.slot,ot:it.text,text:it.text};
   listsRender();fmRender(it.date<c.day?'#tText':'[data-d="'+it.date+'"]');K('tmp',sh).form.scrollIntoView({block:'nearest'})}
 // правка повторяющегося: показана ближайшая дата, частота, время и текст
 function recEdit(id,sh){var it=recFind(id,sh),c=clock();
   if(!it)return;
   var d=it.next&&it.next>=c.day?it.next:c.day;
-  R.fm={kind:'rec',sh:!!sh,id:id,vm:d.slice(0,7),date:d,slot:it.slot,every:it.every,od:d,os:it.slot,oe:it.every,ot:it.text,text:it.text};
+  R.fm={kind:'rec',sh:!!sh,id:id,vm:d.slice(0,7),date:d,slot:it.slot,mn:slotMinute(it.slot)?'30':'00',every:it.every,od:d,os:it.slot,oe:it.every,ot:it.text,text:it.text};
   listsRender();fmRender('[data-d="'+d+'"]');K('rec',sh).form.scrollIntoView({block:'nearest'})}
 
 /* списки */

@@ -411,3 +411,9 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .cmp{max-width:460px}
 .slots.hrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(4.1rem,1fr));gap:.4rem}
 .slots.hrs .chip{padding:.4rem .2rem;text-align:center;font-variant-numeric:tabular-nums}
+/* Напоминания (2026-10-11): время отправки — прокручиваемый столбец часов и столбец минут 00/30 */
+.tpick{display:flex;align-items:flex-start;gap:.5rem}
+.tcol{display:flex;flex-direction:column;gap:.4rem;max-height:11.5rem;overflow-y:auto;overscroll-behavior:contain;scroll-snap-type:y proximity;padding:.35rem;border:1px solid var(--line);border-radius:12px;position:relative}
+.tcol .chip{flex:none;min-width:4.6rem;padding:.65rem .6rem;text-align:center;font-variant-numeric:tabular-nums;scroll-snap-align:start}
+.tcol.tmin{max-height:none;overflow:visible}
+.tsep{align-self:center;font-weight:700;color:var(--muted,inherit)}

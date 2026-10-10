@@ -8,6 +8,8 @@ export function clock(){var p=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/
   return{cur:mk(y,m),nxt:m===12?mk(y+1,1):mk(y,m+1),late:dd>=25,day:mk(y,m)+'-'+pad(dd)}}
 export function label(k){var a=k.split('-');return MN[+a[1]-1]+' '+a[0]}
 export function mskHour(){return parseInt(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',hour:'2-digit',hourCycle:'h23'}).format(new Date()),10)}
+/* минуты от московской полуночи (для сравнения со слотом «после HH:MM») */
+export function mskMins(){var p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date()),g=function(x){return parseInt(p.filter(function(y){return y.type===x})[0].value,10)};return g('hour')*60+g('minute')}
 export function ymd(y,m,d){return y+'-'+pad(m)+'-'+pad(d)}
 export function addDays(s,n){var a=s.split('-'),d=new Date(Date.UTC(+a[0],+a[1]-1,+a[2]+n));return ymd(d.getUTCFullYear(),d.getUTCMonth()+1,d.getUTCDate())}
 export function shiftM(k,n){var a=k.split('-'),d=new Date(Date.UTC(+a[0],+a[1]-1+n,1));return mk(d.getUTCFullYear(),d.getUTCMonth()+1)}

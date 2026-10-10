@@ -128,7 +128,7 @@ export async function shared({ stand, browser, fail }) {
         await page.click('#shrTmpAdd');
         check((await cnt('#shrTmpForm:not([hidden])')) === 1 && (await cnt('#tmpForm:not([hidden])')) === 0, 'форма открыта только у общих');
         await pickDay('#shrTmpForm');
-        await page.click('#shrTmpForm [data-s=h14]');
+        await page.click('#shrTmpForm [data-h="14"]');
         check(/Новое общее напоминание/.test(await page.locator('#shrTmpForm').innerText()) && /Придёт вам и «/.test(await page.locator('#shrTmpForm').innerText()), 'форма: заголовок и подсказка про обоих');
         await noHScroll('форма общего');
         await page.fill('#tText', 'Вместе в кино');
@@ -144,7 +144,7 @@ export async function shared({ stand, browser, fail }) {
         await page.click('#shrRecAdd');
         await pickDay('#shrRecForm');
         await page.click('#shrRecForm [data-e=week]');
-        await page.click('#shrRecForm [data-s=h18]');
+        await page.click('#shrRecForm [data-h="18"]');
         await page.fill('#tText', 'Счётчики');
         await save('#shrRecForm');
         await page.waitForFunction(() => document.querySelectorAll('#shrRecList .rc').length === 2, null, { timeout: 5000 });
