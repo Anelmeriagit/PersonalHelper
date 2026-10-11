@@ -2,7 +2,9 @@
 // POST /api/auth  { action: 'logout' }
 //   с сессией (этап 5): { action: 'me' } → {id, name, email, tg, partner}; { action: 'rename', name } → {name}; { action: 'delete', confirm: 'удалить' } → {ok}
 //   соединение двух аккаунтов: { action: 'pair-link' } → {token, ttl} (одноразовая ссылка, 409 если связь уже есть);
-//   { action: 'pair-join', token } → {partner:{name}} (соединить с тем, кто дал ссылку); { action: 'pair-drop' } → {partner:{linked:false}} (разорвать, идемпотентно)
+//   { action: 'pair-join', token } → {partner:{name}, wifi:{choose, mine?, partner?, both?}} (соединить с тем, кто дал ссылку; choose — у двоих разные сети Wi-Fi, нужен выбор);
+//   { action: 'pair-wifi', choice? } → {pending:false} | {pending:true, mine, partner, both} (состояние выбора; choice 'mine'|'partner'|'both' его делает; 409 nopair, 400 limit);
+//   { action: 'pair-drop' } → {partner:{linked:false}} (разорвать, идемпотентно)
 // Вход через Google (этап 5, часть 3), обычные переходы браузера, не fetch:
 //   GET /api/auth?action=google     → 302 на Google (код авторизации, state, nonce и PKCE S256; их хранит подписанная cookie cb_oauth, 10 минут)
 //   GET /api/auth?action=google-cb  → обмен кода на сервере, проверка id_token, найти или создать аккаунт по sub, cookie cb_session, 302 на /
@@ -11,6 +13,7 @@
 import crypto from 'node:crypto';
 import { makeCookie, clearCookie, session } from './_lib.js';
 import { dbReady, key, hit } from './_db.js';
+import { wifiChoice } from './wifi.js';
 import { googleAccount, getAcc, getLink, setName, deleteAccount, partnerAcc, createPairToken, joinPair, unpair } from './_acc.js';
 
 const clientIp = (req) => String(req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '?';
@@ -131,6 +134,8 @@ const PAIR_MSG = {
   busy: 'Аккаунт, давший ссылку, уже соединён с другим.',
 };
 const PAIR_CODE = { bad: 404, self: 400, mine: 409, busy: 409 };
+const PAIR_WIFI = { nopair: 409, bad: 400, limit: 400, busy: 409 };
+const PAIR_WIFI_MSG = { nopair: 'Аккаунты не соединены.', bad: 'Неверный выбор.', limit: 'Вместе больше 5 сетей: выберите другой вариант.', busy: 'Не удалось сохранить. Попробуйте ещё раз.' };
 
 // Партнёр для ответа: { linked: true, name } | { linked: false }. Имя пустое, пока не задано (сайт подставляет «Helper User»).
 async function partnerInfo(id) {
@@ -161,7 +166,15 @@ async function mine(req, res, body) {
     if (await hit(key('rl', 'pj', id), PAIR_WIN) > PAIR_JOIN_MAX) return res.status(429).json({ error: 'Слишком часто. Подождите несколько минут.' });
     const r = await joinPair(typeof body.token === 'string' ? body.token : '', id);
     if (r.error) return res.status(PAIR_CODE[r.error] || 400).json({ error: PAIR_MSG[r.error] || PAIR_MSG.bad, code: r.error });
-    return res.status(200).json({ partner: { linked: true, name: r.name } });
+    // Если у обоих разные сети Wi-Fi, сайт спросит, какие оставить (wifi.choose; подробности — действие pair-wifi). Сбой здесь соединение не отменяет: список создастся при первом обращении к Wi-Fi.
+    let wifi = { choose: false };
+    try { const w = await wifiChoice(id, undefined, r.id); if (w.pending) wifi = { choose: true, mine: w.mine, partner: w.partner, both: w.both }; } catch (e) { console.error('auth wifi', e && e.name); }
+    return res.status(200).json({ partner: { linked: true, name: r.name }, wifi });
+  }
+  if (body.action === 'pair-wifi') {
+    const r = await wifiChoice(id, body.choice === undefined ? undefined : String(body.choice));
+    if (r.error) return res.status(PAIR_WIFI[r.error] || 400).json({ error: PAIR_WIFI_MSG[r.error] || PAIR_WIFI_MSG.bad, code: r.error });
+    return res.status(200).json(r.pending ? { pending: true, mine: r.mine, partner: r.partner, both: r.both } : { pending: false });
   }
   if (body.action === 'pair-drop') {
     await unpair(id);
@@ -197,7 +210,7 @@ export default async function handler(req, res) {
     res.setHeader('Set-Cookie', clearCookie);
     return res.status(200).json({ ok: true });
   }
-  if (!['me', 'rename', 'delete', 'pair-link', 'pair-join', 'pair-drop'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
+  if (!['me', 'rename', 'delete', 'pair-link', 'pair-join', 'pair-drop', 'pair-wifi'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
   if (String(process.env.SESSION_SECRET || '').length < 32 || !dbReady()) {
     console.error('auth: не заданы SESSION_SECRET (≥32 символов) или KV_REST_API_URL / KV_REST_API_TOKEN');
     return res.status(500).json({ error: 'Сервер не настроен' });

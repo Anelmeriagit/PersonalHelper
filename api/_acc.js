@@ -15,9 +15,10 @@
 //   cnt:<хеш токена> → id аккаунта, давшего ссылку (одноразовая ссылка /?join=<токен>, живёт PAIR_TTL секунд; сам токен не хранится)
 //   cnp:<id>         → хеш последней выданной ссылки (новая ссылка гасит прежнюю)
 //   shr:<меньший id>:<больший id> → общие напоминания пары (запись _rem.js: readShr/mutateShr); удаляется при разрыве связи (unpair) и при удалении аккаунта
+//   wfs:<меньший id>:<больший id> → общий список Wi-Fi пары (api/wifi.js: { nets } или { nets: [], pend: true }, пока выбор при соединении не сделан); при разрыве копируется в личные wifi:<id> обоих и удаляется
 //   dueq             → индекс cron «кому пора слать» (см. _due.js); члены аккаунта и пары убираются вместе с их данными (deleteAccount, unpair, joinPair)
 import crypto from 'node:crypto';
-import { key, cmd, setNx, del, take } from './_db.js';
+import { key, cmd, setNx, del, take, getDoc, putDoc } from './_db.js';
 import { dueDrop, pairMember } from './_due.js';
 
 export const ID_RE = /^[0-9a-f]{32}$/;
@@ -222,17 +223,35 @@ export async function joinPair(token, id) {
     if ((await cmd('GET', key('pair', a))) === id) await del(key('pair', a));
     return { error: 'mine' };
   }
-  // запись общих напоминаний от прежней связи этой пары (если разрыв не дочистил) новой связи не достаётся
-  await del(key('shr', pairId(a, id)));
+  // записи общих напоминаний и общего Wi-Fi от прежней связи этой пары (если разрыв не дочистил) новой связи не достаются
+  await del(key('shr', pairId(a, id)), key('wfs', pairId(a, id)));
   await dueDrop(pairMember(a, id));
   return { id: a, name: from.name || '' };
+}
+
+// Общий список Wi-Fi при разрыве: копия остаётся у каждого в личной записи wifi:<id> (пустой общий список личные записи убирает).
+// Пока выбор при соединении не сделан (pend) или общей записи нет, личные записи не трогаются. Не удалось записать — ошибка (общая запись остаётся, повтор разрыва дочистит).
+async function copyWifi(a, p) {
+  const { doc } = await getDoc(key('wfs', pairId(a, p)));
+  if (!doc || doc.pend) return;
+  const nets = Array.isArray(doc.nets) ? doc.nets : [];
+  for (const u of [a, p]) {
+    const k = key('wifi', u);
+    let ok = false;
+    for (let i = 0; i < 4 && !ok; i++) {
+      if (!nets.length) { await del(k); ok = true; break; }
+      const cur = await getDoc(k);
+      ok = (await putDoc(k, { nets }, cur.doc ? cur.v : 0)) !== null;
+    }
+    if (!ok) throw new Error('wifi copy busy');
+  }
 }
 
 // Разрыв связи у обоих. Идемпотентен; обратную запись снимает, только если она указывает на этот аккаунт. → id бывшего партнёра | null
 export async function unpair(id) {
   const p = await cmd('GET', key('pair', id));
   // Общие напоминания пары удаляются первыми: если сбой случится дальше, повтор разрыва (связь ещё есть) дочистит остальное.
-  if (p && ID_RE.test(String(p)) && p !== id) { await del(key('shr', pairId(id, String(p)))); await dueDrop(pairMember(id, String(p))); }
+  if (p && ID_RE.test(String(p)) && p !== id) { await copyWifi(id, String(p)); await del(key('shr', pairId(id, String(p))), key('wfs', pairId(id, String(p)))); await dueDrop(pairMember(id, String(p))); }
   await del(key('pair', id));
   if (!p || !ID_RE.test(String(p))) return null;
   if ((await cmd('GET', key('pair', p))) === id) await del(key('pair', p));

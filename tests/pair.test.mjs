@@ -55,7 +55,7 @@ test('pair-join: соединяет двоих, ответ с именем да�
   const a = await named('anna', 'Анна'), b = await named('boris', 'Борис');
   const token = await link(a);
   const r = await post(b.cookie, { action: 'pair-join', token });
-  assert.deepEqual([r.statusCode, r.body], [200, { partner: { linked: true, name: 'Анна' } }]);
+  assert.deepEqual([r.statusCode, r.body], [200, { partner: { linked: true, name: 'Анна' }, wifi: { choose: false } }]);
   assert.equal(__raw('pair:' + a.id), b.id);
   assert.equal(__raw('pair:' + b.id), a.id);
   assert.deepEqual((await post(a.cookie, { action: 'me' })).body.partner, { linked: true, name: 'Борис' });
@@ -183,7 +183,7 @@ test('расход команд: me без связи, pair-link, pair-join', as
   const joinCmds = __cmdLog().length;
   assert.ok(meCmds <= 6, 'me: ' + meCmds);
   assert.ok(linkCmds <= 9, 'pair-link: ' + linkCmds);
-  assert.ok(joinCmds <= 17, 'pair-join: ' + joinCmds);
+  assert.ok(joinCmds <= 19, 'pair-join: ' + joinCmds);
 });
 
 test('резервная копия: pair копируется, cnt и cnp нет', async () => {

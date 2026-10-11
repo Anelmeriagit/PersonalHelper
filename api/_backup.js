@@ -182,7 +182,7 @@ const kindOf = (rel) => { const i = rel.indexOf(':'); return i < 0 ? rel : rel.s
 // Известные виды ключей проекта и их типы Redis (см. notes/backup.md). Срока жизни у них нет, поэтому TYPE и PTTL не нужны.
 // Map, а не объект: вид «constructor» или «__proto__» не должен совпасть со свойством прототипа.
 export const KNOWN = new Map([['acc', 'string'], ['nick', 'string'], ['tg', 'string'], ['tgu', 'string'], ['users', 'string'], ['gid', 'string'], ['pair', 'string'],
-  ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['shr', 'hash'], ['tgs', 'set'], ['dueq', 'zset']]);
+  ['doc', 'hash'], ['rem', 'hash'], ['agent', 'hash'], ['wifi', 'hash'], ['bot', 'hash'], ['shr', 'hash'], ['wfs', 'hash'], ['tgs', 'set'], ['dueq', 'zset']]);
 // Временные ключи (счётчики лимитов, одноразовые ссылки привязки): не копируются, число идёт в stats.temp.
 export const TEMP = new Set(['rl', 'tgt', 'tgp', 'cnt', 'cnp', 'cron']); // cron: пульс cron:hb, замок cron:lock, отметка копии cron:bk
 
