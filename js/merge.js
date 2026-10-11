@@ -3,7 +3,7 @@
    Запросы идут напрямую на сервер (net), мимо api(): сессия уже есть, а 401 здесь не должен переводить сайт в гостя.
    Не удалось записать (нет связи, 5xx, 409, 429, 401) — метка не ставится, слияние повторится при следующем открытии сайта; повтор безопасен (результат тот же). */
 import {net} from './api.js';
-import {guestDump,guestMerged,guestMark,mergeCb,mergeAg} from './local.js';
+import {guestDump,guestMerged,guestMark,mergeCb,mergeAg,mergeWf} from './local.js';
 
 /* ответ раздела с аккаунта или null */
 function jget(u){return net('GET',u).then(function(r){return r.ok?r.json():null}).catch(function(){return null})}
@@ -29,12 +29,20 @@ function doAg(g){
     var m=mergeAg(a.rows,g);
     if(!m.changed)return DONE;
     return put('/api/agent',{rows:m.rows}).then(function(x){return final(x)?{done:true,n:x.status===200?1:0}:RETRY})})}
+/* Wi-Fi: сети гостя, которых у аккаунта нет, добавляются по одной (PUT add:true); повтор после обрыва не задваивает (проверка по названию, защите и паролю) */
 function doWf(g){
   if(!g)return Promise.resolve(DONE);
   return jget('/api/wifi').then(function(a){
     if(!a)return RETRY;
-    if(a.configured)return DONE;
-    return put('/api/wifi',{ssid:g.ssid,security:g.security,password:g.password,hidden:g.hidden}).then(function(x){return final(x)?{done:true,n:x.status===200?1:0}:RETRY})})}
+    var m=mergeWf(Array.isArray(a.nets)?a.nets:(a.configured?[a]:[]),g),i=0,added=0;
+    function next(){
+      if(i>=m.add.length)return Promise.resolve({done:true,n:added});
+      var c=m.add[i++];
+      return put('/api/wifi',{add:true,ssid:c.ssid,security:c.security,password:c.password,hidden:c.hidden}).then(function(x){
+        if(!final(x))return{done:false,n:added};
+        if(x.status!==200)return{done:true,n:added};
+        added++;return next()})}
+    return next()})}
 
 /* j — ответ GET /api/data аккаунта (с его id). Не отклоняется никогда.
    → null (слияния не было или нечего менять) или {j: ответ с новыми данными кэшбэка или undefined, n: сколько частей изменено} */

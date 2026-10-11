@@ -120,34 +120,40 @@ test('гостевой Wi-Fi: ответы и проверка как у сер�
       ok++;
       const c = want.cfg;
       assert.equal(got.status, 200, JSON.stringify(b));
-      assert.deepEqual(got.body, { configured: true, ssid: c.ssid, password: c.password, security: c.security, hidden: c.hidden, qr: sq.makeQr(sw.wifiString(c)) }, JSON.stringify(b));
+      const q = sq.makeQr(sw.wifiString(c));
+      assert.match(got.body.nets[0].id, /^[0-9a-f]{8}$/);
+      assert.deepEqual(got.body, { configured: true, nets: [{ id: got.body.nets[0].id, ssid: c.ssid, password: c.password, security: c.security, hidden: c.hidden, qr: q }], ssid: c.ssid, password: c.password, security: c.security, hidden: c.hidden, qr: q }, JSON.stringify(b));
       assert.deepEqual((await call('GET', '/api/wifi')).body, got.body, 'GET отдаёт то же, что вернул PUT');
     } else {
       bad++;
       assert.equal(got.status, 400, JSON.stringify(b));
       assert.deepEqual(got.body, { error: want.error }, JSON.stringify(b));
-      assert.deepEqual((await call('GET', '/api/wifi')).body, { configured: false }, 'неверные данные не записываются');
+      assert.deepEqual((await call('GET', '/api/wifi')).body, { configured: false, nets: [] }, 'неверные данные не записываются');
     }
   }
   assert.ok(ok > 40 && bad > 20, `верных ${ok}, неверных ${bad}`);
 });
 
 test('гостевой Wi-Fi: GET без сети, DELETE, методы, битая запись, замена данными аккаунта', async () => {
-  assert.deepEqual(await call('GET', '/api/wifi'), { status: 200, body: { configured: false } });
+  assert.deepEqual(await call('GET', '/api/wifi'), { status: 200, body: { configured: false, nets: [] } });
   assert.equal((await call('POST', '/api/wifi', {})).status, 405);
   const net = { ssid: 'HomeNet', password: 'secret-pass-1', security: 'WPA', hidden: false };
   assert.equal((await call('PUT', '/api/wifi', net)).status, 200);
-  assert.deepEqual(await call('DELETE', '/api/wifi'), { status: 200, body: { configured: false } });
+  assert.deepEqual(await call('DELETE', '/api/wifi'), { status: 200, body: { configured: false, nets: [] } });
   assert.equal(store.has('g-wf'), false);
   store.set('g-wf', '{мусор');
-  assert.deepEqual((await call('GET', '/api/wifi')).body, { configured: false }, 'битая запись = сети нет');
+  assert.deepEqual((await call('GET', '/api/wifi')).body, { configured: false, nets: [] }, 'битая запись = сети нет');
   store.set('g-wf', JSON.stringify({ ssid: 'x', password: 'short', security: 'WPA' }));
-  assert.deepEqual((await call('GET', '/api/wifi')).body, { configured: false }, 'запись, не прошедшая проверку, не показывается');
+  assert.deepEqual((await call('GET', '/api/wifi')).body, { configured: false, nets: [] }, 'запись, не прошедшая проверку, не показывается');
   // данные аккаунта (с лишними полями) становятся гостевыми
   assert.equal(local.guestSetWf({ configured: true, ...net, qr: { size: 1, rows: ['1'] } }), true);
-  assert.deepEqual(JSON.parse(store.get('g-wf')), net, 'лишние поля (qr, configured) не сохраняются');
+  assert.deepEqual(JSON.parse(store.get('g-wf')), { nets: [{ id: 'w1', ...net }] }, 'лишние поля (qr, configured) не сохраняются, прежний вид одной сети — список с id w1');
   assert.equal(local.guestSetWf({ ssid: '', security: 'WPA', password: 'secret-pass-1' }), false);
-  assert.deepEqual(JSON.parse(store.get('g-wf')), net, 'непрошедшие проверку данные ничего не меняют');
+  assert.deepEqual(JSON.parse(store.get('g-wf')), { nets: [{ id: 'w1', ...net }] }, 'непрошедшие проверку данные ничего не меняют');
+  assert.equal(local.guestSetWf({ configured: true, nets: [{ id: 'a1', ...net }, { id: 'b2', ...net, ssid: 'Two' }], ssid: net.ssid }), true);
+  assert.deepEqual(JSON.parse(store.get('g-wf')).nets.map((n) => [n.id, n.ssid]), [['a1', 'HomeNet'], ['b2', 'Two']], 'ответ аккаунта со списком сетей переносится целиком');
+  assert.equal(local.guestSetWf({ configured: false, nets: [] }), true);
+  assert.equal(store.has('g-wf'), false, 'пустой список — сети нет');
   assert.equal(local.guestSetWf(null), true);
   assert.equal(store.has('g-wf'), false, 'null — сети нет');
 });
@@ -246,4 +252,50 @@ test('гость: чужие пути отвечают 401, данные не с
   await call('PUT', '/api/wifi', { ssid: 'n', password: 'secret-pass-1', security: 'WPA' });
   await call('PUT', '/api/agent', { rows: [{ app: 'app', h: 1, m: 0 }] });
   assert.deepEqual([...store.keys()].sort(), ['g-ag', 'g-wf']);
+});
+
+/* ---------- список сетей: гость и сервер отвечают одинаково (id заменяются метками по порядку появления) ---------- */
+const { setEnv, mockReq, mockRes, sessionCookie } = await import('./helpers.mjs');
+test('гость и сервер: одна и та же последовательность запросов к списку сетей даёт одни и те же ответы', async () => {
+  setEnv();
+  const lib = await import('../api/_lib.js');
+  const acc = await import('../api/_acc.js');
+  const cookie = await sessionCookie(acc, lib, 'parity');
+  const N = (i, extra = {}) => ({ ssid: 'Net' + i, password: 'secret-pass-' + i, security: 'WPA', hidden: false, ...extra });
+  async function serverCall(m, u, b) {
+    const res = mockRes();
+    const q = /[?&]id=([^&]*)/.exec(u);
+    await sw.default(mockReq({ method: m, headers: { cookie, ...(m === 'PUT' ? { 'content-type': 'application/json' } : {}) }, body: b, query: q ? { id: decodeURIComponent(q[1]) } : undefined }), res);
+    return { status: res.statusCode, body: res.body };
+  }
+  async function run(send) {
+    const labels = new Map();
+    const lab = (id) => { if (!labels.has(id)) labels.set(id, 'N' + labels.size); return labels.get(id); };
+    const norm = (v) => JSON.parse(JSON.stringify(v, (k, x) => (k === 'id' && typeof x === 'string' ? lab(x) : x)));
+    const idOf = (r, i) => r.body.nets[i].id;
+    const out = [];
+    const step = async (m, u, b) => { const r = await send(m, u, b); out.push(norm(r)); return r; };
+    await step('GET', '/api/wifi');
+    let r = await step('PUT', '/api/wifi', N(1));
+    r = await step('PUT', '/api/wifi', N(2, { add: true }));
+    const [a, b] = [idOf(r, 0), idOf(r, 1)];
+    await step('PUT', '/api/wifi', N(3, { id: b, hidden: true }));
+    await step('PUT', '/api/wifi', N(4, { id: 'zzzz' }));
+    await step('PUT', '/api/wifi', N(4, { id: 7 }));
+    await step('PUT', '/api/wifi', N(4, { id: a, add: true }));
+    await step('PUT', '/api/wifi', { ...N(4), password: 'short', add: true });
+    for (let i = 4; i <= 6; i++) r = await step('PUT', '/api/wifi', N(i, { add: true }));
+    await step('PUT', '/api/wifi', N(7, { add: true }));
+    await step('PUT', '/api/wifi', N(8));
+    await step('DELETE', '/api/wifi?id=nope');
+    await step('DELETE', '/api/wifi?id=' + b);
+    await step('DELETE', '/api/wifi');
+    for (let i = 0; i < 5; i++) r = await step('DELETE', '/api/wifi');
+    return out;
+  }
+  const guest = await run(async (m, u, b) => { const r = await local.guestApi(m, u, b); return { status: r.status, body: await r.json() }; });
+  const server = await run(serverCall);
+  assert.deepEqual(guest.map((x) => x.status), server.map((x) => x.status), 'коды ответов');
+  assert.deepEqual(guest, server);
+  assert.ok(guest.some((x) => x.status === 404) && guest.some((x) => x.body.error === 'limit') && guest.some((x) => x.body.error === 'bad'));
 });

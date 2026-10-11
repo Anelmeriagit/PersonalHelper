@@ -3,9 +3,9 @@
    Проверка значений та же, что на сервере; править обе части синхронно:
    кэшбэк (/api/data) — api/_lib.js (clean, cleanCustom, cleanBlocks, PART_RE) и api/data.js (PUT);
    агент (/api/agent) — api/agent.js (cleanApp, cleanRows, withAt, nextAt);
-   Wi-Fi (/api/wifi) — api/wifi.js (cleanWifi, wifiString), QR строит js/qr.js (парный файл к api/_qr.js): пароль сети на сервер не уходит.
+   Wi-Fi (/api/wifi, список сетей до 5) — api/wifi.js (cleanWifi, wifiString, normNets, ответы GET/PUT/DELETE), QR строит js/qr.js (парный файл к api/_qr.js): пароль сети на сервер не уходит.
    Остальные пути (напоминания, Telegram, вход) отвечают 401, как сервер без входа.
-   Слияние гостевых данных с аккаунтом при входе через Google: чистые функции guestDump, mergeCb, mergeAg и метка «уже сливали» (guestMerged, guestMark) здесь,
+   Слияние гостевых данных с аккаунтом при входе через Google: чистые функции guestDump, mergeCb, mergeAg, mergeWf и метка «уже сливали» (guestMerged, guestMark) здесь,
    сетевая часть — merge.js. */
 import {ls} from './util.js';
 import {clock,shiftM} from './time.js';
@@ -122,26 +122,57 @@ function cleanWifi(b){var o=b&&typeof b==='object'?b:{},security=SEC.indexOf(o.s
   if(W_BAD.test(pw))return{error:'password'};
   var n=pw.length,ok=security==='WPA'?(n>=8&&n<=63)||(n===64&&HEX.test(pw)):n===5||n===13||((n===10||n===26)&&HEX.test(pw));
   return ok?{cfg:{ssid:ssid,password:pw,security:security,hidden:hidden}}:{error:'password'}}
-function wifiView(cfg){return cfg?{configured:true,ssid:cfg.ssid,password:cfg.password,security:cfg.security,hidden:cfg.hidden,qr:makeQr(wifiString(cfg))}:{configured:false}}
-function wfCfg(){var raw=read(K_WF),c=raw?cleanWifi(raw):null;return c&&c.cfg}
-/* данные аккаунта становятся гостевыми: null — сети нет (запись удаляется), иначе проверенные данные сети; false, если не записалось */
-export function guestSetWf(v){if(v===null)return drop(K_WF);var c=cleanWifi(v);return c.cfg?write(K_WF,c.cfg):false}
-function wifiReq(m,b){
+var NETS_MAX=5,NET_ID=/^[a-z0-9]{2,12}$/;
+/* список сетей из записи: {nets:[...]} или прежний вид одной сети (id 'w1'); негодные и лишние сверх 5 пропускаются, негодный или повторный id заменяется на w1, w2… (зеркало normNets в api/wifi.js) */
+function normNets(raw){if(!raw||typeof raw!=='object')return[];
+  var list=Array.isArray(raw.nets)?raw.nets:raw.ssid!==undefined?[Object.assign({},raw,{id:'w1'})]:[],out=[],seen={};
+  list.forEach(function(o){if(out.length>=NETS_MAX)return;var c=cleanWifi(o);if(!c.cfg)return;
+    var id=o&&typeof o.id==='string'&&NET_ID.test(o.id)&&!seen[o.id]?o.id:null,i=1;
+    if(!id){while(seen['w'+i])i++;id='w'+i}
+    seen[id]=1;out.push({id:id,ssid:c.cfg.ssid,password:c.cfg.password,security:c.cfg.security,hidden:c.cfg.hidden})});
+  return out}
+function newNetId(nets){var a=new Uint8Array(4),id,i;
+  do{crypto.getRandomValues(a);id='';for(i=0;i<4;i++)id+=('0'+a[i].toString(16)).slice(-2)}while(nets.some(function(n){return n.id===id}));return id}
+/* ответ: {configured, nets:[{id,…,qr}]}; пока сайт не перешёл на список, поля первой сети дублируются наверху */
+function wifiView(nets){if(!nets.length)return{configured:false,nets:[]};
+  var list=nets.map(function(n){return Object.assign({},n,{qr:makeQr(wifiString(n))})}),f=list[0];
+  return{configured:true,nets:list,ssid:f.ssid,password:f.password,security:f.security,hidden:f.hidden,qr:f.qr}}
+function wfNets(){return normNets(read(K_WF))}
+function wfSave(nets){return nets.length?write(K_WF,{nets:nets}):drop(K_WF)}
+/* данные аккаунта становятся гостевыми: null или пустой список — сети нет (запись удаляется), иначе проверенные сети (v — ответ GET /api/wifi или прежний вид одной сети); false, если не записалось или ни одна не прошла проверку */
+export function guestSetWf(v){if(v===null)return drop(K_WF);
+  if(v&&Array.isArray(v.nets)&&!v.nets.length)return drop(K_WF);
+  var nets=normNets(v);return nets.length?write(K_WF,{nets:nets}):false}
+function wifiReq(m,b,u){
   if(m!=='GET'&&m!=='PUT'&&m!=='DELETE')return out(405,{error:'method'});
-  if(m==='DELETE')return drop(K_WF)?out(200,{configured:false}):out(500,{error:'storage'});
-  if(m==='GET')return out(200,wifiView(wfCfg()));
+  var nets=wfNets(),next,id,q;
+  if(m==='GET')return out(200,wifiView(nets));
+  if(m==='DELETE'){
+    q=/[?&]id=([^&]*)/.exec(String(u));id='';try{id=q?decodeURIComponent(q[1]):''}catch(e){}
+    next=id?nets.filter(function(n){return n.id!==id}):nets.slice(1);
+    if(next.length===nets.length)return out(200,wifiView(nets));
+    return wfSave(next)?out(200,wifiView(next)):out(500,{error:'storage'})}
   var c=cleanWifi(b);
   if(!c.cfg)return out(400,{error:c.error});
-  var v=wifiView(c.cfg);
-  return write(K_WF,c.cfg)?out(200,v):out(500,{error:'storage'})}
+  var add=b.add===true,bid=b.id;
+  if((bid!==undefined&&typeof bid!=='string')||(add&&bid!==undefined))return out(400,{error:'bad'});
+  var i;
+  if(add){if(nets.length>=NETS_MAX)return out(400,{error:'limit'});next=nets.concat([Object.assign({id:newNetId(nets)},c.cfg)])}
+  else{i=bid!==undefined?nets.map(function(n){return n.id}).indexOf(bid):0;
+    if(bid!==undefined&&i<0)return out(404,{error:'nonet'});
+    if(!nets.length)next=[Object.assign({id:newNetId(nets)},c.cfg)];
+    else{next=nets.slice();next[i]=Object.assign({id:nets[i].id},c.cfg)}}
+  var v=wifiView(next);
+  if(JSON.stringify(next)===JSON.stringify(nets))return out(200,v);
+  return wfSave(next)?out(200,v):out(500,{error:'storage'})}
 
 /* ---------- слияние гостевых данных с аккаунтом при входе через Google (часть 4; сеть — merge.js) ----------
    Правило: на конфликте побеждает аккаунт, гость заполняет пробелы. Выполняется один раз на аккаунт в этом браузере (метка g-mg). */
 /* гостевые данные как есть; часть, которой у гостя нет, — null (кэшбэк: пустой документ; агент: список ни разу не сохранялся) */
-export function guestDump(){var d=cbDoc(),ag=read(K_AG),wf=wfCfg();
+export function guestDump(){var d=cbDoc(),ag=read(K_AG),wf=wfNets();
   return{cb:Object.keys(d.months).length||d.custom.length?pub(d):null,
     ag:ag&&Array.isArray(ag.rows)&&ag.rows.length?cleanRows(ag.rows,true).slice(0,AG_MAX):null,
-    wf:wf||null}}
+    wf:wf.length?wf.map(function(n){return{ssid:n.ssid,password:n.password,security:n.security,hidden:n.hidden}}):null}}
 /* кэшбэк: месяц и банк, которых нет в аккаунте, копируются (месяц вне окна «прошлый … +2», которого у аккаунта нет, сервер создать не даст, он пропускается); свои категории объединяются (аккаунт первым, до 30).
    → {data: итоговый документ, parts: ключи изменённых частей (месяцы и 'custom')} */
 export function mergeCb(acc,gst){
@@ -170,6 +201,13 @@ export function mergeAg(acc,gst){
     if((r.h===null||r.m===null)&&g.h!==null&&g.m!==null){rows[i]={id:r.id,app:r.app,h:g.h,m:g.m,at:null};changed=true}});
   extra.forEach(function(g){if(rows.length>=AG_MAX)return;rows.push({id:agId(),app:g.app,h:g.h,m:g.m,at:null});changed=true});
   return{rows:rows,changed:changed}}
+/* Wi-Fi: сети гостя, которых нет у аккаунта (по названию, защите и паролю), добавляются, пока в аккаунте не станет 5; аккаунт первым, повтор ничего не задваивает.
+   acc — сети аккаунта (ответ GET /api/wifi), gst — сети гостя (guestDump().wf) → {add: сети для добавления} */
+function wfKey(n){return JSON.stringify([n.ssid,n.security,n.security==='nopass'?'':n.password])}
+export function mergeWf(acc,gst){var a=Array.isArray(acc)?acc:[],have={},add=[];
+  a.forEach(function(n){have[wfKey(n)]=1});
+  (Array.isArray(gst)?gst:[]).forEach(function(g){var k=wfKey(g);if(have[k]||a.length+add.length>=NETS_MAX)return;have[k]=1;add.push(g)});
+  return{add:add}}
 /* метка «с этим аккаунтом уже сливали»: список id (32 hex), последние 20; id аккаунта приходит в ответе GET /api/data */
 export function guestMerged(id){var a=read(K_MG);return Array.isArray(a)&&a.indexOf(id)>-1}
 export function guestMark(id){if(typeof id!=='string'||!ACC_RE.test(id))return false;
@@ -177,5 +215,5 @@ export function guestMark(id){if(typeof id!=='string'||!ACC_RE.test(id))return f
 
 /* запрос гостя: ответ Response (как fetch). Всё, что не гостевое (напоминания, Telegram), отвечает 401 «нужен вход». */
 export function guestApi(m,u,b){
-  var p=String(u).split('?')[0],r=p==='/api/data'?dataReq(m,b):p==='/api/agent'?agentReq(m,b):p==='/api/wifi'?wifiReq(m,b):out(401,{error:'auth'});
+  var p=String(u).split('?')[0],r=p==='/api/data'?dataReq(m,b):p==='/api/agent'?agentReq(m,b):p==='/api/wifi'?wifiReq(m,b,u):out(401,{error:'auth'});
   return Promise.resolve(r)}

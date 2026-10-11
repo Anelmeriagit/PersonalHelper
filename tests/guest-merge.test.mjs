@@ -119,7 +119,9 @@ test('guestDump: пусто — всё null; с данными — каждая 
   const d = local.guestDump();
   assert.deepEqual(d.cb, { months: {}, custom: ['Моя'] });
   assert.equal(d.ag, null);
-  assert.deepEqual(d.wf, { ssid: 'Net', password: 'pass-1234', security: 'WPA', hidden: false });
+  assert.deepEqual(d.wf, [{ ssid: 'Net', password: 'pass-1234', security: 'WPA', hidden: false }], 'прежняя запись одной сети — список из одной, без id');
+  localStorage.setItem('g-wf', JSON.stringify({ nets: [{ id: 'a1', ssid: 'A', password: 'pass-aaaa', security: 'WPA', hidden: false }, { id: 'b2', ssid: 'B', password: '', security: 'nopass', hidden: true }] }));
+  assert.deepEqual(local.guestDump().wf, [{ ssid: 'A', password: 'pass-aaaa', security: 'WPA', hidden: false }, { ssid: 'B', password: '', security: 'nopass', hidden: true }]);
   localStorage.setItem('g-ag', JSON.stringify({ rows: dflt() }));
   assert.equal(local.guestDump().ag.length, 4);
   localStorage.setItem('g-wf', '{"ssid":"","security":"WPA"}');
@@ -165,13 +167,18 @@ function server(acct, over = {}) {
     }
     if (key === 'GET /api/agent') return R(200, { rows: acct.rows });
     if (key === 'PUT /api/agent') { acct.rows = body.rows; return R(200, { rows: acct.rows }); }
-    if (key === 'GET /api/wifi') return R(200, acct.wifi ? { configured: true, ...acct.wifi, qr: { size: 0, rows: [] } } : { configured: false });
-    if (key === 'PUT /api/wifi') { acct.wifi = body; return R(200, { configured: true, ...body }); }
+    if (key === 'GET /api/wifi') return R(200, { configured: acct.wifi.length > 0, nets: acct.wifi.map((n, i) => ({ id: 'n' + i, ...n, qr: { size: 0, rows: [] } })) });
+    if (key === 'PUT /api/wifi') {
+      const { add, ...cfg } = body;
+      if (add && acct.wifi.length >= 5) return R(400, { error: 'limit' });
+      if (add) acct.wifi.push(cfg); else acct.wifi[0] = cfg;
+      return R(200, { configured: true, nets: acct.wifi.map((n, i) => ({ id: 'n' + i, ...n })) });
+    }
     return R(404, { error: 'нет' });
   };
   return calls;
 }
-const fresh = () => ({ data: { months: { [CUR]: [blk('otp', ['АЗС', '5'])] }, custom: [] }, rev: { [CUR]: 3 }, rows: dflt(), wifi: null });
+const fresh = () => ({ data: { months: { [CUR]: [blk('otp', ['АЗС', '5'])] }, custom: [] }, rev: { [CUR]: 3 }, rows: dflt(), wifi: [] });
 const jOf = (a) => ({ id: ID, name: '', data: JSON.parse(JSON.stringify(a.data)), rev: { ...a.rev } });
 function guestAll() {
   localStorage.setItem('g-cb', JSON.stringify({ months: { [CUR]: [blk('vtb', ['Аптеки', '3'])] }, custom: ['Моя'], rev: {} }));
@@ -208,23 +215,58 @@ test('mergeGuest: все три части сливаются, аккаунт п
   assert.deepEqual(r.j.rev, { [CUR]: 4, custom: 1 }, 'новые версии частей');
   assert.equal(r.j.id, ID);
   assert.deepEqual(a.rows.map((x) => [x.app, x.h, x.m]), [['app', null, null], ['opera', 6, 30], ['mozilla', null, null], ['edge', null, null]]);
-  assert.deepEqual(a.wifi, { ssid: 'GuestNet', security: 'WPA', password: 'guest-pass-1', hidden: true });
+  assert.deepEqual(a.wifi, [{ ssid: 'GuestNet', security: 'WPA', password: 'guest-pass-1', hidden: true }]);
   assert.equal(local.guestMerged(ID), true);
   calls.length = 0;
   assert.equal(await merge.mergeGuest(jOf(a)), null);
   assert.equal(calls.length, 0, 'второй раз на этот аккаунт слияния нет');
 });
 
-test('mergeGuest: сеть Wi-Fi у аккаунта уже есть — не трогается; нет изменений в агенте и кэшбэке — записей нет', async () => {
-  const a = fresh(); a.wifi = { ssid: 'Mine', password: 'mine-pass-1', security: 'WPA', hidden: false };
+test('mergeGuest: у аккаунта уже есть другая сеть — гостевая добавляется, такая же не задваивается; нет изменений в агенте и кэшбэке — записей нет', async () => {
+  const a = fresh(); a.wifi = [{ ssid: 'Mine', password: 'mine-pass-1', security: 'WPA', hidden: false }];
   const calls = server(a);
-  localStorage.setItem('g-wf', JSON.stringify({ ssid: 'GuestNet', password: 'guest-pass-1', security: 'WPA', hidden: false }));
+  localStorage.setItem('g-wf', JSON.stringify({ nets: [
+    { id: 'a1', ssid: 'GuestNet', password: 'guest-pass-1', security: 'WPA', hidden: false },
+    { id: 'b2', ssid: 'Mine', password: 'mine-pass-1', security: 'WPA', hidden: true }] }));
   localStorage.setItem('g-ag', JSON.stringify({ rows: dflt() }));
   localStorage.setItem('g-cb', JSON.stringify({ months: { [CUR]: [blk('otp', ['АЗС', '5'])] }, custom: [], rev: {} }));
-  assert.equal(await merge.mergeGuest(jOf(a)), null);
-  assert.deepEqual(calls.map((c) => c.key).sort(), ['GET /api/agent', 'GET /api/wifi']);
-  assert.equal(a.wifi.ssid, 'Mine');
+  const r = await merge.mergeGuest(jOf(a));
+  assert.equal(r.n, 1);
+  assert.deepEqual(calls.map((c) => c.key).sort(), ['GET /api/agent', 'GET /api/wifi', 'PUT /api/wifi']);
+  assert.deepEqual(a.wifi.map((n) => n.ssid), ['Mine', 'GuestNet'], 'аккаунт первым, повтор «Mine» не добавлен');
   assert.equal(local.guestMerged(ID), true);
+});
+
+test('mergeWf: аккаунт первым, повтор по названию, защите и паролю не добавляется, всего не больше 5', () => {
+  const n = (i, extra = {}) => ({ ssid: 'N' + i, password: 'pass-' + i + i + i + i, security: 'WPA', hidden: false, ...extra });
+  assert.deepEqual(local.mergeWf([], [n(1), n(2)]).add, [n(1), n(2)]);
+  assert.deepEqual(local.mergeWf([n(1)], [n(1, { hidden: true }), n(2)]).add, [n(2)], 'скрытость не отличает сеть');
+  assert.deepEqual(local.mergeWf([n(1)], [n(1, { password: 'other-pass' })]).add.length, 1, 'другой пароль — другая сеть');
+  assert.deepEqual(local.mergeWf([{ ssid: 'O', password: '', security: 'nopass', hidden: false }], [{ ssid: 'O', password: 'лишнее', security: 'nopass', hidden: false }]).add, [], 'у открытой сети пароль не сравнивается');
+  assert.deepEqual(local.mergeWf([n(1), n(2), n(3)], [n(4), n(5), n(6)]).add, [n(4), n(5)], 'до пяти');
+  assert.deepEqual(local.mergeWf([n(1)], [n(2), n(2)]).add, [n(2)], 'повтор внутри гостя');
+  assert.deepEqual(local.mergeWf(null, null).add, []);
+});
+
+test('mergeGuest: сеть гостя при обрыве записи добавляется при повторе без дублей', async () => {
+  const a = fresh(), calls = server(a);
+  localStorage.setItem('g-wf', JSON.stringify({ nets: [
+    { id: 'a1', ssid: 'One', password: 'pass-oneone', security: 'WPA', hidden: false },
+    { id: 'b2', ssid: 'Two', password: 'pass-twotwo', security: 'WPA', hidden: false }] }));
+  let put = 0;
+  const base = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { if (/\/api\/wifi/.test(String(u)) && o && o.method === 'PUT' && ++put === 2) throw new TypeError('network'); return base(u, o); };
+  try {
+    const r = await merge.mergeGuest(jOf(a));
+    assert.equal(local.guestMerged(ID), false, 'обрыв: метки нет');
+    assert.equal(r.n, 1, 'первая записана');
+  } finally { globalThis.fetch = base; }
+  assert.deepEqual(a.wifi.map((n) => n.ssid), ['One']);
+  const r2 = await merge.mergeGuest(jOf(a));
+  assert.equal(r2.n, 1);
+  assert.deepEqual(a.wifi.map((n) => n.ssid), ['One', 'Two'], 'повтор добавил недостающую и не задвоил первую');
+  assert.equal(local.guestMerged(ID), true);
+  void calls;
 });
 
 test('mergeGuest: отказ записи (5xx, 409, 429, 401, обрыв) — метка не ставится, повтор довершает и не дублирует', async () => {
