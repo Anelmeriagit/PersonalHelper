@@ -218,3 +218,47 @@ test('ответ: несколько категорий — у отсутств�
 test('/cashback: «Пока не заполнено» для пустого месяца остаётся как было', () => {
   assert.equal(bot.monthText(DOC, '2026-12'), 'Кэшбэки, Декабрь 2026\n\nПока не заполнено');
 });
+
+/* ---------- соединённые аккаунты: подпись «чей кэшбэк» ---------- */
+const PDOC = {
+  months: {
+    '2026-10': [
+      { bank: 'vtb', items: [{ cat: 'Маркетплейсы', pct: '5' }, { cat: 'Кафе и рестораны', pct: '7' }] },
+      { bank: 'sber', items: [{ cat: 'Маркетплейсы', pct: '3' }] },
+    ],
+    '2026-11': [{ bank: 'vtb', items: [{ cat: 'Книги', pct: '4' }] }],
+  },
+  custom: [],
+};
+const PR = { me: 'Денис', name: 'Жанна', doc: PDOC };
+
+test('pctLines с именами: свои первыми, у партнёра нет записи — его не пишем, одинаковый процент через «;»', () => {
+  assert.deepEqual(
+    bot.pctLines([{ bank: 'otp', v: 12, w: 0, n: 'Денис' }, { bank: 'halva', v: 5, w: 0, n: 'Денис' }, { bank: 'alfa', v: 5, w: 0, n: 'Денис' }, { bank: 'vtb', v: 5, w: 1, n: 'Жанна' }, { bank: 'sber', v: 3, w: 1, n: 'Жанна' }]),
+    ['✅ Денис: 12% — ОТП', 'Денис: 5% — Халва, Альфа; Жанна: 5% — ВТБ', 'Жанна: 3% — Сбер']
+  );
+  assert.deepEqual(bot.pctLines([{ bank: 'alfa', v: 5, w: 0, n: 'Денис' }]), ['Денис: 5% — Альфа']); // один банк: без ✅
+  assert.deepEqual(bot.pctLines([{ bank: 'vtb', v: 7, w: 1, n: 'Жанна' }]), ['Жанна: 7% — ВТБ']);
+  assert.deepEqual(bot.pctLines([{ bank: 'vtb', v: 5, w: 0, n: 'Денис' }, { bank: 'vtb', v: 5, w: 1, n: 'Жанна' }]), ['✅ Денис: 5% — ВТБ; Жанна: 5% — ВТБ']); // тот же банк у двоих: есть из чего выбирать
+  assert.deepEqual(bot.pctLines([{ bank: 'sber', v: 5 }, { bank: 'alfa', v: 3 }]), ['✅ 5% — Сбер', '3% — Альфа']); // без имён прежний вид
+});
+
+test('monthText и cashbackTexts у соединённых: заголовок прежний, подписи у строк, следующий месяц от любого из двоих', () => {
+  const t = bot.monthText(DOC, OCT, PR);
+  assert.match(t, /^Кэшбэки, Октябрь 2026\n\n/);
+  assert.ok(t.includes('Кафе и рестораны\n✅ Жанна: 7% — ВТБ\nДенис: 1,5% — Халва'));
+  assert.ok(t.includes('Маркетплейсы\n✅ Денис: 12% — ОТП\nДенис: 5% — Халва, Альфа, ВТБ; Жанна: 5% — ВТБ\nЖанна: 3% — Сбер\nДенис: 1,5% — Сбер'));
+  assert.ok(t.includes('Моя категория\nДенис: 3% — Сбер'));
+  assert.equal(bot.monthText(DOC, '2026-12', PR), 'Кэшбэки, Декабрь 2026\n\nПока не заполнено');
+  const own = { months: { '2026-10': DOC.months['2026-10'] }, custom: [] };
+  assert.equal(bot.cashbackTexts(own, OCT).length, 1); // без связи следующий месяц пуст
+  const two = bot.cashbackTexts(own, OCT, { me: 'Денис', name: 'Жанна', doc: PDOC });
+  assert.equal(two.length, 2); // у партнёра следующий месяц заполнен
+  assert.equal(two[1], 'Кэшбэки, Ноябрь 2026\n\nКниги\nЖанна: 4% — ВТБ');
+});
+
+test('shopText у соединённых: подписи в одной и нескольких категориях, «Все покупки» без ✅', () => {
+  const ask2 = (q) => bot.shopText(DOC, OCT, lookup(q, DOC.custom), PR);
+  assert.equal(ask2('Пятёрочка'), 'Пятёрочка · Супермаркеты\n✅ Денис: 10% — Сбер\nДенис: 5% — ОТП, Альфа\nВсе покупки: Денис: 1% — ОТП');
+  assert.equal(ask('Пятёрочка'), bot.shopText(DOC, OCT, lookup('Пятёрочка', DOC.custom), null)); // без связи прежний ответ
+});

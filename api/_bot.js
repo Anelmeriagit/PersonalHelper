@@ -54,30 +54,39 @@ export function filledRows(doc, month) {
 }
 
 // Заполненные строки месяца по категориям: { категория: [{bank, v}] }.
-export function catRows(doc, mo) {
+// pr — соединённый аккаунт { me, name, doc } (имя своё, имя и документ партнёра): тогда строки несут w (0 — свои, 1 — партнёра) и n (имя для подписи), свои идут первыми.
+export function catRows(doc, mo, pr) {
   const g = {};
-  for (const r of filledRows(doc, mo)) (g[r.cat] = g[r.cat] || []).push({ bank: r.bank, v: r.v });
+  const add = (d, w, n) => { for (const r of filledRows(d, mo)) (g[r.cat] = g[r.cat] || []).push(pr ? { bank: r.bank, v: r.v, w, n } : { bank: r.bank, v: r.v }); };
+  add(doc, 0, pr && pr.me);
+  if (pr) add(pr.doc, 1, pr.name);
   return g;
 }
 
 // Строки процентов одной категории (общая для /cashback и ответа по магазину): по убыванию процента,
 // банки с одним процентом в одной строке. ✅ у лучшего процента, если банков больше одного (mark=false: без ✅).
+// Строки с именем (n, соединённые аккаунты): «Денис: 5% — Халва, Альфа; Жанна: 5% — ВТБ», у партнёра нет записи — его не пишем;
+// банков больше одного считается по записям обоих (тот же банк у двоих — это два варианта).
 export function pctLines(rows, mark = true) {
-  const multi = new Set(rows.map((r) => r.bank)).size > 1;
+  const lab = rows.some((r) => r.n !== undefined);
+  const multi = new Set(rows.map((r) => (lab ? r.w + ':' : '') + r.bank)).size > 1;
   const best = Math.max(...rows.map((r) => r.v));
   const groups = new Map();
   for (const r of rows) {
     if (!groups.has(r.v)) groups.set(r.v, []);
-    groups.get(r.v).push(BANK_NAMES[r.bank] || r.bank);
+    const list = groups.get(r.v);
+    let g = list.find((x) => x.w === r.w);
+    if (!g) { g = { w: r.w, n: r.n, b: [] }; list.push(g); }
+    g.b.push(BANK_NAMES[r.bank] || r.bank);
   }
-  return [...groups.keys()].sort((a, b) => b - a).map((v) => (mark && multi && v === best ? '✅ ' : '') + pctText(v) + ' — ' + groups.get(v).join(', '));
+  return [...groups.keys()].sort((a, b) => b - a).map((v) => (mark && multi && v === best ? '✅ ' : '') + groups.get(v).map((g) => (lab ? g.n + ': ' : '') + pctText(v) + ' — ' + g.b.join(', ')).join('; '));
 }
 
 // Одно сообщение на месяц, как компактный вид на сайте:
 // категории по алфавиту, под каждой строки по убыванию процента; банки с одним процентом в одной строке.
 // ✅ у лучшего процента, если в категории есть из чего выбирать (больше одного банка).
-export function monthText(doc, mo) {
-  const g = catRows(doc, mo);
+export function monthText(doc, mo, pr) {
+  const g = catRows(doc, mo, pr);
   const cats = Object.keys(g).sort((a, b) => a.localeCompare(b, 'ru'));
   const head = 'Кэшбэки, ' + monthLabel(mo);
   if (!cats.length) return head + '\n\nПока не заполнено';
@@ -92,14 +101,14 @@ export const noCategory = (c) => 'У вас нет категории ' + lowFir
 // Ответ на название магазина или категории. res — результат lookup() из _shops.js.
 // Одна категория: полный список как в /cashback. Несколько: по одной лучшей строке на категорию.
 // «Все покупки» добавляется запасной строкой (лучший процент), если это не сама запрошенная категория.
-export function shopText(doc, mo, res) {
+export function shopText(doc, mo, res, pr) {
   if (res.kind === 'ambiguous') {
     const n = res.names;
     const who = n.length <= 4 ? n.join(' или ') : n.slice(0, 3).join(', ') + ' и ещё ' + (n.length - 3);
     return 'Не знаю точно: ' + who + '. Напишите название полностью или название категории.';
   }
   if (res.kind !== 'found') return 'Не знаю такой магазин. Напишите название категории, например «Супермаркеты» или «Кафе и рестораны».';
-  const g = catRows(doc, mo);
+  const g = catRows(doc, mo, pr);
   const out = [];
   if (res.cats.length === 1) {
     const c = res.cats[0];
@@ -169,11 +178,11 @@ export function pickKb(id, l, f, other, cancel) {
 }
 
 // Тексты сообщений: текущий месяц и, если следующий уже заполнен, он тоже.
-export function cashbackTexts(doc, curMonth) {
+export function cashbackTexts(doc, curMonth, pr) {
   const months = [curMonth];
   const nxt = shiftMonth(curMonth, 1);
-  if (filledRows(doc, nxt).length) months.push(nxt);
-  return months.map((mo) => monthText(doc, mo));
+  if (filledRows(doc, nxt).length || (pr && filledRows(pr.doc, nxt).length)) months.push(nxt);
+  return months.map((mo) => monthText(doc, mo, pr));
 }
 
 // Telegram принимает не больше 4096 символов в сообщении: режем по строкам.

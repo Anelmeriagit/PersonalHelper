@@ -132,6 +132,22 @@ test('/cashback отвечает один раз по документу сво�
   assert.notEqual(out[0], out[1]);
 });
 
+test('соединённые аккаунты: /cashback и ответ по магазину с подписью чей кэшбэк, у второго зеркально; после разрыва без подписей', async (t) => {
+  await acc.setName(A, 'Денис'); await acc.setName(B, 'Жанна');
+  const { token } = await acc.createPairToken(A);
+  assert.ok(!(await acc.joinPair(token, B)).error);
+  const calls = mockTg(t);
+  await send(msg(U1, '/cashback'));
+  await send(msg(U2, 'Пятёрочка'));
+  const out = texts(calls);
+  assert.match(out[0], /^Кэшбэки, /);
+  assert.ok(out[0].includes('Супермаркеты\n✅ Денис: 10% — Сбер\nЖанна: 7% — Альфа\nДенис: 5% — ОТП'));
+  assert.equal(out[1], 'Пятёрочка · Супермаркеты\n✅ Денис: 10% — Сбер\nЖанна: 7% — Альфа\nДенис: 5% — ОТП\nВсе покупки: Денис: 1% — ОТП'); // у Жанны подписи те же: чей кэшбэк, не кто спрашивает
+  await acc.unpair(A);
+  await send(msg(U1, 'Пятёрочка'));
+  assert.equal(texts(calls)[2], 'Пятёрочка · Супермаркеты\n✅ 10% — Сбер\n5% — ОТП\nВсе покупки: 1% — ОТП');
+});
+
 test('/start у привязанного: приветствие; у не привязанного: подсказка', async (t) => {
   const calls = mockTg(t);
   await send(msg(U1, '/start'));

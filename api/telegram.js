@@ -1,5 +1,5 @@
 import { loadDoc } from './_lib.js';
-import { bindTelegram, accountOfTelegram, TOKEN_RE } from './_acc.js';
+import { bindTelegram, accountOfTelegram, partnerAcc, getAcc, TOKEN_RE } from './_acc.js';
 import { tg, readBot, mutateBot, webhookSecret, safeEq, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
 import { mskNow } from './_rem.js';
 import { reindexAccount } from './_reindex.js';
@@ -12,11 +12,21 @@ const HINT = '\nИли выберите категорию кнопкой ниж
 const NO_DATA = 'Не удалось загрузить данные с сайта. Попробуйте чуть позже.';
 
 // Текст и кнопки ответа по результату поиска. id — ожидающий запрос (есть, если удалось записать состояние).
-function shopView(doc, mo, r, id, ch) {
-  const text = shopText(doc, mo, r.res);
+function shopView(doc, mo, r, id, ch, pr) {
+  const text = shopText(doc, mo, r.res, pr);
   if (id && r.key && r.res.kind === 'found') return { text, kb: shopKb(id, !!r.alias) };
   if (id && r.key && r.res.kind === 'unknown' && ch) return { text: text + HINT, kb: pickKb(id, ch.list, ch.f, false, false) };
   return { text, kb: [] };
+}
+
+// Документ аккаунта и, у соединённых аккаунтов, кэшбэк партнёра для подписи «чей»: pr = { me, name, doc } | null.
+// Партнёр определяется только через partnerAcc (полная пара); читается и показывается только на просмотр, псевдонимы и кнопки остаются своими.
+async function loadView(uid) {
+  const doc = (await loadDoc(uid)).doc;
+  const p = await partnerAcc(uid);
+  if (!p) return { doc, pr: null };
+  const [me, pd] = await Promise.all([getAcc(uid), loadDoc(p.id)]);
+  return { doc, pr: { me: (me && me.name) || 'Helper User', name: p.acc.name || 'Helper User', doc: pd.doc } };
 }
 
 // /start <токен>: привязка Telegram к аккаунту. Работает для любого человека в личном чате (токен выдаёт только сайт после входа).
@@ -49,7 +59,7 @@ async function onMessage(m) {
   }
   if (/^\/cashback(\s|@|$)/i.test(String(m.text || ''))) {
     let texts;
-    try { texts = cashbackTexts((await loadDoc(uid)).doc, mskNow().month); }
+    try { const v = await loadView(uid); texts = cashbackTexts(v.doc, mskNow().month, v.pr); }
     catch (e) {
       console.error(e);
       return tg('sendMessage', { chat_id: m.chat.id, text: NO_DATA });
@@ -60,8 +70,8 @@ async function onMessage(m) {
   // Обычный текст = название магазина или категории. Команды и сообщения без текста молча игнорируем.
   const text = typeof m.text === 'string' ? m.text.trim() : '';
   if (!text || text[0] === '/') return;
-  let doc;
-  try { doc = (await loadDoc(uid)).doc; }
+  let doc, pr;
+  try { ({ doc, pr } = await loadView(uid)); }
   catch (e) {
     console.error(e);
     return tg('sendMessage', { chat_id: m.chat.id, text: NO_DATA });
@@ -81,7 +91,7 @@ async function onMessage(m) {
     id = null;
     if (!r) r = resolveShop(text, doc.custom, {});
   }
-  const v = shopView(doc, mo, r, id, ch);
+  const v = shopView(doc, mo, r, id, ch, pr);
   const body = { chat_id: m.chat.id, text: v.text };
   if (v.kb.length) body.reply_markup = { inline_keyboard: v.kb };
   await tg('sendMessage', body);
@@ -111,8 +121,8 @@ async function onShopCb(cq, uid) {
     await ans();
     return editKb(pickKb(id, pd.l, pd.f, act === 'so', pd.m === 'fix'));
   }
-  let doc;
-  try { doc = (await loadDoc(uid)).doc; }
+  let doc, pr;
+  try { ({ doc, pr } = await loadView(uid)); }
   catch (e) {
     console.error(e);
     return ans({ text: NO_DATA, show_alert: true });
@@ -127,7 +137,7 @@ async function onShopCb(cq, uid) {
 
   if (act === 'sb') { // отмена: вернуть ответ как был
     await ans();
-    const v = shopView(doc, mo, r, id, null);
+    const v = shopView(doc, mo, r, id, null, pr);
     return edit(v.text, v.kb);
   }
   if (act === 'sf') { // «Не та категория»: свежий список категорий
@@ -142,7 +152,7 @@ async function onShopCb(cq, uid) {
       return ans({ text: 'Такой категории уже нет. Начните заново: «Не та категория».', show_alert: true });
     }
     const alias = await mutateBot(uid, (st) => { aliasSet(st, r.key, c, title, now); pendingPut(st, pd.q, now, { m: null }); return st.alias; });
-    const v = shopView(doc, mo, resolveShop(pd.q, doc.custom, alias), id, null);
+    const v = shopView(doc, mo, resolveShop(pd.q, doc.custom, alias), id, null, pr);
     await ans({ text: 'Запомнил' });
     return edit(v.text, v.kb);
   }
@@ -153,7 +163,7 @@ async function onShopCb(cq, uid) {
       const ch = r2.res.kind === 'unknown' ? catChoices(doc, mo) : null;
       return { r2, ch, id: pendingPut(st, pd.q, now, ch ? { l: ch.list, f: ch.f, m: null } : { m: null }) };
     });
-    const v = shopView(doc, mo, out.r2, out.id, out.ch);
+    const v = shopView(doc, mo, out.r2, out.id, out.ch, pr);
     await ans({ text: 'Сброшено к словарю' });
     return edit(v.text, v.kb);
   }
