@@ -105,6 +105,10 @@ export async function rem({ stand, browser, fail }) {
         // создание повторяющегося
         await page.click('#recAdd');
         await pickDay('#recForm');
+        check((await page.locator('#recForm [data-e]').count()) === 4 && (await page.locator('#recForm [data-e=day]').innerText()) === 'Каждый день', 'частота: четыре варианта, первый «Каждый день»');
+        await page.click('#recForm [data-e=day]');
+        check(/дальше каждый день\./.test(await page.locator('#recForm .rd').first().innerText()), 'подсказка для «каждый день»');
+        await noHScroll('частота «каждый день»');
         await page.click('#recForm [data-e=week]');
         await page.click('#recForm [data-h="18"]');
         await page.click('#recForm [data-m="30"]');
@@ -170,7 +174,7 @@ export async function rem({ stand, browser, fail }) {
         // обратно «По дате»: date и every уходят вместе, числа пропадают
         await dayCard().locator('[data-edit]').click();
         await page.click('#recForm [data-by="date"]');
-        check((await cnt('#recForm [data-e]')) === 3 && (await page.locator('#recForm [data-e="month"]').getAttribute('aria-pressed')) === 'true', 'обратно по дате: календарь и частота «каждый месяц»');
+        check((await cnt('#recForm [data-e]')) === 4 && (await page.locator('#recForm [data-e="month"]').getAttribute('aria-pressed')) === 'true', 'обратно по дате: календарь и частота «каждый месяц»');
         await pickDay('#recForm');
         await save('#recForm');
         await page.waitForFunction(() => !/ числа, после/.test(document.getElementById('recList').innerText), null, { timeout: 5000 });

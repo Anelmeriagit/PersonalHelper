@@ -174,6 +174,8 @@ test('общее повторяющееся: создание, галочки, �
   const o = await put(recurring, b, { id: it.id, key: 'on', value: false, who: 'partner', shared: true });
   assert.deepEqual([o.body.shared.recurring[0].on, o.body.shared.recurring[0].pon], [true, false], 'Борис выключил галочку Анны');
   assert.deepEqual([(await get(a)).body.shared.recurring[0].on, (await get(a)).body.shared.recurring[0].pon], [false, true]);
+  const dy = await put(recurring, a, { id: it.id, every: 'day', shared: true });
+  assert.deepEqual([dy.body.shared.recurring[0].every, dy.body.shared.recurring[0].next], ['day', '2026-10-11'], 'каждый день: у меня сегодня уже ушло, ближайшая завтра');
   assert.equal((await del(recurring, a, it.id, true)).body.shared.recurring.length, 0);
   for (let i = 0; i < 30; i++) await post(recurring, a, { date: '2026-10-12', every: 'month', slot: 'day', text: 'r' + i, shared: true });
   assert.equal((await post(recurring, b, { date: '2026-10-12', every: 'month', slot: 'day', text: 'лишнее', shared: true })).body.error, 'limit');

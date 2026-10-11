@@ -1,6 +1,6 @@
 // Личные напоминания аккаунта (этап 3b). Ключ Redis rem:<id аккаунта> (с префиксом DB_PREFIX), запись по версии (CAS) через readRec/writeRec.
 //   { custom:    [ { id, date:'YYYY-MM-DD', slot:'h07'|'h07m30' … 'h23'|'h23m30' (или старые 'day'|'evening'), text, on, sent:boolean } ],
-//     recurring: [ { id, date:'YYYY-MM-DD' (дата отсчёта), every:'week'|'2weeks'|'month', days?:[числа месяца 1..31, по возрастанию] (тогда every всегда 'month'), slot, text, on, sent:{'YYYY-MM-DD':true} } ] }
+//     recurring: [ { id, date:'YYYY-MM-DD' (дата отсчёта), every:'day'|'week'|'2weeks'|'month', days?:[числа месяца 1..31, по возрастанию] (тогда every всегда 'month'), slot, text, on, sent:{'YYYY-MM-DD':true} } ] }
 // Получатель один: Telegram, привязанный к аккаунту (tg:<id>, см. _acc.js). Постоянных напоминаний и поля «кому» больше нет.
 // Состояние бота (псевдонимы, ожидающие запросы) лежит отдельно, не здесь: бот пишет его на каждое сообщение, а эту запись читает и пишет cron.
 // Расписание (recDue, recNext), mskNow, лимиты и EVERY живут здесь; _bot.js их не знает.
@@ -13,7 +13,7 @@ import { dueLower, pairMember } from './_due.js';
 
 export const CUSTOM_MAX = 50; // не больше 50 временных напоминаний
 export const RECURRING_MAX = 30; // не больше 30 повторяющихся
-export const EVERY = ['week', '2weeks', 'month']; // каждую неделю / каждые 2 недели / каждый месяц
+export const EVERY = ['day', 'week', '2weeks', 'month']; // каждый день / каждую неделю / каждые 2 недели / каждый месяц (every:'day' не путать со слотом 'day' = 14:00)
 
 /* ---------- время: Москва ---------- */
 // → { month, date, hour, minute }: hour — час по Москве (0–23), minute — минута (0–59). Время берётся через Date.now(), чтобы тесты могли его подменять.
@@ -25,12 +25,13 @@ export function mskNow(d = new Date(Date.now())) {
 }
 
 /* ---------- повторяющиеся: когда срабатывают ---------- */
-// С даты отсчёта: каждые 7 / 14 дней или раз в месяц в то же число (если числа в месяце нет, например 31-го, то в последний день месяца).
+// С даты отсчёта: каждый день, каждые 7 / 14 дней или раз в месяц в то же число (если числа в месяце нет, например 31-го, то в последний день месяца).
 const daysIn = (cm) => { const [y, m] = cm.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).getUTCDate(); };
 const iso = (t) => new Date(t).toISOString().slice(0, 10);
 const dayNum = (s) => Math.round(Date.parse(s + 'T00:00:00Z') / 864e5);
 export function recDue(it, date) {
   if (!it || typeof it.date !== 'string' || typeof date !== 'string' || date < it.date) return false;
+  if (it.every === 'day') return true; // date >= it.date уже проверено выше
   if (it.every === 'week') return (dayNum(date) - dayNum(it.date)) % 7 === 0;
   if (it.every === '2weeks') return (dayNum(date) - dayNum(it.date)) % 14 === 0;
   if (it.every === 'month') {

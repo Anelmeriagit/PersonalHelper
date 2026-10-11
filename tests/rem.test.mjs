@@ -187,7 +187,7 @@ test('повторяющееся: проверки входных данных, 
   AT(t);
   const id = await mkAcc('ivan');
   const ok = { date: '2026-10-15', every: 'month', slot: 'day', text: 'x' };
-  for (const b of [{ ...ok, every: 'day' }, { ...ok, every: 'constructor' }, { ...ok, slot: 'x' }, { ...ok, text: '' }, { ...ok, date: '15.10.2026' }]) {
+  for (const b of [{ ...ok, every: 'daily' }, { ...ok, every: 'constructor' }, { ...ok, slot: 'x' }, { ...ok, text: '' }, { ...ok, date: '15.10.2026' }]) {
     assert.equal((await post(recurring, id, b)).statusCode, 400, JSON.stringify(b));
   }
   assert.equal((await post(recurring, id, { ...ok, date: '2026-10-09' })).body.error, 'bad date');
@@ -297,6 +297,31 @@ test('planRem: повторяющиеся по неделям, двум неде
   assert.deepEqual(rem.planRem(mk({ recurring: [R('a', { on: false })] }), NOW, 'day'), []);
   assert.deepEqual(rem.planRem(mk({ recurring: [R('a', { date: '2026-10-11' })] }), NOW, 'day'), [], 'до даты отсчёта не срабатывает');
   assert.deepEqual(rem.planRem(mk({ recurring: [R('a', { slot: 'evening' })] }), NOW, 'day'), []);
+});
+
+test('повторяющееся «каждый день»: срабатывает каждый день с даты отсчёта, один раз в сутки', () => {
+  const r = mk({ recurring: [R('a', { every: 'day', date: '2026-10-08' })] });
+  assert.equal(r.recurring.length, 1, 'значение every:day допустимо при нормализации');
+  assert.deepEqual(rem.planRem(r, NOW, 'day').map((x) => x.text), ['рa']);
+  assert.deepEqual(rem.planRem(r, NOW, 'day'), [], 'повторный запуск в тот же день не дублирует');
+  assert.deepEqual(rem.planRem(r, { month: '2026-10', date: '2026-10-11' }, 'day').map((x) => x.text), ['рa'], 'на следующий день снова');
+  assert.deepEqual(rem.planRem(r, { month: '2026-12', date: '2026-12-31' }, 'day').map((x) => x.text), ['рa'], 'через месяцы тоже');
+  assert.deepEqual(rem.planRem(mk({ recurring: [R('a', { every: 'day', date: '2026-10-11' })] }), NOW, 'day'), [], 'до даты отсчёта не срабатывает');
+  assert.equal(rem.recNext({ date: '2026-10-08', every: 'day' }, '2026-10-10'), '2026-10-10');
+  assert.equal(rem.recNext({ date: '2026-10-20', every: 'day' }, '2026-10-10'), '2026-10-20');
+});
+
+test('повторяющееся «каждый день»: создание и правка частоты через API', async (t) => {
+  AT(t);
+  const id = await mkAcc('ivan');
+  const r = await post(recurring, id, { date: '2026-10-10', every: 'day', slot: 'evening', text: 'Таблетки' });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual([r.body.recurring[0].every, r.body.recurring[0].next], ['day', '2026-10-10']);
+  const e = await put(recurring, id, { id: r.body.recurring[0].id, every: 'week' });
+  assert.equal(e.body.recurring[0].every, 'week');
+  const e2 = await put(recurring, id, { id: r.body.recurring[0].id, every: 'day' });
+  assert.equal(e2.body.recurring[0].every, 'day');
+  assert.equal((await post(recurring, id, { date: '2026-10-10', every: 'daily', slot: 'evening', text: 'мусор' })).statusCode, 400, 'другие значения по-прежнему отклоняются');
 });
 
 test('planRem: без слота (сухой прогон) берёт оба слота', () => {

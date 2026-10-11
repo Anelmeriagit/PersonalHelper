@@ -21,7 +21,7 @@ function slotMinute(s){return /m30$/.test(String(slotNorm(s)))?30:0}
 function slotMins(s){return slotHour(s)*60+slotMinute(s)}
 function slotKey(h,mn){return 'h'+p2(h)+(mn==='30'?'m30':'')}
 function slotLbl(s){return 'после '+p2(slotHour(s))+':'+p2(slotMinute(s))}
-var EV={week:'каждую неделю','2weeks':'каждые 2 недели',month:'каждый месяц'},EVK=['week','2weeks','month'];
+var EV={day:'каждый день',week:'каждую неделю','2weeks':'каждые 2 недели',month:'каждый месяц'},EVK=['day','week','2weeks','month'];
 var CHEV={'-1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>','1':'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>'};
 function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,add:shrRecAdd,url:'/api/recurring'}:{form:shrTmpForm,list:shrTmpList,add:shrTmpAdd,url:'/api/custom'};
   return kind==='rec'?{form:recForm,list:recList,add:recAdd,url:'/api/recurring'}:{form:tmpForm,list:tmpList,add:tmpAdd,url:'/api/custom'}}
@@ -50,6 +50,7 @@ function calHtml(){
     '<button class="icon-btn" type="button" data-nav="1" aria-label="Следующий месяц"'+(vm>=max.slice(0,7)?' disabled':'')+'>'+CHEV['1']+'</button></div>'+
     '<div class="cal">'+h+'</div>'}
 function evHint(){var a=R.fm.date.split('-'),d=+a[2],w=WDV[new Date(Date.UTC(+a[0],+a[1]-1,d)).getUTCDay()];
+  if(R.fm.every==='day')return 'Первое напоминание — '+dLabel(R.fm.date)+', дальше каждый день.';
   return 'Первое напоминание — '+dLabel(R.fm.date)+', дальше '+EV[R.fm.every]+(R.fm.every==='month'?', '+d+'-го числа'+(d>28?' (если такого числа в месяце нет, то в последний день месяца)':''):' '+w)+'.'}
 function daysHtml(){var h='';
   for(var d=1;d<=31;d++){var on=R.fm.days.indexOf(d)>=0;
