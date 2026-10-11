@@ -28,7 +28,7 @@
 
 ## Порядок деплоя: индекс dueq (этап 5, переход на внешний планировщик, часть 3; PowerShell, из корня репозитория)
 1. Распаковать zip поверх репозитория; `git status` (нет ли лишнего) → `git add -A; git commit -m "Cron: due index"; git push`. Функций по-прежнему 11: новые файлы `api/_due.js`, `api/_reindex.js` с `_`.
-2. Сразу после деплоя заполнить индекс (до этого `/api/cron` никого не находит). Значения только в окне PowerShell, в файлы не писать: `$env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; $env:DB_PREFIX=''` (пусто = боевая база). Сухой прогон: `node scripts/fill-dueq.mjs`; затем `node scripts/fill-dueq.mjs --apply` (спросит ввод `REBUILD`).
+2. Сразу после деплоя заполнить индекс (до этого `/api/cron` никого не находит). Значения только в окне PowerShell, в файлы не писать: `$env:KV_REST_API_URL='...'; $env:KV_REST_API_TOKEN='...'; $env:DB_PREFIX='t:'` (то же значение, что в Vercel у боевого проекта; пустой префикс — другая, пустая база). Сухой прогон: `node scripts/fill-dueq.mjs`; затем `node scripts/fill-dueq.mjs --apply` (спросит ввод `REBUILD`).
 3. Проверка: `$secret = '...'; curl.exe -H "Authorization: Bearer $secret" "https://<домен>/api/cron?role=backup&rebuild=1&dry=1"` → `rebuild.state:"ok"`, `add`/`change`/`drop` равны 0.
 4. Частые внешние расписания (QStash, cron-job.org) включать только после этого: порядок ниже, «Порядок деплоя: внешние расписания».
 
