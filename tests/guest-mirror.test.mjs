@@ -122,7 +122,7 @@ test('гостевой Wi-Fi: ответы и проверка как у сер�
       assert.equal(got.status, 200, JSON.stringify(b));
       const q = sq.makeQr(sw.wifiString(c));
       assert.match(got.body.nets[0].id, /^[0-9a-f]{8}$/);
-      assert.deepEqual(got.body, { configured: true, nets: [{ id: got.body.nets[0].id, ssid: c.ssid, password: c.password, security: c.security, hidden: c.hidden, qr: q }], ssid: c.ssid, password: c.password, security: c.security, hidden: c.hidden, qr: q }, JSON.stringify(b));
+      assert.deepEqual(got.body, { configured: true, nets: [{ id: got.body.nets[0].id, ssid: c.ssid, password: c.password, security: c.security, hidden: c.hidden, qr: q }] }, JSON.stringify(b));
       assert.deepEqual((await call('GET', '/api/wifi')).body, got.body, 'GET отдаёт то же, что вернул PUT');
     } else {
       bad++;

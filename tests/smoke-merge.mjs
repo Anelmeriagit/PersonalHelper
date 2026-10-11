@@ -30,8 +30,8 @@ export async function merge({ stand, browser, fail }) {
       // у аккаунта нет сети Wi-Fi: слияние переносит гостевую
       await page.route('**/api/wifi', (r) => {
         const q = r.request();
-        if (q.method() === 'PUT') { const b = q.postDataJSON(); sent.wifi.push(b); return json(r, 200, { configured: true, ssid: b.ssid, password: b.password, security: b.security, hidden: b.hidden, qr: qr }); }
-        return json(r, 200, { configured: false });
+        if (q.method() === 'PUT') { const b = q.postDataJSON(); sent.wifi.push(b); return json(r, 200, { configured: true, nets: [{ id: 'n1a2b3c4', ssid: b.ssid, password: b.password, security: b.security, hidden: b.hidden, qr: qr }] }); }
+        return json(r, 200, { configured: false, nets: [] });
       });
       await page.route('**/api/agent', (r) => {
         const q = r.request();

@@ -425,3 +425,11 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .weye{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin:-6px -6px -6px 0;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer}
 .weye:hover{color:var(--text)}
 .weye svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+/* Wi-Fi: список сетей (карточки, «Добавить сеть», печать одной сети) */
+.rwrap.wmulti{width:min(100% - 2rem,980px)}
+.wlist{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:1rem;width:100%;align-items:start}
+.wcard{min-width:0;padding:1rem;border:1px solid var(--line);border-radius:18px}
+.wadd{display:flex;flex-direction:column;align-items:center;gap:.5rem;margin-top:1rem}
+.wadd .btn{min-height:44px}
+.wadd .wfn{margin:0;text-align:center}
+@media print{body.pw .wlist,body.pw .wadd{display:none!important}}

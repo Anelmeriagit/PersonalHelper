@@ -55,12 +55,10 @@ export function normNets(raw) {
 }
 const newId = (nets) => { let id; do { id = crypto.randomBytes(4).toString('hex'); } while (nets.some((n) => n.id === id)); return id; };
 
-// Ответ: { configured, nets: [{id, ssid, password, security, hidden, qr}] }; пока сайт не перешёл на список, поля первой сети дублируются наверху (ssid, password, security, hidden, qr).
+// Ответ: { configured, nets: [{id, ssid, password, security, hidden, qr}] }
 function view(nets) {
   if (!nets.length) return { configured: false, nets: [] };
-  const list = nets.map((n) => ({ ...n, qr: makeQr(wifiString(n)) }));
-  const f = list[0];
-  return { configured: true, nets: list, ssid: f.ssid, password: f.password, security: f.security, hidden: f.hidden, qr: f.qr };
+  return { configured: true, nets: nets.map((n) => ({ ...n, qr: makeQr(wifiString(n)) })) };
 }
 
 // Читает список, применяет fn(nets) → { nets } | { code, error } и пишет по версии (CAS). Чужая запись между чтением и записью: повтор, до 4 раз.

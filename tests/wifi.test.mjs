@@ -40,18 +40,18 @@ test('новый аккаунт: сеть не настроена; переме�
   delete process.env.WIFI_SSID; delete process.env.WIFI_PASSWORD;
 });
 
-test('PUT → GET: сеть сохранена, в ответе QR 0/1 и данные для показа (список и поля первой сети)', async () => {
+test('PUT → GET: сеть сохранена, в ответе список с QR 0/1 и данными для показа, полей первой сети наверху нет', async () => {
   const c = await signup('anna');
   const put = await call('PUT', c, NET);
   assert.equal(put.statusCode, 200);
   assert.equal(put.body.configured, true);
-  assert.equal(put.body.ssid, 'HomeNet');
-  assert.equal(put.body.password, 'secret-pass-1');
-  assert.ok(put.body.qr.size >= 21 && put.body.qr.rows.length === put.body.qr.size && /^[01]+$/.test(put.body.qr.rows[0]));
+  assert.deepEqual(Object.keys(put.body).sort(), ['configured', 'nets']);
   assert.equal(put.body.nets.length, 1);
   assert.match(put.body.nets[0].id, /^[a-z0-9]{2,12}$/);
-  assert.deepEqual(put.body.nets[0].qr, put.body.qr);
   assert.equal(put.body.nets[0].ssid, 'HomeNet');
+  assert.equal(put.body.nets[0].password, 'secret-pass-1');
+  const q = put.body.nets[0].qr;
+  assert.ok(q.size >= 21 && q.rows.length === q.size && /^[01]+$/.test(q.rows[0]));
   const got = await call('GET', c);
   assert.deepEqual(got.body, put.body);
 });
@@ -61,7 +61,7 @@ test('пользователи изолированы: пароль одного
   await call('PUT', a, NET);
   assert.deepEqual((await call('GET', b)).body, { configured: false, nets: [] });
   await call('PUT', b, { ...NET, ssid: 'BorisNet', password: 'boris-pass-12' });
-  assert.equal((await call('GET', a)).body.ssid, 'HomeNet');
+  assert.equal((await call('GET', a)).body.nets[0].ssid, 'HomeNet');
 });
 
 test('замена и удаление: PUT перезаписывает, DELETE снимает настройку и запись', async () => {
@@ -69,8 +69,8 @@ test('замена и удаление: PUT перезаписывает, DELETE
   await call('PUT', c, NET);
   await call('PUT', c, { ...NET, ssid: 'Other', hidden: true });
   const got = (await call('GET', c)).body;
-  assert.equal(got.ssid, 'Other');
-  assert.equal(got.hidden, true);
+  assert.equal(got.nets[0].ssid, 'Other');
+  assert.equal(got.nets[0].hidden, true);
   const del = await call('DELETE', c);
   assert.deepEqual(del.body, { configured: false, nets: [] });
   assert.deepEqual((await call('GET', c)).body, { configured: false, nets: [] });
@@ -100,7 +100,7 @@ test('сеть без пароля: пароль не хранится, даже
   const c = await signup('anna');
   const r = await call('PUT', c, { ssid: 'Guest', security: 'nopass', password: 'лишнее', hidden: false });
   assert.equal(r.statusCode, 200);
-  assert.equal(r.body.password, '');
+  assert.equal(r.body.nets[0].password, '');
   assert.ok(!__raw('wifi:' + idOf(c)).d.includes('лишнее'));
 });
 
@@ -139,13 +139,13 @@ test('wifiString: экранирование спецсимволов, скры�
 /* ---------- список сетей (до 5) ---------- */
 const net = (n, extra = {}) => ({ ssid: 'Net' + n, password: 'secret-pass-' + n, security: 'WPA', hidden: false, ...extra });
 
-test('список: add добавляет сети по порядку, шестая — 400 limit; поля первой сети дублируются наверху', async () => {
+test('список: add добавляет сети по порядку, шестая — 400 limit', async () => {
   const c = await signup('anna');
   for (let i = 1; i <= 5; i++) {
     const r = await call('PUT', c, net(i, { add: true }));
     assert.equal(r.statusCode, 200, 'сеть ' + i);
     assert.equal(r.body.nets.length, i);
-    assert.equal(r.body.ssid, 'Net1', 'наверху первая сеть');
+    assert.equal(r.body.nets[0].ssid, 'Net1', 'первая сеть остаётся первой');
   }
   const six = await call('PUT', c, net(6, { add: true }));
   assert.equal(six.statusCode, 400);
@@ -181,7 +181,6 @@ test('список: PUT без id и без add (прежний вид) заме
   assert.deepEqual(r.body.nets.map((n) => n.ssid), ['Net7', 'Net2']);
   const d = await call('DELETE', c);
   assert.deepEqual(d.body.nets.map((n) => n.ssid), ['Net2']);
-  assert.equal(d.body.ssid, 'Net2');
 });
 
 test('список: DELETE ?id= удаляет эту сеть, неизвестный id ничего не меняет, последняя сеть удаляет и запись', async () => {

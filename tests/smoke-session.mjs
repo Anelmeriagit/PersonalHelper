@@ -71,6 +71,21 @@ export async function session({ stand, browser, fail }) {
         await page.goto(stand.url + '/', { waitUntil: 'load' });
         await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
 
+        // 2c. сессия заканчивается при добавлении сети на «Wi-Fi»: в гостевые данные идут сети аккаунта и несохранённая новая
+        await page.evaluate(() => { localStorage.setItem('g-wf', JSON.stringify({ nets: [{ id: 'g1', ssid: 'GuestNet', password: 'guest-pass-1', security: 'WPA', hidden: false }] })); location.hash = '#wifi'; });
+        await page.waitForSelector('.wcard .wqr svg.qr', { state: 'visible', timeout: 5000 });
+        await page.route('**/api/wifi', (r) => (r.request().method() === 'PUT' ? r.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"auth"}' }) : r.fallback()));
+        await page.click('[data-wf=add]');
+        await page.fill('#wfSsid', 'Cafe'); await page.selectOption('#wfSec', 'nopass');
+        await page.press('#wfSsid', 'Enter');
+        await page.waitForSelector('#gBtn', { state: 'visible', timeout: 8000 });
+        const l5 = await page.evaluate(() => JSON.parse(localStorage.getItem('g-wf') || '{}'));
+        check(JSON.stringify((l5.nets || []).map((n) => n.ssid)) === JSON.stringify(['TestNet', 'Cafe']), '401 на «Wi-Fi»: у гостя сети аккаунта и новая, прежняя гостевая заменена: ' + JSON.stringify((l5.nets || []).map((n) => n.ssid)));
+        await page.goto('about:blank');
+        await page.unroute('**/api/wifi');
+        await page.goto(stand.url + '/', { waitUntil: 'load' });
+        await page.waitForSelector((vp.width <= 640 ? '#navAcct' : '#uBtn'), { state: 'visible', timeout: 5000 });
+
         // 3. выход: свежие данные аккаунта заменяют гостевые
         await page.unroute('**/api/data');
         await page.evaluate(() => {

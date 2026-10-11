@@ -133,10 +133,9 @@ function normNets(raw){if(!raw||typeof raw!=='object')return[];
   return out}
 function newNetId(nets){var a=new Uint8Array(4),id,i;
   do{crypto.getRandomValues(a);id='';for(i=0;i<4;i++)id+=('0'+a[i].toString(16)).slice(-2)}while(nets.some(function(n){return n.id===id}));return id}
-/* ответ: {configured, nets:[{id,…,qr}]}; пока сайт не перешёл на список, поля первой сети дублируются наверху */
+/* ответ: {configured, nets:[{id,…,qr}]} */
 function wifiView(nets){if(!nets.length)return{configured:false,nets:[]};
-  var list=nets.map(function(n){return Object.assign({},n,{qr:makeQr(wifiString(n))})}),f=list[0];
-  return{configured:true,nets:list,ssid:f.ssid,password:f.password,security:f.security,hidden:f.hidden,qr:f.qr}}
+  return{configured:true,nets:nets.map(function(n){return Object.assign({},n,{qr:makeQr(wifiString(n))})})}}
 function wfNets(){return normNets(read(K_WF))}
 function wfSave(nets){return nets.length?write(K_WF,{nets:nets}):drop(K_WF)}
 /* данные аккаунта становятся гостевыми: null или пустой список — сети нет (запись удаляется), иначе проверенные сети (v — ответ GET /api/wifi или прежний вид одной сети); false, если не записалось или ни одна не прошла проверку */
