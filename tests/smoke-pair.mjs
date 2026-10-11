@@ -1,5 +1,6 @@
 // Сценарий smoke.mjs --only=pair: «Соединить аккаунты» (часть 2): кнопка «Поделиться» (буфер на компьютере, меню на телефоне),
-// соединённый аккаунт и «Разорвать», открытие ссылки /?join=<токен> (аккаунт, гость, ошибки). Общее: smoke-lib.mjs, fixtures.mjs.
+// соединённый аккаунт и «Разорвать», открытие ссылки /?join=<токен> (аккаунт, гость, ошибки), окно выбора сетей Wi-Fi «Оставить мою / партнёра / обе» (часть 5 общего Wi-Fi).
+// Общее: smoke-lib.mjs, fixtures.mjs.
 import { SCHEMES, VIEWPORTS } from './smoke-lib.mjs';
 
 const TOKEN = 'AAAAAAAAAAAAAAAAAAAAAA';
@@ -30,6 +31,7 @@ export async function pair({ stand, browser, fail }) {
       const problems = [];
       const posts = [];
       let partner = { linked: false }, linkRes = null, joinRes = null, joinAbort = false, guest = false;
+      let wfState = null, wfPick = null; // pair-wifi: состояние выбора (null — сделан) и ответ на выбор
       page.on('pageerror', (e) => problems.push('JS: ' + e.message));
       page.on('console', (m) => { if (m.type() === 'error' && !/status of (400|401|404|409|429|500)/.test(m.text()) && !/ERR_FAILED/.test(m.text())) problems.push('console: ' + m.text()); });
       const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -41,6 +43,12 @@ export async function pair({ stand, browser, fail }) {
         if (b.action === 'pair-join') {
           if (joinAbort) return r.abort('failed');
           return joinRes ? json(r, joinRes.body, joinRes.status) : json(r, { partner: { linked: true, name: 'Анна К' } });
+        }
+        if (b.action === 'pair-wifi') {
+          if (b.choice === undefined) return json(r, wfState ? { pending: true, ...wfState } : { pending: false });
+          if (wfPick && wfPick.abort) return r.abort('failed');
+          if (wfPick) return json(r, wfPick.body, wfPick.status);
+          wfState = null; return json(r, { pending: false });
         }
         if (b.action === 'pair-drop') { partner = { linked: false }; return json(r, { partner }); }
         return json(r, { ok: true });
@@ -244,6 +252,105 @@ export async function pair({ stand, browser, fail }) {
         await dlgOk();
         check(count('pair-join') === n3 + 1, 'после входа один pair-join');
         await noHScroll('после соединения');
+
+        // ---------- общий Wi-Fi: окно выбора «Оставить мою / партнёра / обе» ----------
+        const WF = { mine: [{ ssid: 'HomeNet', security: 'WPA', hidden: false }, { ssid: '<i>Cafe</i>', security: 'WPA', hidden: true }], partner: [{ ssid: 'Office', security: 'WPA', hidden: false }], both: 3 };
+        const choices = () => posts.filter((b) => b.action === 'pair-wifi' && b.choice !== undefined).map((b) => b.choice);
+        const wdNoScroll = async (where) => {
+          const r = await page.evaluate(() => { const d = document.getElementById('wfDlg'); return { dw: d.scrollWidth, dc: d.clientWidth, sw: document.documentElement.scrollWidth, iw: window.innerWidth }; });
+          check(r.dw <= r.dc && r.sw <= r.iw, `${where}: горизонтальная прокрутка окна выбора ${JSON.stringify(r)}`);
+        };
+        const wdOpen = () => page.waitForSelector('#wfDlg[open]', { timeout: 5000 });
+        const wdGone = () => page.waitForFunction(() => !document.getElementById('wfDlg').open, null, { timeout: 5000 });
+        const wdBtn = (a) => page.locator('#wfDlg [data-wd=' + a + ']');
+        const wfRowOf = () => page.locator('#acctDlg [data-a=wfpick]');
+
+        // после соединения по ссылке: сначала сообщение, затем окно выбора
+        wfState = WF;
+        joinRes = { status: 200, body: { partner: { linked: true, name: 'Анна К' }, wifi: { choose: true, ...WF } } };
+        await home('/?join=' + TOKEN);
+        const jt = await dlgText();
+        check(/Анна К\./.test(jt) && /разные сети Wi-Fi/.test(jt), 'соединение с разными сетями: в сообщении про выбор: ' + jt);
+        check(!(await vis('#wfDlg[open]')), 'окно выбора ждёт закрытия сообщения');
+        await dlgOk();
+        await wdOpen();
+        check((await page.locator('#wfDlg .wdc section').count()) === 2, 'в окне два списка');
+        const wt = await text('#wfDlg');
+        check(/HomeNet/.test(wt) && /Office/.test(wt) && /<i>Cafe<\/i>/.test(wt) && /скрытая/.test(wt) && /Анна К/.test(wt), 'в окне названия сетей обоих и имя партнёра: ' + wt.replace(/\s+/g, ' '));
+        check((await page.locator('#wfDlg i').count()) === 0, 'названия сетей выводятся текстом, не разметкой');
+        check(!/pass|парол[ьея]: /i.test((await page.locator('#wfDlg .wdc').innerText())), 'в списках паролей нет');
+        check((await page.locator('#wfDlg [data-wd]').count()) === 4 && (await wdBtn('mine').isEnabled()) && (await wdBtn('partner').isEnabled()) && (await wdBtn('both').isEnabled()), 'четыре кнопки, выбор доступен');
+        check(/Оставить мою/.test(await wdBtn('mine').innerText()) && /Оставить партнёра/.test(await wdBtn('partner').innerText()) && /Оставить обе/.test(await wdBtn('both').innerText()), 'подписи кнопок');
+        await wdNoScroll('окно выбора');
+        await wdBtn('later').click();
+        await wdGone();
+        check(choices().length === 0, '«Решить позже»: выбор на сервер не уходит');
+
+        // из настроек: «Выбрать» есть, пока выбор не сделан
+        partner = { linked: true, name: 'Анна К' };
+        await home('/');
+        const s0 = posts.filter((b) => b.action === 'pair-wifi' && b.choice === undefined).length;
+        await openSettings();
+        await wfRowOf().waitFor({ timeout: 5000 });
+        check(posts.filter((b) => b.action === 'pair-wifi' && b.choice === undefined).length === s0 + 1, 'настройки соединённого аккаунта: один запрос состояния выбора');
+        check(/Сети Wi-Fi/.test(await text('#acctDlg .av.wfp')), 'в настройках строка «Сети Wi-Fi» с кнопкой «Выбрать»');
+        await noHScroll('настройки с выбором Wi-Fi');
+        await wfRowOf().click();
+        await wdOpen();
+        check(/Анна К/.test(await text('#wfDlg')), 'из настроек: окно с именем партнёра');
+        // сервер: «обе» не помещаются → окно остаётся, «обе» отключена, остальные доступны
+        wfPick = { status: 400, body: { error: 'Вместе больше 5 сетей. Оставьте мою или сети партнёра.', code: 'limit' } };
+        await wdBtn('both').click();
+        await page.waitForFunction(() => /Вместе больше 5/.test(document.getElementById('wdErr').textContent), null, { timeout: 5000 });
+        check(!(await wdBtn('both').isEnabled()) && (await wdBtn('mine').isEnabled()) && (await wdBtn('partner').isEnabled()), '400 limit: «обе» отключена, остальные доступны');
+        check((await vis('#wfDlg[open]')), '400 limit: окно осталось');
+        // нет связи: сообщение, кнопки снова доступны
+        wfPick = { abort: true };
+        await wdBtn('partner').click();
+        await page.waitForFunction(() => /Нет связи/.test(document.getElementById('wdErr').textContent), null, { timeout: 5000 });
+        check((await wdBtn('partner').isEnabled()) && (await wdBtn('mine').isEnabled()) && !(await wdBtn('both').isEnabled()), 'нет связи: можно повторить');
+        // выбор сделан
+        wfPick = null;
+        await wdBtn('mine').click();
+        await wdGone();
+        check(choices().pop() === 'mine' && choices().length === 3, 'выбор «мою»: pair-wifi с choice=mine');
+        check((await wfRowOf().count()) === 0, 'после выбора строка «Выбрать» убрана');
+        check((await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-a'))) === 'pdrop', 'после выбора фокус вернулся в настройки');
+        await closeSettings();
+
+        // партнёр уже не соединён: сообщение сервера, окно закрыто
+        wfState = WF; wfPick = { status: 409, body: { error: 'Аккаунты больше не соединены.', code: 'nopair' } };
+        await openSettings();
+        await wfRowOf().waitFor({ timeout: 5000 });
+        await wfRowOf().click();
+        await wdOpen();
+        await wdBtn('partner').click();
+        check(/больше не соединены/.test(await dlgText()), '409 nopair: сообщение сервера');
+        await wdGone();
+        await dlgOk();
+        await closeSettings();
+        wfPick = null;
+
+        // обе не помещаются: отключена сразу, есть пояснение; Escape закрывает окно
+        wfState = { ...WF, both: 6 };
+        await openSettings();
+        await wfRowOf().waitFor({ timeout: 5000 });
+        await wfRowOf().click();
+        await wdOpen();
+        check(!(await wdBtn('both').isEnabled()) && /6 сетей/.test(await text('#wdOver')) && (await wdBtn('mine').isEnabled()), 'обе > 5: «Оставить обе» отключена, написано почему');
+        await wdNoScroll('обе больше пяти');
+        await page.keyboard.press('Escape');
+        await wdGone();
+        check(choices().length === 4, 'Escape: выбор не отправлен');
+        await closeSettings();
+
+        // выбор уже сделан: строки в настройках нет
+        wfState = null;
+        await openSettings();
+        await page.waitForTimeout(300);
+        check((await wfRowOf().count()) === 0, 'выбор сделан: «Выбрать» в настройках нет');
+        await closeSettings();
+        partner = { linked: false }; joinRes = null;
 
         const csp = await page.evaluate(() => window.__csp);
         check(!csp.length, 'CSP: ' + csp.join('; '));

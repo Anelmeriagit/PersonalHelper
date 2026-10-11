@@ -61,7 +61,8 @@ export const routes = {
     const a = body && body.action;
     if (a === 'me') return { id: ACC_ID, name: '', email: '', tg: { linked: false }, partner: { linked: false } };
     if (a === 'pair-link') return { token: 'AAAAAAAAAAAAAAAAAAAAAA', ttl: 86400 };
-    if (a === 'pair-join') return { partner: { linked: true, name: '' } };
+    if (a === 'pair-join') return { partner: { linked: true, name: '' }, wifi: { choose: false } };
+    if (a === 'pair-wifi') return { pending: false };
     if (a === 'pair-drop') return { partner: { linked: false } };
     if (a === 'rename') return { name: String(body.name || '') };
     return { ok: true };

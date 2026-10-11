@@ -5,10 +5,11 @@
 import {$,esc,nrm,IC} from './util.js';
 import {api,authFail} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
+import {wifiChoose,wifiPairState} from './wifi.js';
 
 var DEF='Helper User',WORD='удалить',NAME_MAX=32;
 var TOKEN=/^[A-Za-z0-9_-]{22}$/,SENT='Ссылка отправлена. Она одноразовая и действует 24 часа.',COPIED='Ссылка скопирована. Отправьте её второму человеку: она одноразовая и действует 24 часа.',MANUAL='Скопируйте ссылку и отправьте её второму человеку: она одноразовая и действует 24 часа.';
-var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){}};
+var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false,wfp:null},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){}};
 var uBtn,navA,uMenu,acct,del;
 
 /* ---------- имя в шапке ---------- */
@@ -35,10 +36,12 @@ function menuKey(e){var it=uMenu.querySelectorAll('button'),i=Array.prototype.in
   else if(e.key==='ArrowUp'){e.preventDefault();it[(i-1+it.length)%it.length].focus()}}
 
 /* ---------- окно «Настройки аккаунта» ---------- */
-function pairReset(){A.link='';A.pmsg='';A.perr='';A.manual=false}
+function pairReset(){A.link='';A.pmsg='';A.perr='';A.manual=false;A.wfp=null}
 function pname(){var p=A.me&&A.me.partner;return nrm(p&&p.name)||DEF}
+/* общий Wi-Fi: выбор при соединении не сделан (A.wfp — состояние от сервера), кнопка открывает окно выбора */
+function wfRow(){return A.wfp?'<div class="av wfp"><span class="vn">Сети Wi-Fi<span class="mut sub">у вас разные списки, общий пока не выбран</span></span><button class="btn" type="button" data-a="wfpick">Выбрать</button></div>':''}
 function pairRow(){var p=A.me.partner,h='<div class="ar pr"><div class="al">Соединить аккаунты</div>';
-  if(p&&p.linked)return h+'<div class="av"><span class="vn">'+esc(pname())+'<span class="mut sub">аккаунт соединён</span></span><button class="btn" type="button" data-a="pdrop">Разорвать</button></div><p class="err" id="pErr" role="alert">'+esc(A.perr)+'</p></div>';
+  if(p&&p.linked)return h+'<div class="av"><span class="vn">'+esc(pname())+'<span class="mut sub">аккаунт соединён</span></span><button class="btn" type="button" data-a="pdrop">Разорвать</button></div>'+wfRow()+'<p class="err" id="pErr" role="alert">'+esc(A.perr)+'</p></div>';
   return h+'<div class="av"><span class="vn mut">Общие кэшбэки и напоминания</span><button class="btn" type="button" data-a="share">Поделиться</button></div>'+
     '<p class="ahint" id="pOk" role="status">'+esc(A.pmsg||'Отправьте второму человеку ссылку: она одноразовая и действует 24 часа.')+'</p>'+
     (A.manual&&A.link?'<input id="pLink" readonly aria-label="Ссылка для соединения" spellcheck="false">':'')+
@@ -72,7 +75,9 @@ function openSettings(){var g=++A.gen;A.me=null;A.edit=false;A.busy=false;pairRe
     var pr=j.partner&&j.partner.linked?{linked:true,name:typeof j.partner.name==='string'?j.partner.name:''}:{linked:false};
     A.me={id:j.id,email:typeof j.email==='string'?j.email:'',tg:t,partner:pr};
     if(typeof j.name==='string')accSetName(j.name);
-    render()})
+    render();
+    /* соединённый аккаунт: если выбор сетей Wi-Fi не сделан, в строке «Соединить аккаунты» появляется «Выбрать» */
+    if(pr.linked)wifiPairState().then(function(s){if(g!==A.gen||!acct.open||!A.me||!A.me.partner.linked)return;A.wfp=s;if(s&&!A.edit)render()})})
   }).catch(function(){if(g===A.gen&&acct.open)acct.innerHTML=head()+'<p class="err" role="alert">Нет связи с сервером</p>'})}
 
 function save(){var inp=$('acIn'),er=$('acErr');if(!inp||A.busy)return;
@@ -127,6 +132,9 @@ function drop(){
       A.me.partner={linked:false};pairReset();render();focusBtn('share');cb.pair()
     }).catch(function(){A.busy=false;if(g===A.gen){A.perr='Нет связи с сервером';render();focusBtn('pdrop')}})})}
 
+function pickWifi(){var s=A.wfp;if(!s)return;
+  wifiChoose(s,pname(),function(){A.wfp=null;if(A.me&&acct.open){render();focusBtn('pdrop')}})}
+
 function onAcct(e){var el=e.target.closest&&e.target.closest('[data-a]');if(!el)return;var a=el.getAttribute('data-a');
   if(a==='close'){acct.close();return}
   if(A.busy||!A.me)return;
@@ -136,6 +144,7 @@ function onAcct(e){var el=e.target.closest&&e.target.closest('[data-a]');if(!el)
   else if(a==='unlink')unlink();
   else if(a==='share')share();
   else if(a==='pdrop')drop();
+  else if(a==='wfpick')pickWifi();
   else if(a==='del')openDel()}
 
 /* ---------- удаление аккаунта: нужно ввести слово «удалить» ---------- */

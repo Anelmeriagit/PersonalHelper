@@ -1,11 +1,12 @@
 /* Wi-Fi: сети пользователя (до 5): карточки с QR-кодом для подключения, добавление, правка и удаление по id, показ и копирование пароля, печатная страница одной сети */
-import {$,esc,IC} from './util.js';
+import {$,esc,nrm,IC} from './util.js';
 import {api,S,authFail,stamp} from './api.js';
-import {dlgConfirm} from './dialogs.js';
+import {dlgConfirm,dlgAlert} from './dialogs.js';
 
 var NETS_MAX=5;
 /* wf — ответ GET /api/wifi {configured, nets:[{id,ssid,password,security,hidden,qr}]}; wfShow[id] — пароль сети показан; wfPP[id] — галочка «Показывать пароль на листе» (по умолчанию включена);
    wfForm: false — список, 'new' — форма новой сети, иначе id правимой сети */
+var DEF='Helper User';
 var wifiBody=$('wifiBody'),wifiMsg=$('wifiMsg'),wf=null,wfShow={},wfPP={},wfBusy=false,wfTimer=0,wfForm=false,wfSaving=false,wfPend=null,wfLast=null;
 function wfNets(){return wf&&Array.isArray(wf.nets)?wf.nets:[]}
 function wfFind(id){var a=wfNets(),i;for(i=0;i<a.length;i++)if(a[i].id===id)return a[i];return null}
@@ -13,7 +14,7 @@ function wfFind(id){var a=wfNets(),i;for(i=0;i<a.length;i++)if(a[i].id===id)retu
 function wfWide(on){var w=wifiBody&&wifiBody.parentNode;if(w)w.classList.toggle('wmulti',!!on)}
 export function wifiClear(){wf=null;wfShow={};wfPP={};wfForm=false;wfSaving=false;wfWide(false);if(wifiBody)wifiBody.innerHTML='';if(wifiMsg)wifiMsg.textContent=''}
 /* wfLast — последние полученные данные сетей: при уходе со вкладки wf очищается (пароли не висят в странице), а для гостевых данных при конце сессии нужна последняя копия; сбрасывается при переходе в гостя */
-export function wifiForget(){wfLast=null;wfPend=null;wifiClear()}
+export function wifiForget(){wfLast=null;wfPend=null;wdClose();wifiClear()}
 /* список сетей из памяти страницы для гостевых данных, когда сессия закончилась: список с сетью, чья запись оборвалась на 401, иначе последний полученный;
    null — у аккаунта сетей нет, undefined — раздел за сессию не открывался (гостевые сети остаются как были) */
 export function wifiSnapshot(){if(wfPend)return wfPend;var w=wf||wfLast;return w?(w.nets&&w.nets.length?w:null):undefined}
@@ -101,7 +102,54 @@ function wifiCopy(n){var t=n&&n.password;if(!t)return;
 /* печать одной сети: её страница собирается в #wPrint в момент нажатия (пароль других сетей и непечатаемых не лежит в странице) */
 function wifiPrint(n,c){var cb=c.querySelector('.wpp'),box=$('wPrint');if(!box)return;box.innerHTML=printHtml(n,cb?cb.checked:true);window.print()}
 
+
+/* ---------- общий список: окно «Оставить мою / партнёра / обе» (сервер: notes/wifi.md, «Часть 4») ----------
+   Показывается после соединения аккаунтов (ответ pair-join, wifi.choose) и из «Настроек аккаунта», если выбор не сделан (pair-wifi без choice).
+   До выбора у каждого свой личный список. Выбор — POST /api/auth {action:'pair-wifi', choice:'mine'|'partner'|'both'}; в окне только названия сетей, паролей нет. */
+var wdDlg=$('wfDlg'),wd=null,wdBusy=false,wdGen=0;
+function wdNets(a){return Array.isArray(a)?a.filter(function(n){return n&&typeof n.ssid==='string'}).map(function(n){return{ssid:n.ssid,hidden:n.hidden===true}}):null}
+/* ответ сервера {mine, partner, both} → то же в безопасном виде, null — ответ негодный */
+function wdNorm(j){var m=j&&wdNets(j.mine),p=j&&wdNets(j.partner);return m&&p&&typeof j.both==='number'?{mine:m,partner:p,both:j.both}:null}
+function wdList(a){return a.length?'<ul class="wdl">'+a.map(function(n){return '<li>'+esc(n.ssid)+(n.hidden?' <span class="mut">(скрытая)</span>':'')+'</li>'}).join('')+'</ul>':'<p class="mut wde">Сетей нет</p>'}
+function wdHtml(){var over=wd.both>NETS_MAX,nm=esc(wd.name);
+  return '<h2 id="wfDlgH">Какие сети Wi-Fi оставить?</h2>'+
+    '<p>У вас и у аккаунта «'+nm+'» разные сети Wi-Fi. Список станет общим: любой из вас видит, добавляет и удаляет сети.</p>'+
+    '<div class="wdc"><section><h3>Ваши сети</h3>'+wdList(wd.mine)+'</section><section><h3>Сети «'+nm+'»</h3>'+wdList(wd.partner)+'</section></div>'+
+    (over?'<p class="ahint" id="wdOver">Вместе получилось бы '+wd.both+' сетей, а можно не больше '+NETS_MAX+': оставить обе нельзя.</p>':'')+
+    '<p class="ahint">Можно решить позже: до выбора у каждого свой список. Выбор доступен в «Настройках аккаунта».</p>'+
+    '<p class="err" id="wdErr" role="alert"></p>'+
+    '<div class="wdb"><button class="btn" type="button" data-wd="mine">Оставить мою</button><button class="btn" type="button" data-wd="partner">Оставить партнёра</button>'+
+    '<button class="btn" type="button" data-wd="both"'+(over?' disabled':'')+'>Оставить обе</button><button class="btn" type="button" data-wd="later">Решить позже</button></div>'}
+function wdBtns(off){Array.prototype.forEach.call(wdDlg.querySelectorAll('[data-wd]'),function(b){b.disabled=off||(b.getAttribute('data-wd')==='both'&&wd&&wd.noBoth)})}
+function wdClose(){wdGen++;wd=null;wdBusy=false;if(wdDlg&&wdDlg.open)wdDlg.close()}
+/* w — {mine, partner, both} (названия сетей без паролей); name — имя партнёра; done — вызывается после сделанного выбора */
+export function wifiChoose(w,name,done){var n=wdNorm(w);if(!n||!S.acct||!wdDlg||wdDlg.open)return;
+  wd=n;wd.name=nrm(name)||DEF;wd.noBoth=n.both>NETS_MAX;wd.done=done;wdBusy=false;wdGen++;
+  wdDlg.innerHTML=wdHtml();wdDlg.showModal()}
+/* состояние выбора для «Настроек аккаунта»: {mine, partner, both}, если выбор ещё не сделан; иначе null (в том числе при сбое) */
+export function wifiPairState(){return api('POST','/api/auth',{action:'pair-wifi'}).then(function(r){
+  if(r.status===401){authFail();return null}
+  if(!r.ok)return null;
+  return r.json().then(function(j){return j&&j.pending===true?wdNorm(j):null},function(){return null})}).catch(function(){return null})}
+function wdPick(c){if(wdBusy||!wd)return;var g=wdGen,er=$('wdErr');wdBusy=true;er.textContent='';wdBtns(true);
+  api('POST','/api/auth',{action:'pair-wifi',choice:c}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+    if(g!==wdGen)return;wdBusy=false;
+    if(r.status===401){wdClose();authFail();return}
+    if(r.ok&&j.pending===false){var d=wd.done;wdClose();if(S.loggedIn&&S.page==='wifi')wifiLoad();if(d)d();return}
+    if(r.status===409&&j.code==='nopair'){var m=j.error,d2=wd.done;wdClose();if(d2)d2();dlgAlert(m||'Аккаунты больше не соединены.');return}
+    if(r.status===400&&j.code==='limit')wd.noBoth=true;
+    wdBtns(false);er.textContent=j.error||'Не получилось сохранить выбор. Попробуйте ещё раз.'})
+  }).catch(function(){if(g!==wdGen)return;wdBusy=false;wdBtns(false);er.textContent='Нет связи с сервером'})}
+function wdInit(){
+  wdDlg.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wd]');
+    if(b){var a=b.getAttribute('data-wd');if(a==='later'){if(!wdBusy)wdDlg.close()}else wdPick(a);return}
+    if(e.target!==wdDlg||wdBusy)return;var r=wdDlg.getBoundingClientRect();
+    if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)wdDlg.close()});
+  wdDlg.addEventListener('cancel',function(e){if(wdBusy)e.preventDefault()});
+  wdDlg.addEventListener('close',function(){wdGen++;wd=null;wdBusy=false})}
+
 export function initWifi(){
+  wdInit();
   wifiBody.addEventListener('click',function(e){var b=e.target.closest('button[data-wf]');if(!b||!wf)return;
     var a=b.getAttribute('data-wf'),c=b.closest('[data-id]'),id=c?c.getAttribute('data-id'):'',n=id?wfFind(id):null;
     if(a==='show'&&n){var s=wfShow[id]=!wfShow[id],t=s?'Скрыть пароль':'Показать пароль';c.querySelector('.wpw').textContent=pwText(n);b.innerHTML=s?IC.eyeoff:IC.eye;b.setAttribute('aria-pressed',String(s));b.setAttribute('aria-label',t);b.title=t}

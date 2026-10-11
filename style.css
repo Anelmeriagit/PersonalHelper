@@ -433,3 +433,15 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .wadd .btn{min-height:44px}
 .wadd .wfn{margin:0;text-align:center}
 @media print{body.pw .wlist,body.pw .wadd{display:none!important}}
+/* Wi-Fi: окно выбора сетей при соединении аккаунтов (#wfDlg) */
+#wfDlg{width:min(92vw,480px);max-height:90vh;overflow:auto}
+#wfDlg h2{margin:0 0 .75rem;font-size:1.15rem}
+#wfDlg h3{margin:0 0 .35rem;font-size:.9rem;color:var(--muted);font-weight:600}
+.wdc{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:.75rem;margin-bottom:1rem}
+.wdc section{min-width:0;padding:.6rem .75rem;border:1px solid var(--line);border-radius:12px}
+.wdl{margin:0;padding:0;list-style:none}
+.wdl li{padding:.15rem 0;overflow-wrap:anywhere}
+.wde{margin:0}
+.wdb{display:flex;flex-direction:column;gap:.5rem}
+.wdb .btn{min-height:44px;width:100%}
+.av.wfp{margin-top:.75rem}

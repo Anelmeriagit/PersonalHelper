@@ -203,6 +203,31 @@ export async function wifi({ stand, browser, fail }) {
         await page.waitForSelector('#wForm', { timeout: 5000 });
         check((await page.locator('#wifiBody .qr').count()) === 0 && !(await page.locator('#wifiBody').innerHTML()).includes('pass-'), 'после удаления всех сетей QR и пароли пропали из страницы');
         check(!(await page.evaluate(() => document.querySelector('#wifiStage .rwrap').classList.contains('wmulti'))), 'форма: рамка обычной ширины');
+        // общий Wi-Fi: окно выбора поверх вкладки Wi-Fi (после соединения по ссылке); после выбора список перечитывается
+        let chosen = null, gets = 0;
+        const own = { id: 's1abcdef', ssid: 'Mine1', password: 'mine-pass-123', security: 'WPA', hidden: false };
+        nets = [own];
+        page.on('request', (rq) => { if (rq.method() === 'GET' && new URL(rq.url()).pathname === '/api/wifi') gets++; });
+        await page.route('**/api/auth', (r) => {
+          const b = r.request().postDataJSON();
+          const ok = (body) => r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+          if (b.action === 'pair-join') return ok({ partner: { linked: true, name: 'Анна К' }, wifi: { choose: true, mine: [{ ssid: 'Mine1', security: 'WPA', hidden: false }], partner: [{ ssid: 'Theirs1', security: 'WPA', hidden: false }], both: 2 } });
+          if (b.action === 'pair-wifi') { chosen = b.choice; nets = [own, { id: 's2abcdef', ssid: 'Theirs1', password: 'theirs-pass-123', security: 'WPA', hidden: false }]; return ok({ pending: false }); }
+          return r.fallback();
+        });
+        await page.goto(stand.url + '/?join=AAAAAAAAAAAAAAAAAAAAAA#wifi', { waitUntil: 'load', timeout: 15000 });
+        await page.waitForSelector('#dlg[open]', { timeout: 5000 });
+        await waitCards(1);
+        check(/соединён/.test(await text('#dlgMsg')) && !(await page.locator('#wfDlg').evaluate((d) => d.open)), 'после соединения сначала сообщение, окна выбора ещё нет');
+        await page.click('#dlg .done');
+        await page.waitForSelector('#wfDlg[open]', { timeout: 5000 });
+        check((await cards.count()) === 1 && chosen === null, 'пока окно открыто, у страницы свой список из одной сети');
+        const g0 = gets;
+        await page.click('#wfDlg [data-wd=both]');
+        await waitCards(2);
+        check(chosen === 'both' && gets === g0 + 1, 'выбор «обе»: pair-wifi и повторное чтение списка: ' + chosen + ' ' + (gets - g0));
+        check(!(await page.locator('#wfDlg').evaluate((d) => d.open)) && /Theirs1/.test(await page.locator('#wifiBody').innerText()), 'после выбора окно закрыто, сеть партнёра в списке');
+        await noHScroll('после выбора сетей');
         const csp = await page.evaluate(() => window.__csp);
         check(!csp.length, 'CSP: ' + csp.join('; '));
       } catch (e) { problems.push('сценарий: ' + e.message.split('\n')[0]); }

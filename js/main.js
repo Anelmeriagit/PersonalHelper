@@ -5,7 +5,7 @@ import {S,api,net,onAuthFail,fresh} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
 import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote,pairChanged,nameChanged} from './cashback/index.js';
 import {initReminders,remLoad,remPair} from './reminders/index.js';
-import {initWifi,wifiLoad,wifiClear,wifiForget,wifiSnapshot} from './wifi.js';
+import {initWifi,wifiLoad,wifiClear,wifiForget,wifiSnapshot,wifiChoose} from './wifi.js';
 import {initAgent,agClear,agLeave,agVisible,agOnPage,agSnapshot,agPending} from './agent/index.js';
 import {initTheme} from './theme-switch.js';
 import {initTg,tgVisible,tgClear} from './tglink.js';
@@ -111,7 +111,11 @@ function joinTry(){var t=joinToken();if(!t){ldel(PJ);return}
     if(r.status===401)return;
     if(r.status===429){whenFree(function(){dlgAlert(j.error||'Слишком часто. Попробуйте позже.')});return}
     ldel(PJ);
-    if(r.ok&&j.partner&&j.partner.linked){pairChanged(true);remPair();whenFree(function(){dlgAlert('Ваш аккаунт соединён с аккаунтом '+(nrm(j.partner.name)||'Helper User')+'.')})}
+    if(r.ok&&j.partner&&j.partner.linked){pairChanged(true);remPair();
+      /* у двоих разные сети Wi-Fi (ответ wifi.choose): после сообщения откроется окно «Оставить мою / партнёра / обе» */
+      var nm=nrm(j.partner.name)||'Helper User',ch=!!(j.wifi&&j.wifi.choose);
+      if(S.page==='wifi')wifiLoad();
+      whenFree(function(){dlgAlert('Ваш аккаунт соединён с аккаунтом '+nm+'.'+(ch?' У вас разные сети Wi-Fi: выберите, какие оставить.':'')).then(function(){if(ch)wifiChoose(j.wifi,nm)})})}
     else whenFree(function(){dlgAlert(typeof j.error==='string'&&j.error?j.error:'Не удалось соединить аккаунты. Попробуйте позже.')})})
   }).catch(function(){whenFree(function(){dlgAlert('Нет связи с сервером. Откройте ссылку ещё раз.')})})}
 
