@@ -420,3 +420,8 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 /* повторяющееся: способ задать дни (по дате / по числам месяца) и сетка чисел 1…31 */
 .bys{margin:0 0 .6rem}
 .cal-n{margin-bottom:.25rem}
+.wi{width:min(100%,320px)}
+.wpd{display:inline-flex;align-items:center;gap:.4rem;justify-content:flex-end}
+.weye{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;margin:-6px -6px -6px 0;padding:0;border:0;border-radius:10px;background:transparent;color:var(--muted);cursor:pointer}
+.weye:hover{color:var(--text)}
+.weye svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}

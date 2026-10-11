@@ -1,5 +1,5 @@
 /* Wi-Fi: личная сеть пользователя (ввод и правка), QR-код для подключения, показ и копирование пароля, печатная страница */
-import {$,esc} from './util.js';
+import {$,esc,IC} from './util.js';
 import {api,S,authFail,stamp} from './api.js';
 import {dlgConfirm} from './dialogs.js';
 
@@ -21,14 +21,16 @@ export function wfPrintHtml(){
     '<p class="wpn">Сеть: <b>'+esc(wf.ssid)+'</b></p>'+
     (!wfOpen()&&wfPrintPass?'<p class="wpn">Пароль: <b>'+esc(wf.password)+'</b></p>':'')+
     '<p class="wph">Откройте камеру телефона и наведите на код</p>'}
+/* значок глаза справа от пароля: показать или скрыть (wfShow) */
+function eyeBtn(){return '<button class="weye" type="button" id="wShow" data-wf="show" aria-pressed="'+wfShow+'" aria-label="'+(wfShow?'Скрыть пароль':'Показать пароль')+'" title="'+(wfShow?'Скрыть пароль':'Показать пароль')+'">'+(wfShow?IC.eyeoff:IC.eye)+'</button>'}
 export function wifiRender(){
   if(!wf)return;
   if(!wf.configured)wfForm=true;
   if(wfForm){wifiForm();return}
   wifiBody.innerHTML='<div class="wscreen">'+
     '<div class="wqr">'+qrSvg(wf.qr)+'</div>'+
-    '<dl class="wi"><div><dt>Сеть</dt><dd>'+esc(wf.ssid)+'</dd></div><div><dt>Пароль</dt><dd id="wPw">'+wfPwText()+'</dd></div></dl>'+
-    '<div class="wact">'+(wfOpen()?'':'<button class="btn" type="button" id="wShow" data-wf="show" aria-pressed="'+wfShow+'">'+(wfShow?'Скрыть':'Показать')+'</button><button class="btn" type="button" data-wf="copy">Копировать пароль</button>')+
+    '<dl class="wi"><div><dt>Сеть</dt><dd>'+esc(wf.ssid)+'</dd></div><div><dt>Пароль</dt><dd class="wpd"><span id="wPw">'+wfPwText()+'</span>'+(wfOpen()?'':eyeBtn())+'</dd></div></dl>'+
+    '<div class="wact">'+(wfOpen()?'':'<button class="btn" type="button" data-wf="copy">Копировать пароль</button>')+
     '<button class="btn" type="button" data-wf="print">Печать</button><button class="btn" type="button" data-wf="edit">Изменить сеть</button></div>'+
     (wfOpen()?'':'<label class="wchk"><input type="checkbox" id="wPP"'+(wfPrintPass?' checked':'')+'> Показывать пароль на листе</label>')+
   '</div><div class="wprint" id="wPrint">'+wfPrintHtml()+'</div>'}
@@ -74,7 +76,7 @@ export function wifiCopy(){var t=wf&&wf.password;if(!t)return;
 
 export function initWifi(){
   wifiBody.addEventListener('click',function(e){var b=e.target.closest('button[data-wf]');if(!b||!wf)return;var a=b.getAttribute('data-wf');
-    if(a==='show'){wfShow=!wfShow;$('wPw').textContent=wfPwText();b.textContent=wfShow?'Скрыть':'Показать';b.setAttribute('aria-pressed',String(wfShow))}
+    if(a==='show'){wfShow=!wfShow;$('wPw').textContent=wfPwText();b.innerHTML=wfShow?IC.eyeoff:IC.eye;b.setAttribute('aria-pressed',String(wfShow));b.setAttribute('aria-label',wfShow?'Скрыть пароль':'Показать пароль');b.title=wfShow?'Скрыть пароль':'Показать пароль'}
     else if(a==='copy')wifiCopy();
     else if(a==='print')window.print();
     else if(a==='edit'){wfForm=true;wfShow=false;wifiRender()}

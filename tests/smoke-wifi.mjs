@@ -71,6 +71,15 @@ export async function wifi({ stand, browser, fail }) {
         check(JSON.stringify(put) === JSON.stringify({ ssid: 'HomeNet', security: 'WPA', password: 'secret-pass-1', hidden: true }), 'запрос сохранения: ' + JSON.stringify(put));
         check((await page.locator('#wifiBody .wqr .qr').count()) === 1, 'после сохранения нарисован QR');
         check((await text('#wPw')).includes('•') && !(await text('#wifiBody')).includes('secret-pass-1'), 'пароль на экране скрыт точками');
+        check((await page.locator('#wifiBody button.weye').count()) === 1 && (await page.locator('#wifiBody .wact [data-wf=show]').count()) === 0, 'вместо кнопки «Показать» значок глаза у пароля');
+        const geo = await page.evaluate(() => ({ w: document.querySelector('#wifiBody .wi').getBoundingClientRect().width, p: document.getElementById('wPw').getBoundingClientRect().right, e: document.getElementById('wShow').getBoundingClientRect().left }));
+        check(geo.w <= 320.5, 'строки «Сеть» и «Пароль» не шире QR (320 px): ' + Math.round(geo.w));
+        check(geo.e >= geo.p - 1, 'глаз правее скрытого пароля');
+        await page.click('#wShow');
+        check((await text('#wPw')) === 'secret-pass-1' && (await page.getAttribute('#wShow', 'aria-pressed')) === 'true' && /Скрыть/.test(await page.getAttribute('#wShow', 'aria-label')), 'глаз показывает пароль, значок и подпись меняются');
+        await noHScroll('пароль показан');
+        await page.click('#wShow');
+        check((await text('#wPw')).includes('•') && !(await text('#wPw')).includes('secret-pass-1') && (await page.getAttribute('#wShow', 'aria-pressed')) === 'false', 'второй щелчок снова скрывает пароль');
         check((await page.locator('#wifiBody [data-wf=edit]').count()) === 1, 'есть кнопка «Изменить сеть»');
         await noHScroll('сеть настроена');
 
