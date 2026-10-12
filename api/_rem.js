@@ -10,19 +10,16 @@
 import { readRec, writeRec, isPrecond } from './_lib.js';
 import { getLink, partnerAcc, pairId } from './_acc.js';
 import { dueLower, pairMember } from './_due.js';
+import { DEFAULT_TZ, nowIn, zonedToMs, dayEndIn } from './_tz.js';
 
 export const CUSTOM_MAX = 50; // не больше 50 временных напоминаний
 export const RECURRING_MAX = 30; // не больше 30 повторяющихся
 export const EVERY = ['day', 'week', '2weeks', 'month']; // каждый день / каждую неделю / каждые 2 недели / каждый месяц (every:'day' не путать со слотом 'day' = 14:00)
 
-/* ---------- время: Москва ---------- */
-// → { month, date, hour, minute }: hour — час по Москве (0–23), minute — минута (0–59). Время берётся через Date.now(), чтобы тесты могли его подменять.
-export function mskNow(d = new Date(Date.now())) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d);
-  const g = (t) => parts.find((x) => x.type === t).value;
-  const month = g('year') + '-' + g('month');
-  return { month, date: month + '-' + g('day'), hour: parseInt(g('hour'), 10), minute: parseInt(g('minute'), 10) };
-}
+/* ---------- время ---------- */
+// → { month, date, hour, minute } по Москве: hour — час (0–23), minute — минута (0–59). Остаётся для кода, которому пояс аккаунта ещё не передан; новый код берёт nowIn(tz) из _tz.js
+// (пояс аккаунта — tzOf(acc)). Время берётся через Date.now(), чтобы тесты могли его подменять.
+export const mskNow = (d = new Date(Date.now())) => nowIn(DEFAULT_TZ, d);
 
 /* ---------- повторяющиеся: когда срабатывают ---------- */
 // С даты отсчёта: каждый день, каждые 7 / 14 дней или раз в месяц в то же число (если числа в месяце нет, например 31-го, то в последний день месяца).
@@ -164,9 +161,9 @@ export async function pubRem(id, rem, ctx) {
 }
 
 /* ---------- индекс dueq: когда ближайшая отправка ---------- */
-// Время слота в мс (UTC): Москва без перехода на летнее, UTC+3. Конец московских суток: dayEndMs.
-export const slotMs = (date, slot) => Date.parse(date + 'T00:00:00Z') + (SLOT_MIN[slot] - 180) * 60000;
-export const dayEndMs = (date) => Date.parse(date + 'T00:00:00Z') + 21 * 3600000 - 1;
+// Время слота в мс (UTC) по настенным часам пояса tz (по умолчанию Москва, UTC+3 без летнего времени). Конец суток этого пояса: dayEndMs.
+export const slotMs = (date, slot, tz = DEFAULT_TZ) => zonedToMs(date, SLOT_MIN[slot], tz);
+export const dayEndMs = (date, tz = DEFAULT_TZ) => dayEndIn(date, tz);
 // Ближайшая дата повторяющегося, которой ещё нет в отметках: не раньше сегодня и не раньше даты отсчёта; sentToday — сегодняшнее уже ушло.
 function recNextDate(it, today, sentToday) {
   const d = recNext(it, it.date > today ? it.date : today);

@@ -1,6 +1,6 @@
 // Аккаунты: один человек на аккаунт, вход только через Google. Ключи Redis (с префиксом DB_PREFIX, см. _db.js):
 //   gid:<sub>       → id          (аккаунт Google по неизменному идентификатору sub; SET NX)
-//   acc:<id>        → JSON {gsub, email?, name?, at}; email только подтверждённый Google, name — отображаемое имя (нет поля = не задано)
+//   acc:<id>        → JSON {gsub, email?, name?, tz?, at}; email только подтверждённый Google, name — отображаемое имя (нет поля = не задано), tz — часовой пояс IANA ('Europe/Berlin'; нет поля = Москва, _tz.js)
 //   users           → счётчик аккаунтов (лимит MAX_USERS)
 // Устаревшее (до отказа от входа по паролю): acc:<id> с полями nick и pw, ключ nick:<никнейм>. Код их больше не создаёт и не читает;
 // deleteAccount убирает ключ nick:<никнейм> такого аккаунта.
@@ -20,6 +20,7 @@
 import crypto from 'node:crypto';
 import { key, cmd, setNx, del, take, getDoc, putDoc } from './_db.js';
 import { dueDrop, pairMember } from './_due.js';
+import { cleanTz } from './_tz.js';
 
 export const ID_RE = /^[0-9a-f]{32}$/;
 
@@ -74,6 +75,19 @@ export async function setName(id, name) {
   const n = cleanName(name);
   if (n) rec.name = n; else delete rec.name;
   return (await cmd('SET', key('acc', id), JSON.stringify(rec), 'XX')) === 'OK' ? n : null;
+}
+
+// Часовой пояс аккаунта (запись только здесь). tz — название IANA или пусто/null: сбросить (пояс не задан = Москва).
+// → { tz } (каноническое название; null после сброса) | { error: 'bad' } (название не принято) | null, если аккаунта уже нет. SET ... XX, как в setName.
+export async function setTz(id, tz) {
+  const acc = await getAcc(id);
+  if (!acc) return null;
+  const { id: _id, ...rec } = acc;
+  const reset = tz === null || (typeof tz === 'string' && tz.trim() === '');
+  const t = reset ? null : cleanTz(tz);
+  if (!reset && !t) return { error: 'bad' };
+  if (t) rec.tz = t; else delete rec.tz;
+  return (await cmd('SET', key('acc', id), JSON.stringify(rec), 'XX')) === 'OK' ? { tz: t } : null;
 }
 
 // Полное удаление аккаунта: Telegram, все личные записи, устаревший никнейм, указатель Google, счётчик, в конце сама запись acc (пока она есть, повтор после сбоя

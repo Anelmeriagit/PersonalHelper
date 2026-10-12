@@ -1,6 +1,7 @@
 // Вход только через Google (пароля, никнейма и регистрации нет).
 // POST /api/auth  { action: 'logout' }
-//   с сессией (этап 5): { action: 'me' } → {id, name, email, tg, partner}; { action: 'rename', name } → {name}; { action: 'delete', confirm: 'удалить' } → {ok}
+//   с сессией (этап 5): { action: 'me' } → {id, name, email, tg, partner, tz, tzSet}; { action: 'rename', name } → {name}; { action: 'delete', confirm: 'удалить' } → {ok}
+//   { action: 'set-tz', tz } → {tz, tzSet} (название пояса IANA; пустая строка или null сбрасывает: tz станет Europe/Moscow, tzSet false; 400 при неизвестном названии)
 //   соединение двух аккаунтов: { action: 'pair-link' } → {token, ttl} (одноразовая ссылка, 409 если связь уже есть);
 //   { action: 'pair-join', token } → {partner:{name}, wifi:{choose, mine?, partner?, both?}} (соединить с тем, кто дал ссылку; choose — у двоих разные сети Wi-Fi, нужен выбор);
 //   { action: 'pair-wifi', choice? } → {pending:false} | {pending:true, mine, partner, both} (состояние выбора; choice 'mine'|'partner'|'both' его делает; 409 nopair, 400 limit);
@@ -14,7 +15,8 @@ import crypto from 'node:crypto';
 import { makeCookie, clearCookie, session } from './_lib.js';
 import { dbReady, key, hit } from './_db.js';
 import { wifiChoice } from './wifi.js';
-import { googleAccount, getAcc, getLink, setName, deleteAccount, partnerAcc, createPairToken, joinPair, unpair } from './_acc.js';
+import { DEFAULT_TZ, tzOf } from './_tz.js';
+import { googleAccount, getAcc, getLink, setName, setTz, deleteAccount, partnerAcc, createPairToken, joinPair, unpair } from './_acc.js';
 
 const clientIp = (req) => String(req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '?';
 const h = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 24);
@@ -154,6 +156,7 @@ async function mine(req, res, body) {
       id, name: acc.name || '', email: acc.email || '',
       tg: l ? { linked: true, id: String(l.tid), username: l.un || '' } : { linked: false },
       partner: await partnerInfo(id),
+      tz: tzOf(acc), tzSet: !!acc.tz,
     });
   }
   if (body.action === 'pair-link') {
@@ -179,6 +182,13 @@ async function mine(req, res, body) {
   if (body.action === 'pair-drop') {
     await unpair(id);
     return res.status(200).json({ partner: { linked: false } });
+  }
+  if (body.action === 'set-tz') {
+    if (body.tz !== null && typeof body.tz !== 'string') return res.status(400).json({ error: 'Часовой пояс должен быть строкой' });
+    const r = await setTz(id, body.tz);
+    if (r === null) return res.status(401).json({ error: 'auth' });
+    if (r.error) return res.status(400).json({ error: 'Неизвестный часовой пояс' });
+    return res.status(200).json({ tz: r.tz || DEFAULT_TZ, tzSet: !!r.tz });
   }
   if (body.action === 'rename') {
     if (typeof body.name !== 'string') return res.status(400).json({ error: 'Имя должно быть строкой' });
@@ -210,7 +220,7 @@ export default async function handler(req, res) {
     res.setHeader('Set-Cookie', clearCookie);
     return res.status(200).json({ ok: true });
   }
-  if (!['me', 'rename', 'delete', 'pair-link', 'pair-join', 'pair-drop', 'pair-wifi'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
+  if (!['me', 'rename', 'set-tz', 'delete', 'pair-link', 'pair-join', 'pair-drop', 'pair-wifi'].includes(body.action)) return res.status(400).json({ error: 'bad request' });
   if (String(process.env.SESSION_SECRET || '').length < 32 || !dbReady()) {
     console.error('auth: не заданы SESSION_SECRET (≥32 символов) или KV_REST_API_URL / KV_REST_API_TOKEN');
     return res.status(500).json({ error: 'Сервер не настроен' });
