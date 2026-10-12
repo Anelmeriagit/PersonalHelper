@@ -1,5 +1,7 @@
 /* «Агент»: константы, общее состояние A и чистые помощники (время, копирование строк) */
 import {$} from '../util.js';
+import {nextAt,nowIn} from '../tz.js';
+import {curTz} from '../time.js';
 
 export var AG_APPS=[{id:'app',t:'App'},{id:'opera',t:'Opera'},{id:'mozilla',t:'Mozilla'},{id:'edge',t:'Edge'}],AG_MAX=12,AG_GRACE=30*60000,
 /* пауза между правкой и сохранением (меньше записей в Redis); при уходе со вкладки сохраняется сразу (agLeave) */
@@ -12,7 +14,8 @@ export function agTwo(n){return n<10?'0'+n:''+n}
 export function agNote(t,keep){agMsg.textContent=t;clearTimeout(A.noteT);if(t&&!keep)A.noteT=setTimeout(function(){agMsg.textContent=''},2500)}
 export function agRow(id){for(var i=0;i<A.ag.rows.length;i++)if(A.ag.rows[i].id===id)return A.ag.rows[i];return null}
 export function agCopy(rows){return(rows||[]).map(function(r){return{id:r.id,app:r.app,h:r.h===undefined?null:r.h,m:r.m===undefined?null:r.m,at:r.at||null}})}
-export function agNextAt(h,m){var n=Date.now(),d=new Date(n+10800000),at=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),h,m)-10800000;return at<=n?at+864e5:at}
-export function agDay(ms){return new Date(ms+10800000).toISOString().slice(0,10)}
+/* ближайший сброс по часам пояса режима (аккаунт или устройство, time.js); день — по календарю того же пояса */
+export function agNextAt(h,m){return nextAt(h,m,Date.now(),curTz())}
+export function agDay(ms){return nowIn(curTz(),new Date(ms)).date}
 export function agUntil(ms){var t=Math.max(1,Math.ceil(ms/60000)),h=Math.floor(t/60),m=t%60;return h?(m?h+' ч '+m+' мин':h+' ч'):t+' мин'}
 export function agName(app){for(var i=0;i<AG_APPS.length;i++)if(AG_APPS[i].id===app)return AG_APPS[i].t;return app}

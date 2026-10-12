@@ -4,6 +4,9 @@
 import {$} from '../util.js';
 import {api,S,authFail,fresh,stamp} from '../api.js';
 import {A,AG_GRACE,agTwo,agRow,agCopy,agDay,agUntil,agName} from './state.js';
+import {curTz} from '../time.js';
+import {deviceTz,sameTz} from '../tz.js';
+import {tzShort} from '../tzlist.js';
 
 var agBody=$('agBody');
 function agSrc(){return S.page==='agent'&&A.ag?A.ag.rows:(A.n||[])}
@@ -20,6 +23,8 @@ export function agMarks(){if(!A.ag||!agBody)return;
     else if(r.at){if(r.at>now){t=(agDay(r.at)!==agDay(now)?'завтра · ':'')+'через '+agUntil(r.at-now);if(r===best)t='Ближайший · '+t}else t='Сброс прошёл'}
     e.classList.toggle('next',r===best);e.classList.toggle('past',!!r.at&&r.at<=now);
     e.querySelector('.agm').hidden=!has;e.querySelector('.agz').hidden=!has;e.querySelector('.ags').textContent=t}}
+/* пояс в тексте уведомления, только если он не совпадает с поясом устройства (на устройстве время и так читается по местным часам) */
+function agZone(){var d=deviceTz();return d&&sameTz(d,curTz())?'':' ('+tzShort(curTz())+')'}
 /* уведомления */
 function agCan(){return typeof Notification!=='undefined'}
 function agPref(){try{return localStorage.getItem('agNotify')==='1'}catch(e){return false}}
@@ -59,7 +64,7 @@ export function agCheck(){var rows=agSrc(),now=Date.now(),f,wake=0,ch=false,seen
     if(r.at>now){if(!wake||r.at<wake)wake=r.at;continue}
     if(f[r.id]===r.at)continue;
     f[r.id]=r.at;ch=true;
-    if(now-r.at<=AG_GRACE&&agActive())agShow('Сброс: '+agName(r.app),'Время сброса — '+agTwo(r.h)+':'+agTwo(r.m)+' по Москве.','ag-'+r.id+'-'+r.at)}
+    if(now-r.at<=AG_GRACE&&agActive())agShow('Сброс: '+agName(r.app),'Время сброса — '+agTwo(r.h)+':'+agTwo(r.m)+agZone()+'.','ag-'+r.id+'-'+r.at)}
   Object.keys(f).forEach(function(k){if(!seen[k]){delete f[k];ch=true}});
   if(ch)agFiredSave();
   if(wake)A.wake=setTimeout(agCheck,Math.min(wake-now+300,2147000000));

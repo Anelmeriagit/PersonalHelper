@@ -20,7 +20,7 @@
 import crypto from 'node:crypto';
 import { key, cmd, setNx, del, take, getDoc, putDoc } from './_db.js';
 import { dueDrop, pairMember } from './_due.js';
-import { cleanTz } from './_tz.js';
+import { cleanTz, tzOf } from './_tz.js';
 
 export const ID_RE = /^[0-9a-f]{32}$/;
 
@@ -78,7 +78,7 @@ export async function setName(id, name) {
 }
 
 // Часовой пояс аккаунта (запись только здесь). tz — название IANA или пусто/null: сбросить (пояс не задан = Москва).
-// → { tz } (каноническое название; null после сброса) | { error: 'bad' } (название не принято) | null, если аккаунта уже нет. SET ... XX, как в setName.
+// → { tz, prev } (tz — каноническое название, null после сброса; prev — действовавший до этого пояс, Москва, если не был задан) | { error: 'bad' } (название не принято) | null, если аккаунта уже нет. SET ... XX, как в setName.
 export async function setTz(id, tz) {
   const acc = await getAcc(id);
   if (!acc) return null;
@@ -87,7 +87,7 @@ export async function setTz(id, tz) {
   const t = reset ? null : cleanTz(tz);
   if (!reset && !t) return { error: 'bad' };
   if (t) rec.tz = t; else delete rec.tz;
-  return (await cmd('SET', key('acc', id), JSON.stringify(rec), 'XX')) === 'OK' ? { tz: t } : null;
+  return (await cmd('SET', key('acc', id), JSON.stringify(rec), 'XX')) === 'OK' ? { tz: t, prev: tzOf(acc) } : null;
 }
 
 // Полное удаление аккаунта: Telegram, все личные записи, устаревший никнейм, указатель Google, счётчик, в конце сама запись acc (пока она есть, повтор после сбоя

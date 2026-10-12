@@ -1,7 +1,7 @@
 import { loadDoc } from './_lib.js';
 import { bindTelegram, accountOfTelegram, partnerAcc, getAcc, TOKEN_RE } from './_acc.js';
 import { tg, readBot, mutateBot, webhookSecret, safeEq, cashbackTexts, chunkText, shopText, pendingGet, pendingPut, aliasSet, aliasDel, catChoices, shopKb, pickKb } from './_bot.js';
-import { mskNow } from './_rem.js';
+import { nowIn, tzOf } from './_tz.js';
 import { reindexAccount } from './_reindex.js';
 import { resolveShop, disp } from './_shops.js';
 
@@ -19,14 +19,16 @@ function shopView(doc, mo, r, id, ch, pr) {
   return { text, kb: [] };
 }
 
-// Документ аккаунта и, у соединённых аккаунтов, кэшбэк партнёра для подписи «чей»: pr = { me, name, doc } | null.
+// Документ аккаунта, текущий месяц по поясу аккаунта (mo, 'YYYY-MM'; этап 5, «Часовые пояса», часть 3: нет поля tz = Москва) и, у соединённых аккаунтов,
+// кэшбэк партнёра для подписи «чей»: pr = { me, name, doc } | null. Месяц у партнёра не нужен: его кэшбэк показывается в месяцах смотрящего.
 // Партнёр определяется только через partnerAcc (полная пара); читается и показывается только на просмотр, псевдонимы и кнопки остаются своими.
+// Запись аккаунта читается всегда (за поясом): у соединённых это те же команды, что и раньше (имя), у несоединённых +1 команда.
 async function loadView(uid) {
-  const doc = (await loadDoc(uid)).doc;
-  const p = await partnerAcc(uid);
-  if (!p) return { doc, pr: null };
-  const [me, pd] = await Promise.all([getAcc(uid), loadDoc(p.id)]);
-  return { doc, pr: { me: (me && me.name) || 'Helper User', name: p.acc.name || 'Helper User', doc: pd.doc } };
+  const [{ doc }, me, p] = await Promise.all([loadDoc(uid), getAcc(uid), partnerAcc(uid)]);
+  const mo = nowIn(tzOf(me)).month;
+  if (!p) return { doc, mo, pr: null };
+  const pd = await loadDoc(p.id);
+  return { doc, mo, pr: { me: (me && me.name) || 'Helper User', name: p.acc.name || 'Helper User', doc: pd.doc } };
 }
 
 // /start <токен>: привязка Telegram к аккаунту. Работает для любого человека в личном чате (токен выдаёт только сайт после входа).
@@ -59,7 +61,7 @@ async function onMessage(m) {
   }
   if (/^\/cashback(\s|@|$)/i.test(String(m.text || ''))) {
     let texts;
-    try { const v = await loadView(uid); texts = cashbackTexts(v.doc, mskNow().month, v.pr); }
+    try { const v = await loadView(uid); texts = cashbackTexts(v.doc, v.mo, v.pr); }
     catch (e) {
       console.error(e);
       return tg('sendMessage', { chat_id: m.chat.id, text: NO_DATA });
@@ -70,13 +72,12 @@ async function onMessage(m) {
   // Обычный текст = название магазина или категории. Команды и сообщения без текста молча игнорируем.
   const text = typeof m.text === 'string' ? m.text.trim() : '';
   if (!text || text[0] === '/') return;
-  let doc, pr;
-  try { ({ doc, pr } = await loadView(uid)); }
+  let doc, pr, mo;
+  try { ({ doc, pr, mo } = await loadView(uid)); }
   catch (e) {
     console.error(e);
     return tg('sendMessage', { chat_id: m.chat.id, text: NO_DATA });
   }
-  const mo = mskNow().month;
   let r, id = null, ch = null;
   try {
     r = resolveShop(text, doc.custom, (await readBot(uid)).state.alias);
@@ -121,13 +122,12 @@ async function onShopCb(cq, uid) {
     await ans();
     return editKb(pickKb(id, pd.l, pd.f, act === 'so', pd.m === 'fix'));
   }
-  let doc, pr;
-  try { ({ doc, pr } = await loadView(uid)); }
+  let doc, pr, mo;
+  try { ({ doc, pr, mo } = await loadView(uid)); }
   catch (e) {
     console.error(e);
     return ans({ text: NO_DATA, show_alert: true });
   }
-  const mo = mskNow().month;
   const r = resolveShop(pd.q, doc.custom, state.alias);
   if (!r.key || (r.res.kind !== 'found' && r.res.kind !== 'unknown')) {
     await ans({ text: 'Запрос устарел. Напишите название магазина ещё раз.', show_alert: true });

@@ -23,7 +23,7 @@ export async function paircb({ stand, browser, fail }) {
   ] });
   for (const scheme of SCHEMES) {
     for (const vp of VIEWPORTS) {
-      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
       await ctx.addInitScript((s) => {
         try { localStorage.setItem('theme', s); localStorage.setItem('welcome', '1'); localStorage.removeItem('view'); } catch { /* нет доступа */ }
         window.__csp = [];

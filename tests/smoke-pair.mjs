@@ -9,7 +9,7 @@ const TOKEN2 = 'BBBBBBBBBBBBBBBBBBBBBB';
 export async function pair({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {
     for (const vp of VIEWPORTS) {
-      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
       try { await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: stand.url }); } catch { /* без разрешений проверка буфера пропустится сама */ }
       await ctx.addInitScript((s) => {
         try { localStorage.setItem('theme', s); localStorage.setItem('welcome', '1'); } catch { /* нет доступа */ }

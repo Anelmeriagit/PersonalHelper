@@ -16,7 +16,7 @@ export async function refresh({ stand, browser, fail }) {
       const setVis = (page, v) => page.evaluate((x) => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => x }); document.dispatchEvent(new Event('visibilitychange')); }, v);
       const back = async (page) => { await setVis(page, 'hidden'); await setVis(page, 'visible'); await settle(page); };
       const openPage = async (iso, hash, setup) => {
-        const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+        const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
         ctxs.push(ctx);
         await ctx.addInitScript((s) => {
           try { localStorage.setItem('theme', s); localStorage.setItem('welcome', '1'); } catch { /* нет доступа */ }

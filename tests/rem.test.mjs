@@ -399,7 +399,8 @@ test('POST /api/custom тоже отдаёт username (клиент заменя
   const id = await mkAcc('ivan');
   const { token } = await acc.createLinkToken(id);
   await acc.bindTelegram(token, { id: 77, username: 'ivan_k' }, 77);
-  const r = await post(custom, id, { date: '2026-10-12', slot: 'day', text: 'позвонить' });
+  // дата относительная: фиксированная '2026-10-12' с наступлением этого дня становилась прошедшей и давала 400
+  const r = await post(custom, id, { date: new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 10), slot: 'day', text: 'позвонить' });
   assert.equal(r.statusCode, 200);
   assert.equal(r.body.username, 'ivan_k');
 });

@@ -3,7 +3,7 @@
    Открыта может быть только одна форма: R.fm.kind — 'tmp' или 'rec', R.fm.sh — общее ли.
    У повторяющегося два способа задать дни: по дате (календарь + частота, R.fm.by==='date') и по числам месяца (сетка 1…31, R.fm.by==='days', R.fm.days; сервер сам ставит every и первую дату). */
 import {$,esc,cap,nrm,IC} from '../util.js';
-import {MN,clock,mskMins,ymd,addDays,shiftM,dLabel} from '../time.js';
+import {MN,clock,nowMins,ymd,addDays,shiftM,dLabel} from '../time.js';
 import {api,authFail} from '../api.js';
 import {R} from './state.js';
 
@@ -28,7 +28,7 @@ function K(kind,sh){if(sh)return kind==='rec'?{form:shrRecForm,list:shrRecList,a
 /* sh — общие напоминания пары (rem.shared), иначе личные (rem) */
 function src(kind,sh){var o=sh?R.rem&&R.rem.shared:R.rem;return(o&&(kind==='rec'?o.recurring:o.custom))||[]}
 function pname(){var s=R.rem&&R.rem.shared;return nrm(s&&s.name)||'Helper User'}
-function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&mskMins()>=slotMins(slot))}
+function slotPassed(date,slot){var c=clock();return date<c.day||(date===c.day&&nowMins()>=slotMins(slot))}
 /* повторяющееся «по числам месяца»: даты и частоты в форме нет, «время уже прошло» считает сервер */
 function isDays(){return!!R.fm&&R.fm.kind==='rec'&&R.fm.by==='days'}
 function hasDays(it){return!!it&&Array.isArray(it.days)&&it.days.length>0}
@@ -43,7 +43,7 @@ function calHtml(){
       n=new Date(Date.UTC(y,m,0)).getUTCDate(),max=addDays(c.day,365),h='';
   ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(w){h+='<span class="wd" aria-hidden="true">'+w+'</span>'});
   for(var i=0;i<first;i++)h+='<span></span>';
-  for(var d=1;d<=n;d++){var s=ymd(y,m,d),off=s<c.day||s>max||(s===c.day&&mskMins()>=LASTH*60+30);
+  for(var d=1;d<=n;d++){var s=ymd(y,m,d),off=s<c.day||s>max||(s===c.day&&nowMins()>=LASTH*60+30);
     h+='<button type="button" data-d="'+s+'"'+(off?' disabled':'')+(s===c.day?' class="today"':'')+' aria-pressed="'+(R.fm.date===s)+'" aria-label="'+dLabel(s)+'">'+d+'</button>'}
   return '<div class="cal-h"><button class="icon-btn" type="button" data-nav="-1" aria-label="Предыдущий месяц"'+(vm<=c.cur?' disabled':'')+'>'+CHEV['-1']+'</button>'+
     '<b>'+MN[m-1]+' '+y+'</b>'+

@@ -445,3 +445,7 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .wdb{display:flex;flex-direction:column;gap:.5rem}
 .wdb .btn{min-height:44px;width:100%}
 .av.wfp{margin-top:.75rem}
+/* часовой пояс: подсказка при расхождении с устройством и строка в настройках аккаунта */
+.tzh .acts{justify-content:flex-end;margin-top:.5rem}
+.tzh .err{margin:.25rem 0 0}
+.ar select{margin-bottom:.4rem}

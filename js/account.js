@@ -1,15 +1,19 @@
 /* Аккаунт: вход через Google (кнопка в шапке), меню пользователя, окно «Настройки аккаунта», удаление аккаунта.
    Сервер (см. notes/account.md): GET /api/auth?action=google (переход на вход Google, обычная ссылка, без скриптов Google),
    POST /api/auth {action:'me'|'rename'|'delete'|'pair-link'|'pair-drop'}; отвязка Telegram — DELETE /api/tglink. Имя для шапки приходит в GET /api/data (поле name),
-   поэтому лишних запросов при входе нет; «me» читается только при открытии окна. */
+   поэтому лишних запросов при входе нет; «me» читается только при открытии окна. Часовой пояс аккаунта (tz, tzSet в ответах GET /api/data и «me») выбирается в этом же окне
+   (POST /api/auth {action:'set-tz', tz}, js/tzhint.js); подсказка при расхождении с поясом устройства — там же. */
 import {$,esc,nrm,IC} from './util.js';
 import {api,authFail} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
 import {wifiChoose,wifiPairState} from './wifi.js';
+import {DEFAULT_TZ,deviceTz,sameTz} from './tz.js';
+import {tzChoices,tzPick,tzShort} from './tzlist.js';
+import {postTz} from './tzhint.js';
 
 var DEF='Helper User',WORD='удалить',NAME_MAX=32;
 var TOKEN=/^[A-Za-z0-9_-]{22}$/,SENT='Ссылка отправлена. Она одноразовая и действует 24 часа.',COPIED='Ссылка скопирована. Отправьте её второму человеку: она одноразовая и действует 24 часа.',MANUAL='Скопируйте ссылку и отправьте её второму человеку: она одноразовая и действует 24 часа.';
-var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false,wfp:null},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){}};
+var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false,wfp:null,tmsg:'',terr:''},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){},tz:function(){}};
 var uBtn,navA,uMenu,acct,del;
 
 /* ---------- имя в шапке ---------- */
@@ -36,7 +40,7 @@ function menuKey(e){var it=uMenu.querySelectorAll('button'),i=Array.prototype.in
   else if(e.key==='ArrowUp'){e.preventDefault();it[(i-1+it.length)%it.length].focus()}}
 
 /* ---------- окно «Настройки аккаунта» ---------- */
-function pairReset(){A.link='';A.pmsg='';A.perr='';A.manual=false;A.wfp=null}
+function pairReset(){A.link='';A.pmsg='';A.perr='';A.manual=false;A.wfp=null;A.tmsg='';A.terr=''}
 function pname(){var p=A.me&&A.me.partner;return nrm(p&&p.name)||DEF}
 /* общий Wi-Fi: выбор при соединении не сделан (A.wfp — состояние от сервера), кнопка открывает окно выбора */
 function wfRow(){return A.wfp?'<div class="av wfp"><span class="vn">Сети Wi-Fi<span class="mut sub">у вас разные списки, общий пока не выбран</span></span><button class="btn" type="button" data-a="wfpick">Выбрать</button></div>':''}
@@ -52,8 +56,14 @@ function nameRow(){
     '<p class="ahint">До '+NAME_MAX+' символов. Пустое имя вернёт «'+DEF+'».</p><p class="err" id="acErr" role="alert"></p>'+
     '<div class="acts"><button class="btn" type="button" data-a="cancel">Отмена</button><button class="done" type="button" data-a="save">Сохранить</button></div></div>';
   return '<div class="ar"><div class="al">Отображаемое имя</div><div class="av"><span class="vn" id="acName"></span><button class="btn" type="button" data-a="rename">Изменить</button></div></div>'}
+/* часовой пояс: список (tzlist.js), строка «Пояс устройства», если он другой; смена сразу уходит на сервер */
+function tzRow(){var m=A.me,dev=deviceTz(),ch=tzChoices(m.tz,dev),
+    h='<div class="ar"><label class="al" for="acTz">Часовой пояс</label><select id="acTz" aria-describedby="tzOk"'+(A.busy?' disabled':'')+'>'+opts(ch,tzPick(ch,m.tz),'Выберите пояс')+'</select>'+
+    '<p class="ahint" id="tzOk" role="status">'+esc(A.tmsg||(m.tzSet?'Напоминания и агент считаются по этому поясу.':'Пока не выбран: по умолчанию Москва. Напоминания и агент считаются по этому поясу.'))+'</p>';
+  if(dev&&!sameTz(dev,m.tz))h+='<div class="av"><span class="vn mut">Пояс устройства: '+esc(tzShort(dev))+'</span><button class="btn" type="button" data-a="tzdev">Выбрать</button></div>';
+  return h+'<p class="err" id="tzErr" role="alert">'+esc(A.terr)+'</p></div>'}
 function body(){var m=A.me;
-  return head()+nameRow()+
+  return head()+nameRow()+tzRow()+
     '<div class="ar"><div class="al">Email</div><div class="av"><span class="vn">'+(m.email?esc(m.email):'<span class="mut">не указан</span>')+'</span></div></div>'+
     '<div class="ar"><div class="al">Account ID</div><div class="av"><code class="vid">'+esc(m.id)+'</code></div></div>'+
     (m.tg?'<div class="ar"><div class="al">Telegram</div><div class="av"><span class="vn">'+(m.tg.username?'@'+esc(m.tg.username):'<span class="mut">привязан</span>')+'</span><button class="btn" type="button" data-a="unlink">Отвязать</button></div></div>':'')+
@@ -73,7 +83,8 @@ function openSettings(){var g=++A.gen;A.me=null;A.edit=false;A.busy=false;pairRe
     if(!r.ok||!j||typeof j.id!=='string'){acct.innerHTML=head()+'<p class="err" role="alert">Не удалось загрузить данные аккаунта. Попробуйте позже.</p>';return}
     var t=j.tg&&j.tg.linked?{id:String(j.tg.id==null?'':j.tg.id),username:typeof j.tg.username==='string'?j.tg.username:''}:null;
     var pr=j.partner&&j.partner.linked?{linked:true,name:typeof j.partner.name==='string'?j.partner.name:''}:{linked:false};
-    A.me={id:j.id,email:typeof j.email==='string'?j.email:'',tg:t,partner:pr};
+    A.me={id:j.id,email:typeof j.email==='string'?j.email:'',tg:t,partner:pr,tz:typeof j.tz==='string'?j.tz:DEFAULT_TZ,tzSet:j.tzSet===true};
+    cb.tz(A.me.tz,A.me.tzSet,true); /* пояс мог смениться на другом устройстве */
     if(typeof j.name==='string')accSetName(j.name);
     render();
     /* соединённый аккаунт: если выбор сетей Wi-Fi не сделан, в строке «Соединить аккаунты» появляется «Выбрать» */
@@ -91,6 +102,15 @@ function save(){var inp=$('acIn'),er=$('acErr');if(!inp||A.busy)return;
     if(!r.ok||typeof j.name!=='string'){var e2=$('acErr');if(e2)e2.textContent=j.error||'Не получилось сохранить. Попробуйте позже.';return}
     accSetName(j.name);A.edit=false;render();focusBtn('rename');cb.name()})
   }).catch(function(){A.busy=false;var e3=$('acErr');if(g===A.gen&&e3)e3.textContent='Нет связи с сервером'})}
+
+/* смена пояса: ответ применяется, даже если окно уже закрыли (пояс на сервере сменился: сайт должен пересчитаться) */
+function setTz(tz){if(A.busy||!A.me)return;
+  A.busy=true;A.terr='';A.tmsg='';var g=A.gen;render();focusId('acTz');
+  postTz(tz).then(function(r){A.busy=false;
+    if(r.ok){if(A.me){A.me.tz=r.tz;A.me.tzSet=true}cb.tz(r.tz,true);
+      if(g===A.gen&&A.me){A.tmsg='Сохранено ✓';render();focusId('acTz')}return}
+    if(g===A.gen&&A.me){A.terr=r.error;render();focusId('acTz')}})}
+function focusId(id){var e=$(id);if(e&&!e.disabled)e.focus()}
 
 function unlink(){
   dlgConfirm('Отвязать Telegram? Напоминания перестанут приходить, пока не привяжете снова.').then(function(ok){
@@ -143,6 +163,7 @@ function onAcct(e){var el=e.target.closest&&e.target.closest('[data-a]');if(!el)
   else if(a==='save')save();
   else if(a==='unlink')unlink();
   else if(a==='share')share();
+  else if(a==='tzdev'){var dv=deviceTz();if(dv)setTz(dv)}
   else if(a==='pdrop')drop();
   else if(a==='wfpick')pickWifi();
   else if(a==='del')openDel()}
@@ -170,9 +191,10 @@ function doDelete(){var er=$('delErr'),go=$('delGo');if(A.busy||!delOk())return;
 function backdrop(d){d.addEventListener('click',function(e){if(e.target!==d)return;var r=d.getBoundingClientRect();
   if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close()})}
 
-/* h: {logout, tg, gone, pair, name} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён», «связь с аккаунтом разорвана», «имя изменено» */
+/* h: {logout, tg, gone, pair, name, tz} — действия каркаса (main.js): выход, «привязка Telegram изменилась», «аккаунт удалён», «связь с аккаунтом разорвана», «имя изменено»,
+   «пояс аккаунта изменён или прочитан с сервера» (tz, tzSet, quiet: true, когда пояс просто прочитан) */
 export function initAccount(h){
-  cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;cb.pair=h.pair||cb.pair;cb.name=h.name||cb.name;
+  cb.logout=h.logout||cb.logout;cb.tg=h.tg||cb.tg;cb.gone=h.gone||cb.gone;cb.pair=h.pair||cb.pair;cb.name=h.name||cb.name;cb.tz=h.tz||cb.tz;
   uBtn=$('uBtn');navA=$('navAcct');uMenu=$('uMenu');acct=$('acctDlg');del=$('delDlg');
   uBtn.addEventListener('click',function(){if(uMenu.hidden)menuOpen(false);else menuClose(false)});
   uBtn.addEventListener('keydown',function(e){if(e.key==='ArrowDown'&&uMenu.hidden){e.preventDefault();menuOpen(true)}});
@@ -185,6 +207,7 @@ export function initAccount(h){
   document.addEventListener('click',function(e){if(!uMenu.hidden&&!$('uWrap').contains(e.target)&&!navA.contains(e.target))menuClose(false)});
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!uMenu.hidden)menuClose(true)});
   acct.addEventListener('click',onAcct);backdrop(acct);
+  acct.addEventListener('change',function(e){if(e.target.id==='acTz'&&e.target.value&&A.me&&!sameTz(e.target.value,A.me.tz))setTz(e.target.value)});
   acct.addEventListener('close',function(){A.edit=false;A.gen++;if(!$('uWrap').hidden)trig().focus()});
   del.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-d]');if(!el)return;
     if(el.getAttribute('data-d')==='no')del.close();else doDelete()});

@@ -7,7 +7,7 @@ import { SCHEMES, VIEWPORTS, SETUP } from './smoke-lib.mjs';
 export async function session({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {
     for (const vp of VIEWPORTS) {
-      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
       await ctx.addInitScript(SETUP, scheme);
       await ctx.addInitScript((id) => { try { localStorage.setItem('g-mg', JSON.stringify([id])); } catch { /* нет доступа */ } }, ACC_ID); // слияние отдельный сценарий (merge): здесь аккаунт уже отмечен
       const page = await ctx.newPage();

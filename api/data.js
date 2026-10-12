@@ -1,5 +1,6 @@
-import { session, renewCookie, loadDoc, writeDoc, clean, isPrecond, PART_RE, curMonth, shiftMonth } from './_lib.js';
+import { session, renewCookie, loadDoc, writeDoc, clean, isPrecond, PART_RE, monthWindow } from './_lib.js';
 import { getAcc, partnerAcc } from './_acc.js';
+import { tzOf } from './_tz.js';
 
 const pub = (doc) => ({ months: doc.months, custom: doc.custom });
 
@@ -17,7 +18,8 @@ export default async function handler(req, res) {
       // Кэшбэк партнёра только на просмотр: id берётся только из partnerAcc (полная пара), читается один раз loadDoc, обратно ничего не пишется
       // (PUT ниже всегда пишет документ user). Отдаём имя и месяцы; id, версии и свои категории партнёра сайту не нужны.
       const partner = pr ? { linked: true, name: pr.acc.name || '', data: { months: (await loadDoc(pr.id)).doc.months } } : { linked: false };
-      return res.status(200).json({ id: user, name: acc.name || '', data: pub(doc), rev: doc.rev, partner });
+      // tz/tzSet — пояс аккаунта (часть 4): сайт узнаёт его при входе без лишних запросов (запись аккаунта уже прочитана выше)
+      return res.status(200).json({ id: user, name: acc.name || '', data: pub(doc), rev: doc.rev, partner, tz: tzOf(acc), tzSet: !!acc.tz });
     }
     if (req.method === 'PUT') {
       if (!String(req.headers['content-type'] || '').includes('application/json')) return res.status(415).end();
@@ -25,8 +27,8 @@ export default async function handler(req, res) {
       if (typeof body === 'string') body = JSON.parse(body);
       const parts = body && typeof body.parts === 'object' && body.parts ? body.parts : {};
       const names = Object.keys(parts);
-      const cur = curMonth(), lo = shiftMonth(cur, -1), hi = shiftMonth(cur, 2);
-      // Новые месяцы создаём только в окне «прошлый … +2»; уже существующие (история) менять можно всегда:
+      const { lo, hi } = monthWindow(); // окно с запасом на все часовые пояса (±14 часов), а не по поясу аккаунта: так PUT не читает аккаунт
+      // Новые месяцы создаём только в окне «прошлый … +2» (по любому поясу); уже существующие (история) менять можно всегда:
       // это нужно, чтобы переименование/удаление своей категории сохранялось по всей истории.
       const inWindow = (k) => k === 'custom' || (k >= lo && k <= hi);
       if (!names.length || names.length > 130 ||

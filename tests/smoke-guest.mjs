@@ -8,7 +8,7 @@ import { SCHEMES, VIEWPORTS, SETUP } from './smoke-lib.mjs';
 export async function guest({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {
     for (const vp of VIEWPORTS) {
-      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
       await ctx.addInitScript(SETUP, scheme);
       const page = await ctx.newPage();
       const problems = [];

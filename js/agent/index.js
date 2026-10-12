@@ -66,6 +66,14 @@ export function agOnPage(){
   if(S.page==='agent'){if(!A.drag)agLoad()}
   else agFetchN()}
 
+/* пояс аккаунта сменился: сервер пересчитал ч:мин строк, перечитать их (подождав, пока уйдёт сохранение, чтобы не потерять правку) */
+export function agTz(n){n=n||0;
+  if(!S.loggedIn)return;
+  if((A.timer||A.saving||A.again)&&n<10){setTimeout(function(){agTz(n+1)},500);return}
+  A.ag=null;A.n=null;A.nAt=0;delete S.at.ag;
+  if(S.page==='agent')agLoad();else agFetchN(true);
+  agCheck()}
+
 export function initAgent(){
   A.render=agRender;
   agBody.addEventListener('change',function(e){var s=e.target.closest('select[data-k]');if(!s||!A.ag)return;

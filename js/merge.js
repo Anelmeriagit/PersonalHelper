@@ -3,7 +3,7 @@
    Запросы идут напрямую на сервер (net), мимо api(): сессия уже есть, а 401 здесь не должен переводить сайт в гостя.
    Не удалось записать (нет связи, 5xx, 409, 429, 401) — метка не ставится, слияние повторится при следующем открытии сайта; повтор безопасен (результат тот же). */
 import {net} from './api.js';
-import {guestDump,guestMerged,guestMark,mergeCb,mergeAg,mergeWf} from './local.js';
+import {guestDump,guestMerged,guestMark,guestTzMark,mergeCb,mergeAg,mergeWf} from './local.js';
 
 /* ответ раздела с аккаунта или null */
 function jget(u){return net('GET',u).then(function(r){return r.ok?r.json():null}).catch(function(){return null})}
@@ -22,11 +22,12 @@ function doCb(j,g){
     if(!final(x))return RETRY;
     if(x.status!==200)return DONE;
     return{done:true,n:m.parts.length,j:{id:j.id,name:j.name,data:m.data,rev:Object.assign({},j.rev,x.body.rev),partner:j.partner}}})}
-function doAg(g){
+/* tz — пояс аккаунта: время строк гостя (по метке g-tz, пояс устройства) переносится в него по `at` */
+function doAg(g,tz){
   if(!g)return Promise.resolve(DONE);
   return jget('/api/agent').then(function(a){
     if(!a||!Array.isArray(a.rows))return RETRY;
-    var m=mergeAg(a.rows,g);
+    var m=mergeAg(a.rows,g,tz,guestTzMark());
     if(!m.changed)return DONE;
     return put('/api/agent',{rows:m.rows}).then(function(x){return final(x)?{done:true,n:x.status===200?1:0}:RETRY})})}
 /* Wi-Fi: сети гостя, которых у аккаунта нет, добавляются по одной (PUT add:true); повтор после обрыва не задваивает (проверка по названию, защите и паролю) */
@@ -51,7 +52,7 @@ export function mergeGuest(j){
   if(typeof id!=='string'||guestMerged(id))return Promise.resolve(null);
   var g=guestDump();
   if(!g.cb&&!g.ag&&!g.wf){guestMark(id);return Promise.resolve(null)}
-  return Promise.all([doCb(j,g.cb),doAg(g.ag),doWf(g.wf)]).then(function(a){
+  return Promise.all([doCb(j,g.cb),doAg(g.ag,j.tz),doWf(g.wf)]).then(function(a){
     if(a.every(function(x){return x.done}))guestMark(id);
     var n=a[0].n+a[1].n+a[2].n;
     return n?{j:a[0].j,n:n}:null

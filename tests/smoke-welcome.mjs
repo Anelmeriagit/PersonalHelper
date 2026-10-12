@@ -8,7 +8,7 @@ export async function welcome({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {
     for (const vp of [...VIEWPORTS, { width: 360, height: 500 }]) { // низкий экран: длинный текст прокручивается внутри окна
       for (const loggedIn of [false, true]) {
-        const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+        const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
         await ctx.addInitScript((s) => {
           try { localStorage.setItem('theme', s); } catch { /* нет доступа */ }
           window.__csp = [];

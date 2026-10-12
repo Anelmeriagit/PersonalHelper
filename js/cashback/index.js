@@ -86,6 +86,8 @@ export function onVisible(){tick();if(S.page==='main')refresh()}
 /* переход на страницу «Кэшбэк» с другой страницы: обновить, если данные старше REFRESH_MS */
 export function onPage(){refresh()}
 export function onHidden(){leaving()}
+/* пояс сменился (настройки, подсказка): месяц и день могли измениться, перерисовать и при смене месяца перечитать */
+export function cbTz(){tick()}
 export function discardAll(){C.dirty={};C.conflict=null;C.edit=false}
 /* вход в раздел: данные пришли с сервера (аккаунт) или из браузера (гость), j — ответ GET /api/data */
 export function startSession(j){C.data=norm(j.data);C.rev=j.rev||{};C.partner=normPartner(j.partner);stamp('cb');C.ck=clock()}

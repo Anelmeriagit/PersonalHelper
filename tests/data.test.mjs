@@ -37,7 +37,7 @@ test('GET нового аккаунта: id, пустое имя, пустые �
   assert.equal(r.statusCode, 200);
   assert.match(id, /^[0-9a-f]{32}$/);
   // id нужен сайту для метки «гостевые данные уже сливали» (js/merge.js); берётся из сессии, лишних команд Redis нет
-  assert.deepEqual(r.body, { id, name: '', data: { months: {}, custom: [] }, rev: {}, partner: { linked: false } });
+  assert.deepEqual(r.body, { id, name: '', data: { months: {}, custom: [] }, rev: {}, partner: { linked: false }, tz: 'Europe/Moscow', tzSet: false });
   assert.equal(r.headers['cache-control'], 'no-store');
 });
 

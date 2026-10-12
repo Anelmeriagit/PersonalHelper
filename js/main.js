@@ -3,15 +3,19 @@
 import {$,ls,lset,ldel,nrm} from './util.js';
 import {S,api,net,onAuthFail,fresh} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
-import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote,pairChanged,nameChanged} from './cashback/index.js';
+import {hasUnsaved,initCashback,setStatus,stopSave,onVisible as cbVisible,onPage as cbPage,onHidden as cbHidden,discardAll,startSession,finishBoot,toGuest,cbSnapshot,cbNote,pairChanged,nameChanged,cbTz} from './cashback/index.js';
 import {initReminders,remLoad,remPair} from './reminders/index.js';
 import {initWifi,wifiLoad,wifiClear,wifiForget,wifiSnapshot,wifiChoose} from './wifi.js';
-import {initAgent,agClear,agLeave,agVisible,agOnPage,agSnapshot,agPending} from './agent/index.js';
+import {initAgent,agClear,agLeave,agVisible,agOnPage,agSnapshot,agPending,agTz} from './agent/index.js';
 import {initTheme} from './theme-switch.js';
 import {initTg,tgVisible,tgClear} from './tglink.js';
 import {initWelcome} from './welcome.js';
 import {initAccount,accShow,accSetName} from './account.js';
-import {guestSetAg,guestSetWf} from './local.js';
+import {guestSetAg,guestSetWf,guestTzSync} from './local.js';
+import {DEFAULT_TZ,deviceTz,sameTz} from './tz.js';
+import {useTz,curTz} from './time.js';
+import {tzShort} from './tzlist.js';
+import {initTzHint,tzHintCheck} from './tzhint.js';
 import {mergeGuest} from './merge.js';
 
 var editBtn=$('editBtn'),loginRoot=$('loginRoot'),mainNav=$('mainNav');
@@ -45,17 +49,32 @@ var GUEST_END='Сессия закончилась: вы в гостевом р�
 /* кнопка «Войти через Google» в предложениях гостю (копия кнопки из шапки) */
 function gButtons(){Array.prototype.forEach.call(document.querySelectorAll('[data-gbtn]'),function(box){
   var b=$('gBtn').cloneNode(true);b.removeAttribute('id');b.hidden=false;box.appendChild(b)})}
+/* ---------- часовой пояс режима ----------
+   Аккаунт: пояс приходит в GET /api/data (tz), меняется в настройках аккаунта или подсказкой (js/tzhint.js); по нему считаются месяц кэшбэка, слоты напоминаний, агент.
+   Гость: пояс устройства; сменился (поездка) — строки агента пересчитываются по `at` (guestTzSync), метка g-tz. Пока ничего не пришло — Москва (time.js). */
+function tzPaint(){var t=tzShort(curTz()),a=$('agTz'),r=$('remTz');
+  if(r)r.textContent=t;
+  if(a)a.textContent=(S.acct?'аккаунта':'устройства')+': '+t}
+/* пояс режима поменялся (или пришёл с сервера иным): пересчитать всё, что от него зависит; fromServer — пояс прочитан, а не выбран здесь */
+function tzApply(tz){var old=curTz();useTz(tz||DEFAULT_TZ);tzPaint();
+  if(sameTz(old,curTz()))return;
+  S.at={};cbTz();agTz();if(S.acct&&S.page==='rem')remLoad()}
+function tzChanged(tz){tzApply(tz);tzHintCheck(curTz())}
+/* гость: пояс устройства; метка g-tz и строки агента приводятся к нему до первого чтения агента */
+function guestTzUse(){var d=deviceTz()||DEFAULT_TZ;guestTzSync(d);tzApply(d)}
 /* открыть разделы: j — ответ GET /api/data (с сервера или из браузера) */
 function openApp(j){startSession(j);S.loggedIn=true;loginRoot.innerHTML='';ui();applyPage();finishBoot()}
 /* вход в аккаунт: при первом входе в этом браузере гостевые данные сливаются в аккаунт (merge.js), затем разделы открываются уже с итоговым кэшбэком */
 var MERGED='Данные из гостевого режима добавлены в аккаунт.';
-function openAcct(j){S.acct=true;accSetName(j&&j.name);
-  mergeGuest(j).then(function(m){openApp(m&&m.j||j);if(m)cbNote(MERGED);joinTry()})}
-function openGuest(){S.acct=false;return api('GET','/api/data').then(function(r){return r.json()}).then(function(j){openApp(j);joinTry()})}
+function openAcct(j){S.acct=true;accSetName(j&&j.name);useTz(j&&j.tz);tzPaint();
+  mergeGuest(j).then(function(m){openApp(m&&m.j||j);tzHintCheck(curTz());if(m)cbNote(MERGED);joinTry()})}
+function openGuest(){S.acct=false;guestTzUse();return api('GET','/api/data').then(function(r){return r.json()}).then(function(j){openApp(j);joinTry()})}
 /* из аккаунта в гостя: выход, конец сессии (401), удаление аккаунта. snap — данные аккаунта, которые заменят гостевые: {cb, ag, wf}, каждая часть отдельно
    (cb — кэшбэк; ag — строки агента; wf — сеть Wi-Fi, null: у аккаунта сети нет, гостевая удаляется); часть без значения (null, у wf ещё и undefined) оставляет гостевые данные как были; snap=null — все остаются как были */
-function toGuestMode(snap,notice){var g=snap||{};S.acct=false;S.at={};wifiForget();agClear();tgClear();
-  if(g.ag)guestSetAg(g.ag);
+function toGuestMode(snap,notice){var g=snap||{},from=curTz(),dev=deviceTz()||DEFAULT_TZ;S.acct=false;S.at={};wifiForget();agClear();tgClear();
+  /* строки агента пришли по поясу аккаунта: в гостевой список они переходят по поясу устройства (`at` тот же) */
+  if(g.ag)guestSetAg(g.ag,from,dev);else guestTzSync(dev);
+  useTz(dev);tzPaint();tzHintCheck(null);
   if(g.wf!==undefined)guestSetWf(g.wf);
   toGuest(g.cb);ui();applyPage();if(notice)cbNote(notice)}
 function boot(){net('GET','/api/data').then(function(r){
@@ -77,6 +96,8 @@ function fetchJ(u){return api('GET',u).then(function(r){return r.ok?r.json():nul
 document.addEventListener('visibilitychange',function(){
   if(document.visibilityState==='visible'){
     /* возврат на вкладку: каждый раздел обновляется не чаще раза в REFRESH_MS (api.js); ожидающая привязка Telegram проверяется сразу */
+    if(!S.acct&&S.loggedIn){var d=deviceTz();if(d&&!sameTz(d,curTz())){guestTzSync(d);tzApply(d)}}
+    else if(S.acct)tzHintCheck(curTz());
     cbVisible();
     if(S.acct&&S.page==='rem'){if(!fresh('rem'))remLoad();tgVisible()}
     if(S.loggedIn&&S.page==='wifi'&&!fresh('wifi'))wifiLoad();
@@ -121,7 +142,8 @@ function joinTry(){var t=joinToken();if(!t){ldel(PJ);return}
 
 onAuthFail(function(){if(S.acct)toGuestMode({cb:cbSnapshot(),ag:agSnapshot(),wf:wifiSnapshot()},GUEST_END)});
 initCashback();initReminders();initWifi();initAgent();initTheme();initTg(remLoad);initWelcome();
-initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')},pair:function(){pairChanged(false);remPair()},name:nameChanged});
+initAccount({logout:logout,tg:function(){if(S.page==='rem')remLoad()},gone:function(){discardAll();toGuestMode(null);dlgAlert('Аккаунт удалён.')},pair:function(){pairChanged(false);remPair()},name:nameChanged,tz:function(tz,set,quiet){if(quiet)tzApply(tz);else tzChanged(tz)}});
+initTzHint(function(tz){tzApply(tz)});
 joinStore();
 gButtons();boot();
 googleBack();

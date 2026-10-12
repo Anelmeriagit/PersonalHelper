@@ -17,6 +17,7 @@ import { dbReady, key, hit } from './_db.js';
 import { wifiChoice } from './wifi.js';
 import { DEFAULT_TZ, tzOf } from './_tz.js';
 import { reindexAccount } from './_reindex.js';
+import { retimeAgent } from './agent.js';
 import { googleAccount, getAcc, getLink, setName, setTz, deleteAccount, partnerAcc, createPairToken, joinPair, unpair } from './_acc.js';
 
 const clientIp = (req) => String(req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '?';
@@ -191,6 +192,8 @@ async function mine(req, res, body) {
     if (r.error) return res.status(400).json({ error: 'Неизвестный часовой пояс' });
     // Время отправки зависит от пояса: у привязанного Telegram счёт в индексе cron пересчитывается (сбой не отменяет смену: суточная перестройка исправит).
     try { if (await getLink(id)) await reindexAccount(id); } catch (e) { console.error('auth tz reindex', e && e.name); }
+    // Агент: момент сброса `at` остаётся тем же, ч:мин строк пересчитываются по часам нового пояса (часть 3; сбой не отменяет смену, только пишется в журнал).
+    try { await retimeAgent(id, r.prev, r.tz || DEFAULT_TZ); } catch (e) { console.error('auth tz agent', e && e.name); }
     return res.status(200).json({ tz: r.tz || DEFAULT_TZ, tzSet: !!r.tz });
   }
   if (body.action === 'rename') {

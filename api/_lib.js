@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { key, getDoc, putDoc, del } from './_db.js';
 import { ID_RE } from './_acc.js';
+import { nowIn } from './_tz.js';
 
 export const BANKS = ['otp', 'alfa', 'vtb', 'halva', 'sber'];
 export const CATS = ['АЗС','Авто и автосервис','Активный отдых','Аптеки','Бытовые услуги','Все покупки','Дом и ремонт','Животные и зоотовары','Здоровье и медицина','Кафе и рестораны','Кино и театры','Книги','Красота','Маркетплейсы','Образование','Одежда и обувь','Путешествия','Развлечения','Связь и интернет','Спорт и фитнес','Супермаркеты','Такси и каршеринг','Техника и электроника','Транспорт','Фастфуд','Цветы','Цифровые товары и подписки'];
@@ -63,9 +64,14 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 // «Часть» документа — единица версии и конфликтов: месяц ('2026-10') или список своих категорий ('custom').
 export const PART_RE = /^(\d{4}-(0[1-9]|1[0-2])|custom)$/;
 
-export function curMonth() {
-  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
-  return p.find((x) => x.type === 'year').value + '-' + p.find((x) => x.type === 'month').value;
+// Текущий месяц 'YYYY-MM' по настенным часам пояса tz (по умолчанию Москва; пояс аккаунта — tzOf(acc), _tz.js).
+export const curMonth = (tz) => nowIn(tz).month;
+// Окно «новых» месяцев для PUT /api/data (этап 5, «Часовые пояса», часть 3): сервер не знает, где сейчас клиент, поэтому окно берётся с запасом на все пояса:
+// от «прошлого» месяца по часам UTC−12 (там месяц наступает позже всех) до «+2» по часам UTC+14 (там раньше всех). Для любого настоящего пояса
+// месяцы «прошлый … +2» от его текущего внутри окна; лишний месяц с краю безвреден (данные только свои).
+export function monthWindow(now = Date.now()) {
+  const ym = (ms) => { const d = new Date(ms); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); };
+  return { lo: shiftMonth(ym(now - 12 * 3600e3), -1), hi: shiftMonth(ym(now + 14 * 3600e3), 2) };
 }
 export function shiftMonth(k, n) {
   const [y, m] = k.split('-').map(Number);

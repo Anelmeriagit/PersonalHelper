@@ -2,17 +2,18 @@
    те же пути и формы ответов, что у настоящего API, но данные лежат в localStorage этого браузера и на сервер не уходят.
    Проверка значений та же, что на сервере; править обе части синхронно:
    кэшбэк (/api/data) — api/_lib.js (clean, cleanCustom, cleanBlocks, PART_RE) и api/data.js (PUT);
-   агент (/api/agent) — api/agent.js (cleanApp, cleanRows, withAt, nextAt);
+   агент (/api/agent) — api/agent.js (cleanApp, cleanRows, withAt, retimeRows) и api/_tz.js (nextAt; сайт берёт пару js/tz.js); пояс гостя — пояс устройства (main.js), метка g-tz;
    Wi-Fi (/api/wifi, список сетей до 5) — api/wifi.js (cleanWifi, wifiString, normNets, ответы GET/PUT/DELETE), QR строит js/qr.js (парный файл к api/_qr.js): пароль сети на сервер не уходит.
    Остальные пути (напоминания, Telegram, вход) отвечают 401, как сервер без входа.
    Слияние гостевых данных с аккаунтом при входе через Google: чистые функции guestDump, mergeCb, mergeAg, mergeWf и метка «уже сливали» (guestMerged, guestMark) здесь,
    сетевая часть — merge.js. */
-import {ls} from './util.js';
-import {clock,shiftM} from './time.js';
+import {ls,lset} from './util.js';
+import {curTz} from './time.js';
+import {DEFAULT_TZ,cleanTz,nextAt,retimeRows,monthWindow} from './tz.js';
 import {BANKS,CATS,PCTS} from './cashback/state.js';
 import {makeQr,utf8Bytes} from './qr.js';
 
-var K_CB='g-cb',K_AG='g-ag',K_WF='g-wf',K_MG='g-mg',ACC_RE=/^[0-9a-f]{32}$/;
+var K_CB='g-cb',K_AG='g-ag',K_WF='g-wf',K_MG='g-mg',K_TZ='g-tz',ACC_RE=/^[0-9a-f]{32}$/;
 var MONTH_RE=/^\d{4}-(0[1-9]|1[0-2])$/,PART_RE=/^(\d{4}-(0[1-9]|1[0-2])|custom)$/,BAD_CAT=/[<>"'`&\\\u0000-\u001f]/;
 
 function has(o,k){return Object.prototype.hasOwnProperty.call(o,k)}
@@ -53,7 +54,7 @@ function dataReq(m,b){
   if(m==='GET'){var d=cbDoc();return out(200,{user:'',name:'',data:pub(d),rev:d.rev})}
   if(m!=='PUT')return out(405,{error:'method'});
   var parts=b&&typeof b.parts==='object'&&b.parts?b.parts:{},names=Object.keys(parts);
-  var cur=clock().cur,lo=shiftM(cur,-1),hi=shiftM(cur,2);
+  var w=monthWindow(),lo=w.lo,hi=w.hi; /* то же окно, что у сервера (с запасом на все пояса) */
   if(!names.length||names.length>130||names.some(function(k){return !PART_RE.test(k)||!parts[k]||!Number.isInteger(parts[k].base)||!Array.isArray(parts[k].value)}))return out(400,{error:'bad request'});
   var doc=cbDoc();
   /* новые месяцы только в окне «прошлый … +2»; существующие (история) менять можно всегда */
@@ -67,11 +68,9 @@ function dataReq(m,b){
   return write(K_CB,next)?out(200,{ok:true,rev:next.rev}):out(500,{error:'storage'})}
 
 /* ---------- агент (зеркало api/agent.js) ---------- */
-var AGENT_APPS=['app','opera','mozilla','edge'],AG_NAME_MAX=40,AG_MAX=12,ID_RE=/^[a-z0-9]{1,16}$/,MSK_MS=3*3600e3;
+var AGENT_APPS=['app','opera','mozilla','edge'],AG_NAME_MAX=40,AG_MAX=12,ID_RE=/^[a-z0-9]{1,16}$/;
 function agId(){return Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4)}
 function agDefaults(){return AGENT_APPS.map(function(a){return{id:a,app:a,h:null,m:null,at:null}})}
-/* ближайший момент (мс, UTC), когда в Москве будет h:m; если он уже наступил, то завтра */
-function nextAt(h,m,now){var d=new Date(now+MSK_MS),at=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate(),h,m)-MSK_MS;return at<=now?at+864e5:at}
 function cleanApp(v){if(typeof v!=='string')return null;
   var t=v.replace(/\s+/g,' ').trim();
   if(!t||t.length>AG_NAME_MAX||BAD_CAT.test(t))return null;
@@ -86,23 +85,39 @@ function cleanRows(list,keepAt){var out=[],seen=Object.create(null);
       at=keepAt&&h!==null&&m!==null&&Number.isSafeInteger(r.at)&&r.at>0?r.at:null;
     out.push({id:id,app:app,h:h,m:m,at:at})});
   return out}
-/* прежний `at`, если ч:мин у строки не менялись, иначе новый; без ч:мин — null */
-function withAt(rows,prev,now){var old=Object.create(null);prev.forEach(function(r){old[r.id]=r});
+/* прежний `at`, если ч:мин у строки не менялись, иначе новый по поясу tz (js/tz.js nextAt; по умолчанию Москва); без ч:мин — null */
+function withAt(rows,prev,now,tz){var old=Object.create(null);prev.forEach(function(r){old[r.id]=r});
   return rows.map(function(r){
     if(r.h===null||r.m===null)return{id:r.id,app:r.app,h:r.h,m:r.m,at:null};
     var o=has(old,r.id)?old[r.id]:null;
-    return{id:r.id,app:r.app,h:r.h,m:r.m,at:o&&o.h===r.h&&o.m===r.m&&o.at?o.at:nextAt(r.h,r.m,now)}})}
+    return{id:r.id,app:r.app,h:r.h,m:r.m,at:o&&o.h===r.h&&o.m===r.m&&o.at?o.at:nextAt(r.h,r.m,now,tz||DEFAULT_TZ)}})}
 function agRows(){var raw=read(K_AG);return raw&&Array.isArray(raw.rows)?cleanRows(raw.rows,true).slice(0,AG_MAX):agDefaults()}
 /* строки агента гостя */
 export function guestGetAg(){return agRows()}
-/* данные аккаунта становятся гостевыми (выход, конец сессии): список заменяется целиком; false, если браузер не дал записать */
-export function guestSetAg(rows){return write(K_AG,{rows:cleanRows(rows,true).slice(0,AG_MAX)})}
+/* пояс, в котором записаны ч:мин гостевых строк: метка g-tz; нет метки (записи до часовых поясов) — Москва, как тогда считал сайт */
+export function guestTzMark(){return cleanTz(ls(K_TZ))||DEFAULT_TZ}
+/* гость в новом поясе устройства (main.js при открытии сайта): `at` строк прежний, ч:мин пересчитываются по часам нового пояса (как set-tz у аккаунта), метка g-tz обновляется.
+   Нет строк со временем — только метка. → true, если строки изменились */
+export function guestTzSync(tz){var t=cleanTz(tz);if(!t)return false;
+  var from=guestTzMark(),raw=read(K_AG),changed=false;
+  if(from!==t&&raw&&Array.isArray(raw.rows)){
+    var rows=cleanRows(raw.rows,true).slice(0,AG_MAX),next=retimeRows(rows,from,t,Date.now());
+    changed=JSON.stringify(next)!==JSON.stringify(rows);
+    if(changed&&!write(K_AG,{rows:next}))return false}
+  if(from!==t||ls(K_TZ)===null)lset(K_TZ,t);
+  return changed}
+/* данные аккаунта становятся гостевыми (выход, конец сессии): список заменяется целиком; false, если браузер не дал записать.
+   fromTz, tz — пояс аккаунта и пояс гостя (устройства): строки пересчитываются, `at` тот же; без них записываются как есть */
+export function guestSetAg(rows,fromTz,tz){var list=cleanRows(rows,true).slice(0,AG_MAX),f=cleanTz(fromTz),t=cleanTz(tz);
+  if(f&&t&&f!==t)list=retimeRows(list,f,t,Date.now());
+  if(t)lset(K_TZ,t);
+  return write(K_AG,{rows:list})}
 function agentReq(m,b){
   if(m!=='GET'&&m!=='PUT')return out(405,{error:'method'});
   if(m==='GET')return out(200,{rows:agRows()});
   if(!b||!Array.isArray(b.rows))return out(400,{error:'bad request'});
   if(b.rows.length>AG_MAX)return out(400,{error:'limit'});
-  var rows=withAt(cleanRows(b.rows),agRows(),Date.now());
+  var rows=withAt(cleanRows(b.rows),agRows(),Date.now(),curTz());
   return write(K_AG,{rows:rows})?out(200,{rows:rows}):out(500,{error:'storage'})}
 
 /* ---------- Wi-Fi (зеркало api/wifi.js; QR — js/qr.js) ---------- */
@@ -175,7 +190,7 @@ export function guestDump(){var d=cbDoc(),ag=read(K_AG),wf=wfNets();
 /* кэшбэк: месяц и банк, которых нет в аккаунте, копируются (месяц вне окна «прошлый … +2», которого у аккаунта нет, сервер создать не даст, он пропускается); свои категории объединяются (аккаунт первым, до 30).
    → {data: итоговый документ, parts: ключи изменённых частей (месяцы и 'custom')} */
 export function mergeCb(acc,gst){
-  var a=clean(acc),g=clean(gst),cur=clock().cur,lo=shiftM(cur,-1),hi=shiftM(cur,2),months=JSON.parse(JSON.stringify(a.months)),low=Object.create(null);
+  var a=clean(acc),g=clean(gst),w=monthWindow(),lo=w.lo,hi=w.hi,months=JSON.parse(JSON.stringify(a.months)),low=Object.create(null);
   a.custom.forEach(function(c){low[c.toLowerCase()]=c});
   /* своя категория гостя, совпавшая с категорией аккаунта в другом регистре, записывается как у аккаунта (иначе проверка отбросила бы строку) */
   function spell(items){return items.map(function(i){var c=low[String(i.cat).toLowerCase()];return{cat:c||i.cat,pct:i.pct}})}
@@ -188,11 +203,13 @@ export function mergeCb(acc,gst){
   if(JSON.stringify(m.custom)!==JSON.stringify(a.custom))parts.push('custom');
   Object.keys(m.months).forEach(function(mo){if(JSON.stringify(m.months[mo])!==JSON.stringify(a.months[mo]||[]))parts.push(mo)});
   return{data:m,parts:parts}}
-/* агент: строка гостя с тем же названием (без учёта регистра, по порядку) совпадает со строкой аккаунта: побеждает аккаунт, но если у неё нет времени, берётся время гостя;
+/* агент: строка гостя с тем же названием (без учёта регистра, по порядку) совпадает со строкой аккаунта: побеждает аккаунт, но если у неё нет времени, берётся время гостя (accTz, gstTz — пояса аккаунта и гостя, необязательны);
    строки без пары добавляются в конец, пока их не станет 12. → {rows, changed} */
-export function mergeAg(acc,gst){
-  var rows=cleanRows(acc,true).slice(0,AG_MAX),used=[],extra=[],changed=false;
-  cleanRows(gst,true).forEach(function(g){var i=-1,k;
+export function mergeAg(acc,gst,accTz,gstTz){
+  var rows=cleanRows(acc,true).slice(0,AG_MAX),used=[],extra=[],changed=false,gl=cleanRows(gst,true),a=cleanTz(accTz),b=cleanTz(gstTz);
+  /* ч:мин гостя записаны по часам его пояса, у аккаунта свой: время переносится по `at` (тот же момент), иначе 10:00 гостя стало бы 10:00 по поясу аккаунта */
+  if(a&&b&&a!==b)gl=retimeRows(gl,b,a,Date.now());
+  gl.forEach(function(g){var i=-1,k;
     for(k=0;k<rows.length;k++)if(used.indexOf(k)<0&&rows[k].app.toLowerCase()===g.app.toLowerCase()){i=k;break}
     if(i<0){extra.push(g);return}
     used.push(i);

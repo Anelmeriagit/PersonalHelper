@@ -7,7 +7,7 @@ export async function pages({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {
     for (const vp of VIEWPORTS) {
       for (const [name, hash] of PAGES) {
-        const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+        const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
         // Тема в приложении хранится в localStorage (ключ theme); значение подбираем по схеме.
         await ctx.addInitScript((s) => {
           try { localStorage.setItem('theme', s); localStorage.setItem('welcome', '1'); } catch { /* нет доступа */ }

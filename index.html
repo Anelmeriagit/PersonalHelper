@@ -33,6 +33,7 @@
   </div>
 </header>
 <div class="wrap"><div class="warn" id="warn" role="alert" hidden></div></div>
+<div class="wrap"><div class="warn tzh" id="tzHint" role="status" hidden></div></div>
 <div class="wrap" id="loginRoot"><p class="empty" role="status">Загрузка…</p></div>
 <main id="stage" hidden>
   <div class="prompt" id="prompt" inert><div class="pin"><div class="pbox"><span>Хотите заполнить категории на следующий месяц?</span><span><button class="btn" data-m="yes" type="button">Да</button><button class="btn" data-m="hide" type="button">Скрыть</button></span></div></div></div>
@@ -48,7 +49,7 @@
 <main id="remStage" hidden>
   <div class="rwrap rwide">
     <h2 class="mt">Напоминания</h2>
-    <p class="rsub">Уведомления приходят в Telegram по московскому времени.</p>
+    <p class="rsub">Уведомления приходят в Telegram по часовому поясу аккаунта (<span id="remTz">Москва, UTC+3</span>). Поясом можно управлять в настройках аккаунта.</p>
     <section class="fm gst" id="remGuest" hidden aria-labelledby="remGuestH"><h3 class="et" id="remGuestH">Нужен аккаунт</h3><p>Напоминания отправляет сервер, поэтому они доступны только в аккаунте: войдите через Google, чтобы создавать напоминания и привязать Telegram-бота. Кэшбэки, Wi-Fi и агент работают и без входа.</p><p class="gst-act" data-gbtn></p></section>
     <div id="remAcct">
     <section class="fm tgb" id="tgBox" aria-labelledby="tgH"><h3 class="et" id="tgH">Telegram</h3><div id="tgBody"></div><p class="rmsg" id="tgMsg" role="status" aria-live="polite"></p></section>
@@ -106,7 +107,7 @@
 <main id="agentStage" hidden>
   <div class="rwrap">
     <h2 class="mt">Агент</h2>
-    <p class="rsub">Когда и где сбросятся токены. Время по Москве. Строки можно перетаскивать за значок слева.</p>
+    <p class="rsub">Когда и где сбросятся токены. Время по часовому поясу <span id="agTz">аккаунта: Москва, UTC+3</span>. Строки можно перетаскивать за значок слева.</p>
     <div id="agBody"></div>
     <p class="rmsg" id="agMsg" role="status" aria-live="polite"></p>
   </div>

@@ -7,7 +7,7 @@ import { SCHEMES, VIEWPORTS, SETUP } from './smoke-lib.mjs';
 export async function merge({ stand, browser, fail }) {
   for (const scheme of SCHEMES) {
     for (const vp of VIEWPORTS) {
-      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme });
+      const ctx = await browser.newContext({ viewport: vp, colorScheme: scheme, timezoneId: 'Europe/Moscow' });
       await ctx.addInitScript(SETUP, scheme);
       const cur = mskDay(0).slice(0, 7);
       // гостевые данные кладутся один раз (флаг seeded), чтобы перезагрузка не возвращала их после слияния
