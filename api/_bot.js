@@ -36,7 +36,8 @@ export async function mutateBot(id, fn) {
 }
 
 /* ---------- текст «Показать кэшбэки» ---------- */
-const BANK_NAMES = { otp: 'ОТП', alfa: 'Альфа', vtb: 'ВТБ', halva: 'Халва', sber: 'Сбер' };
+const BANK_NAMES = { otp: 'ОТП', alfa: 'Альфа', vtb: 'ВТБ', halva: 'Халва', sber: 'Сбер',
+  tbank: 'Т-Банк', yandex: 'Яндекс Банк', gazprom: 'Газпромбанк', ozon: 'Озон Банк', raif: 'Райффайзен', mts: 'МТС Банк', otkritie: 'Открытие', psb: 'ПСБ' };
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 const monthLabel = (k) => { const [y, m] = k.split('-'); return MONTHS[+m - 1] + ' ' + y; };
 const pctText = (v) => String(v).replace('.', ',') + '%';
