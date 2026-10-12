@@ -4,13 +4,15 @@
 // Получатель один: Telegram, привязанный к аккаунту (tg:<id>, см. _acc.js). Постоянных напоминаний и поля «кому» больше нет.
 // Состояние бота (псевдонимы, ожидающие запросы) лежит отдельно, не здесь: бот пишет его на каждое сообщение, а эту запись читает и пишет cron.
 // Расписание (recDue, recNext), mskNow, лимиты и EVERY живут здесь; _bot.js их не знает.
+// Часовые пояса (этап 5, часть 2): «сегодня», слот и час считаются по настенным часам пояса владельца записи (tzOf(acc), _tz.js; нет поля = Москва); у общих напоминаний
+// пары — по поясу каждой стороны отдельно (sideTzs). Счёт в индексе dueq остаётся абсолютным моментом (мс UTC).
 // Общие напоминания соединённой пары (этап 5, «Соединить аккаунты», часть 4): запись shr:<меньший id>:<больший id>, та же форма списков, но у каждого напоминания
 // две галочки и две отметки отправки, по одной на аккаунт: on:{a,b}, sent:{a,b} (временные) и sent:{'YYYY-MM-DD':{a,b}} (повторяющиеся).
 // a — аккаунт с меньшим id, b — с большим (sideOf). Читать и писать можно только через readShr/mutateShr, а доступ давать только после partnerAcc (target).
 import { readRec, writeRec, isPrecond } from './_lib.js';
-import { getLink, partnerAcc, pairId } from './_acc.js';
+import { getLink, getAcc, partnerAcc, pairId } from './_acc.js';
 import { dueLower, pairMember } from './_due.js';
-import { DEFAULT_TZ, nowIn, zonedToMs, dayEndIn } from './_tz.js';
+import { DEFAULT_TZ, nowIn, zonedToMs, dayEndIn, tzOf } from './_tz.js';
 
 export const CUSTOM_MAX = 50; // не больше 50 временных напоминаний
 export const RECURRING_MAX = 30; // не больше 30 повторяющихся
@@ -113,6 +115,7 @@ export async function readRem(id) {
 // Читает запись, применяет fn(rem) и пишет по версии. Чужая запись между чтением и записью: повтор со свежими данными (до 6 раз).
 // fn меняет rem и возвращает undefined либо { err }; при err ничего не пишется (fn не должна менять rem до проверки).
 // После записи индекс dueq понижается до ближайшей отправки (dueTouch); opt.due === false — не трогать индекс (cron уточняет его сам).
+// opt.tz — пояс аккаунта, если вызывающий его уже знает (target); иначе для индекса читается acc:<id> (+1 команда).
 // → { rem } или { rem, err }
 export async function mutateRem(id, fn, opt) {
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -123,7 +126,10 @@ export async function mutateRem(id, fn, opt) {
     if (JSON.stringify(rem) === before) return { rem };
     try { await writeRec('rem', id, rem, etag); }
     catch (e) { if (!isPrecond(e)) throw e; continue; }
-    if (!opt || opt.due !== false) await dueTouch(id, nextDueRem(rem, mskNow()));
+    if (!opt || opt.due !== false) {
+      const tz = opt && opt.tz ? opt.tz : tzOf(await getAcc(id));
+      await dueTouch(id, nextDueRem(rem, nowIn(tz), tz));
+    }
     return { rem };
   }
   throw new Error('rem busy');
@@ -137,9 +143,9 @@ export const publicCustom = (rem) => rem.custom
   .map((it) => ({ id: it.id, date: it.date, slot: it.slot, text: it.text, on: it.on, sent: it.sent }))
   .sort((a, b) => cmp(a.date + slotKey(a), b.date + slotKey(b)));
 
-// next — ближайшая дата срабатывания (если сегодняшнее уже ушло, то следующая)
-export function publicRecurring(rem) {
-  const today = mskNow().date, tomorrow = addDays(today, 1);
+// next — ближайшая дата срабатывания (если сегодняшнее уже ушло, то следующая); «сегодня» по поясу tz смотрящего (по умолчанию Москва)
+export function publicRecurring(rem, tz = DEFAULT_TZ) {
+  const today = nowIn(tz).date, tomorrow = addDays(today, 1);
   return rem.recurring
     .map((it) => ({ id: it.id, date: it.date, every: it.every, ...(it.days ? { days: it.days } : {}), slot: it.slot, text: it.text, on: it.on, next: recNext(it, recDue(it, today) && it.sent[today] ? tomorrow : today) }))
     .sort((a, b) => cmp((a.next || '9') + slotKey(a), (b.next || '9') + slotKey(b)));
@@ -149,13 +155,15 @@ export function publicRecurring(rem) {
 // username (без @, может быть пустым) есть только у привязанного и берётся из той же записи tg:<id>, что и linked (одна команда Redis):
 // блок «Telegram» на сайте показывает @имя из этого ответа и не делает отдельный GET /api/tglink.
 // shared есть только у соединённого аккаунта (нет поля = не соединён): { linked:true, name, custom, recurring }, у каждого напоминания on — своя галочка,
-// pon — галочка партнёра. ctx — { pr, shr }, если вызывающий уже проверил пару и прочитал общую запись (иначе читается здесь).
+// pon — галочка партнёра. ctx — { tz, pr, shr }: tz — пояс аккаунта, pr и shr — если вызывающий уже проверил пару и прочитал общую запись (иначе читается здесь).
+// Пояс аккаунта без ctx.tz читается из acc:<id> (+1 команда); «сегодня» для общих берётся по поясу смотрящего.
 export async function pubRem(id, rem, ctx) {
-  const [l, pr] = await Promise.all([getLink(id), ctx ? ctx.pr : partnerAcc(id)]);
-  const out = { linked: !!l, ...(l ? { username: l.un || '' } : {}), custom: publicCustom(rem), recurring: publicRecurring(rem) };
+  const c = ctx || {};
+  const [l, pr, tz] = await Promise.all([getLink(id), 'pr' in c ? c.pr : partnerAcc(id), c.tz ? c.tz : getAcc(id).then(tzOf)]);
+  const out = { linked: !!l, ...(l ? { username: l.un || '' } : {}), custom: publicCustom(rem), recurring: publicRecurring(rem, tz) };
   if (pr) {
-    const shr = ctx ? ctx.shr : (await readShr(id, pr.id)).shr;
-    out.shared = pubShr(sideOf(id, pr.id), pr.acc.name || '', shr);
+    const shr = c.shr ? c.shr : (await readShr(id, pr.id)).shr;
+    out.shared = pubShr(sideOf(id, pr.id), pr.acc.name || '', shr, tz);
   }
   return out;
 }
@@ -170,27 +178,30 @@ function recNextDate(it, today, sentToday) {
   return d === today && sentToday ? recNext(it, addDays(today, 1)) : d;
 }
 // Ближайшее время отправки личных напоминаний (мс) или null. Вчерашнее неотправленное не считается: cron его не догоняет. Прошедший час сегодня считается (догонка).
-export function nextDueRem(rem, now) {
+// now — настенное время аккаунта (nowIn(tz)), tz — его пояс (по умолчанию Москва).
+export function nextDueRem(rem, now, tz = DEFAULT_TZ) {
   let best = null;
   const upd = (ms) => { if (best === null || ms < best) best = ms; };
-  for (const it of rem.custom) if (it.on !== false && !it.sent && it.date >= now.date) upd(slotMs(it.date, it.slot));
+  for (const it of rem.custom) if (it.on !== false && !it.sent && it.date >= now.date) upd(slotMs(it.date, it.slot, tz));
   for (const it of rem.recurring) {
     if (it.on === false) continue;
     const d = recNextDate(it, now.date, !!it.sent[now.date]);
-    if (d) upd(slotMs(d, it.slot));
+    if (d) upd(slotMs(d, it.slot, tz));
   }
   return best;
 }
-// То же для общих напоминаний пары: учитываются только стороны из sides ('a', 'b').
-export function nextDueShr(shr, now, sides) {
+// То же для общих напоминаний пары: учитываются только стороны из sides ('a', 'b'). tzs — { a, b } пояса сторон: тогда «сегодня» и слот каждой стороны считаются
+// по её поясу (now игнорируется, время берётся из Date.now()), а счёт — ближайшее из моментов сторон. Без tzs обе стороны по Москве и по переданному now.
+export function nextDueShr(shr, now, sides, tzs) {
   let best = null;
   const upd = (ms) => { if (best === null || ms < best) best = ms; };
-  for (const it of shr.custom) if (it.date >= now.date && sides.some((s) => it.on[s] && !it.sent[s])) upd(slotMs(it.date, it.slot));
-  for (const it of shr.recurring) {
-    for (const s of sides) {
+  for (const s of sides) {
+    const tz = tzs ? tzs[s] : DEFAULT_TZ, n = tzs ? nowIn(tz) : now;
+    for (const it of shr.custom) if (it.date >= n.date && it.on[s] && !it.sent[s]) upd(slotMs(it.date, it.slot, tz));
+    for (const it of shr.recurring) {
       if (!it.on[s]) continue;
-      const d = recNextDate(it, now.date, !!(it.sent[now.date] && it.sent[now.date][s]));
-      if (d) upd(slotMs(d, it.slot));
+      const d = recNextDate(it, n.date, !!(it.sent[n.date] && it.sent[n.date][s]));
+      if (d) upd(slotMs(d, it.slot, tz));
     }
   }
   return best;
@@ -240,6 +251,8 @@ export function unclaimRem(rem, fails) {
 /* ---------- общие напоминания пары ---------- */
 export const sideOf = (id, pid) => (id < pid ? 'a' : 'b'); // a — аккаунт с меньшим id
 export const other = (side) => (side === 'a' ? 'b' : 'a');
+// Пояса сторон пары { a, b } по поясам аккаунта id и его партнёра pid (нужны nextDueShr и cron).
+export const sideTzs = (id, pid, tzId, tzPid) => (id < pid ? { a: tzId, b: tzPid } : { a: tzPid, b: tzId });
 const two = (v, pick) => ({ a: pick(v && v.a), b: pick(v && v.b) });
 const flag = (x) => x !== false; // галочка: нет значения = включено
 const done = (x) => x === true; // отправлено: только явное true
@@ -281,6 +294,7 @@ export async function readShr(a, b) {
 
 // Как mutateRem, но для общей записи пары. fn(shr, me, other): me и other — 'a'/'b' (свой и партнёра для id). Вызывать только после partnerAcc(id).
 // Индекс: член p:<id>:<id> пары, счёт — ближайшая отправка любой из двух сторон (у какой стороны привязан Telegram, решает cron).
+// opt.tzs — { a, b } пояса сторон (sideTzs), если вызывающий их уже знает (target); иначе для индекса читаются оба acc (+2 команды).
 export async function mutateShr(id, pid, fn, opt) {
   const me = sideOf(id, pid);
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -291,15 +305,18 @@ export async function mutateShr(id, pid, fn, opt) {
     if (JSON.stringify(shr) === before) return { shr };
     try { await writeRec('shr', pairId(id, pid), shr, etag); }
     catch (e) { if (!isPrecond(e)) throw e; continue; }
-    if (!opt || opt.due !== false) await dueTouch(pairMember(id, pid), nextDueShr(shr, mskNow(), ['a', 'b']));
+    if (!opt || opt.due !== false) {
+      const tzs = opt && opt.tzs ? opt.tzs : sideTzs(id, pid, tzOf(await getAcc(id)), tzOf(await getAcc(pid)));
+      await dueTouch(pairMember(id, pid), nextDueShr(shr, null, ['a', 'b'], tzs));
+    }
     return { shr };
   }
   throw new Error('shr busy');
 }
 
-// Вид для сайта: me — сторона аккаунта ('a'/'b'). on/sent — свои, pon/psent — партнёра.
-function pubShr(me, name, shr) {
-  const you = other(me), today = mskNow().date, tomorrow = addDays(today, 1);
+// Вид для сайта: me — сторона аккаунта ('a'/'b'). on/sent — свои, pon/psent — партнёра. «Сегодня» — по поясу tz смотрящего.
+function pubShr(me, name, shr, tz = DEFAULT_TZ) {
+  const you = other(me), today = nowIn(tz).date, tomorrow = addDays(today, 1);
   return {
     linked: true,
     name,
@@ -348,15 +365,30 @@ export function unclaimShr(shr, fails, side) {
 }
 
 // Куда писать обработчикам /api/custom и /api/recurring: shared=false — личная запись аккаунта, true — общая запись пары (нужна связь).
-// → null (shared, но пары нет) | { sh, mut(fn), out(r) }. mut(fn) для общей вызывает fn(shr, me, other), для личной fn(rem).
-// out(r) — тело ответа: то же, что GET /api/reminders.
+// → null (shared, но пары нет) | { sh, tz, nows(), mut(fn), out(r) }. mut(fn) для общей вызывает fn(shr, me, other), для личной fn(rem).
+// out(r) — тело ответа: то же, что GET /api/reminders. tz — пояс аккаунта; nows() — настенное время тех, кого касается запись: у личной один аккаунт (первый элемент — свой),
+// у общей оба (свой, партнёра). Пояс читается один раз здесь (+1 команда acc:<id>) и дальше передаётся в mut и out.
 export async function target(uid, shared) {
-  if (!shared) return { sh: false, mut: (fn) => mutateRem(uid, (s) => fn(s)), out: (r) => pubRem(uid, r.rem) };
+  const tz = tzOf(await getAcc(uid));
+  if (!shared) return { sh: false, tz, nows: () => [nowIn(tz)], mut: (fn) => mutateRem(uid, (s) => fn(s), { tz }), out: (r) => pubRem(uid, r.rem, { tz }) };
   const pr = await partnerAcc(uid);
   if (!pr) return null;
+  const ptz = tzOf(pr.acc), tzs = sideTzs(uid, pr.id, tz, ptz);
   return {
     sh: true,
-    mut: (fn) => mutateShr(uid, pr.id, fn),
-    out: async (r) => pubRem(uid, (await readRem(uid)).rem, { pr, shr: r.shr }),
+    tz,
+    nows: () => [nowIn(tz), nowIn(ptz)],
+    mut: (fn) => mutateShr(uid, pr.id, fn, { tzs }),
+    out: async (r) => pubRem(uid, (await readRem(uid)).rem, { tz, pr, shr: r.shr }),
   };
+}
+
+// Проверка даты и слота нового или перенесённого напоминания относительно настенного времени каждого из nows (у общего — обеих сторон: иначе оно могло бы
+// оказаться уже прошедшим у партнёра и не дойти до него). → 'bad date' (дата прошла) | 'late' (сегодня слот уже наступил) | null.
+export function whenErr(nows, date, slot) {
+  for (const n of nows) {
+    if (date < n.date) return 'bad date';
+    if (date === n.date && minOf(n) >= SLOT_MIN[slot]) return 'late';
+  }
+  return null;
 }

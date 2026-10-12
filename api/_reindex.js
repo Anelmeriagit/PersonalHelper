@@ -1,6 +1,7 @@
 // Индекс dueq (см. _due.js): суточная перестройка и переиндексация одного аккаунта. Перестройку вызывает /api/cron?rebuild=1 и скрипт scripts/fill-dueq.mjs.
-import { readRem, readShr, nextDueRem, nextDueShr, mskNow } from './_rem.js';
-import { linkedIds, partnerAcc } from './_acc.js';
+import { readRem, readShr, nextDueRem, nextDueShr, sideTzs } from './_rem.js';
+import { linkedIds, getAcc, partnerAcc } from './_acc.js';
+import { nowIn, tzOf } from './_tz.js';
 import { dueAll, dueLower, dueSetCmd, pairMember } from './_due.js';
 import { pipe } from './_db.js';
 
@@ -9,11 +10,11 @@ const short = (id) => String(id).slice(0, 8);
 const chunks = (a, n) => { const r = []; for (let i = 0; i < a.length; i += n) r.push(a.slice(i, i + n)); return r; };
 
 // Полная перестройка по множеству tgs (аккаунты с привязанным Telegram) и их парам. Считает счёт каждого члена заново и правит только отличия.
-// Каждая правка идёт через dueSet: если счёт успели понизить запись напоминаний, он остаётся. Члены, которых перестройка не посетила (отвязанный
+// Время каждого аккаунта и стороны пары считается по их поясу (acc:<id>.tz; +1 команда на аккаунт). Каждая правка идёт через dueSet: если счёт успели понизить запись напоминаний, он остаётся. Члены, которых перестройка не посетила (отвязанный
 // аккаунт, удалённая пара, мусор), убираются только после полного обхода без ошибок: неполный обход ничего не стирает.
 // dry — ничего не пишет. budgetMs — сколько времени отводится на чтение. → { state:'ok'|'partial', accounts, indexed, add, change, drop, same, lost, errors, ms }
 export async function rebuildDue({ dry = false, budgetMs = 10000 } = {}) {
-  const t0 = Date.now(), now = mskNow();
+  const t0 = Date.now();
   const [cur, ids] = await Promise.all([dueAll(), linkedIds()]);
   const linked = new Set(ids);
   const want = new Map(); // член → счёт (null: слать нечего)
@@ -26,14 +27,15 @@ export async function rebuildDue({ dry = false, budgetMs = 10000 } = {}) {
       if (k >= ids.length) return;
       const id = ids[k];
       try {
-        want.set(id, nextDueRem((await readRem(id)).rem, now));
+        const tz = tzOf(await getAcc(id));
+        want.set(id, nextDueRem((await readRem(id)).rem, nowIn(tz), tz));
         const pr = await partnerAcc(id);
         const pm = pr ? pairMember(id, pr.id) : null;
         if (pm && !seen.has(pm)) {
           seen.add(pm);
           const [a, b] = id < pr.id ? [id, pr.id] : [pr.id, id];
           const sides = [linked.has(a) ? 'a' : '', linked.has(b) ? 'b' : ''].filter(Boolean);
-          want.set(pm, sides.length ? nextDueShr((await readShr(a, b)).shr, now, sides) : null);
+          want.set(pm, sides.length ? nextDueShr((await readShr(a, b)).shr, null, sides, sideTzs(id, pr.id, tz, tzOf(pr.acc))) : null);
         }
       } catch (e) { errors++; console.error('rebuild failed', short(id), e && e.message); }
     }
@@ -62,13 +64,15 @@ export async function rebuildDue({ dry = false, budgetMs = 10000 } = {}) {
 
 // Переиндексация одного аккаунта после привязки Telegram: его напоминания и общие пары могли ждать, пока Telegram не привязан (cron такие члены убирает).
 // Только понижает счёт (ZADD LT), как записи напоминаний.
+// Её же вызывает смена часового пояса (действие set-tz): счёт по новому поясу может оказаться раньше прежнего, а записи индекса только понижаются.
+// Если по новому поясу счёт позже прежнего, лишний ранний счёт безвреден: cron разберёт его и уточнит.
 export async function reindexAccount(id) {
-  const now = mskNow();
-  const sc = nextDueRem((await readRem(id)).rem, now);
+  const tz = tzOf(await getAcc(id));
+  const sc = nextDueRem((await readRem(id)).rem, nowIn(tz), tz);
   if (sc !== null) await dueLower(id, sc);
   const pr = await partnerAcc(id);
   if (pr) {
-    const sh = nextDueShr((await readShr(id, pr.id)).shr, now, ['a', 'b']);
+    const sh = nextDueShr((await readShr(id, pr.id)).shr, null, ['a', 'b'], sideTzs(id, pr.id, tz, tzOf(pr.acc)));
     if (sh !== null) await dueLower(pairMember(id, pr.id), sh);
   }
 }

@@ -16,6 +16,7 @@ import { makeCookie, clearCookie, session } from './_lib.js';
 import { dbReady, key, hit } from './_db.js';
 import { wifiChoice } from './wifi.js';
 import { DEFAULT_TZ, tzOf } from './_tz.js';
+import { reindexAccount } from './_reindex.js';
 import { googleAccount, getAcc, getLink, setName, setTz, deleteAccount, partnerAcc, createPairToken, joinPair, unpair } from './_acc.js';
 
 const clientIp = (req) => String(req.headers['x-vercel-forwarded-for'] || req.headers['x-real-ip'] || req.headers['x-forwarded-for'] || '').split(',')[0].trim() || '?';
@@ -188,6 +189,8 @@ async function mine(req, res, body) {
     const r = await setTz(id, body.tz);
     if (r === null) return res.status(401).json({ error: 'auth' });
     if (r.error) return res.status(400).json({ error: 'Неизвестный часовой пояс' });
+    // Время отправки зависит от пояса: у привязанного Telegram счёт в индексе cron пересчитывается (сбой не отменяет смену: суточная перестройка исправит).
+    try { if (await getLink(id)) await reindexAccount(id); } catch (e) { console.error('auth tz reindex', e && e.name); }
     return res.status(200).json({ tz: r.tz || DEFAULT_TZ, tzSet: !!r.tz });
   }
   if (body.action === 'rename') {

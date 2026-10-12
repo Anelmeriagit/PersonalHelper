@@ -2,11 +2,12 @@
 // Кому пора, читается из индекса dueq (этап 5, переход на внешний планировщик, часть 3; _due.js): члены со счётом не больше текущего времени → rem:<id> / shr:<id>:<id> → отправка в tg:<id>.chat.
 // Без индекса (прежний обход всего множества tgs) каждый запуск стоил бы около 2 команд Redis на аккаунт. После обработки счёт члена уточняется (dueSet) или член убирается; раз в сутки
 // ?rebuild=1 перестраивает индекс по tgs (_reindex.js). Запись напоминаний только понижает счёт, поэтому пропущенное в индексе возможно лишь при сбое Redis между двумя командами записи.
-// Запуск по текущему времени (этап 5, переход на внешний планировщик, часть 2): каждый вызов берёт час по Москве и шлёт всё, чей час уже наступил и что не помечено
-// (догоняем в тот же день). Вызывает внешний планировщик (QStash, запасной cron-job.org) и ежедневный cron Vercel; план — notes/reminders.md.
+// Запуск по текущему времени (этап 5, переход на внешний планировщик, часть 2): каждый вызов берёт текущий час и шлёт всё, чей час уже наступил и что не помечено
+// (догоняем в тот же день). Час и дата считаются по поясу каждого аккаунта (этап 5, «Часовые пояса», часть 2: acc:<id>.tz, нет поля = Москва; общее напоминание — каждой стороне по её
+// поясу); в ответе date и hour — по Москве (справочно; от hour зависит проверка последнего запуска дня). Вызывает внешний планировщик (QStash, запасной cron-job.org) и ежедневный cron Vercel; план — notes/reminders.md.
 // ?role=primary (по умолчанию) — основной, ставит пульс cron:hb; ?role=backup — запасной: если основной сработал меньше 15 минут назад, пропускает запуск
 // ({skipped:'primary alive'}), иначе берёт рассылку сам (took_over:true). Замок cron:lock (SET NX PX 30 с): два запуска не идут одновременно, занято — 200 {busy:true}.
-// ?slot=h15 | h15m30 (или day/evening) — ручной запуск ровно одного слота независимо от времени суток; ?dry=1 — сухой прогон; ?rebuild=1 — перед рассылкой перестроить индекс (не зависит от role и пульса:
+// ?slot=h15 | h15m30 (или day/evening) — ручной запуск ровно одного слота независимо от времени суток (аккаунты берутся, чьё время этого слота наступает до конца суток UTC−12, а слот каждый шлёт в свою дату); ?dry=1 — сухой прогон; ?rebuild=1 — перед рассылкой перестроить индекс (не зависит от role и пульса:
 // суточный вызов Vercel не должен пропускать перестройку, когда основной жив).
 // Лимиты: общий поток Telegram около 30 сообщений в секунду (шлём не чаще 20), maxDuration функции 30 с (укладываемся в BUDGET_MS).
 // Отметка «отправлено» ставится до отправки (planRem), поэтому повторный запуск не дублирует; не успевшие аккаунты (left) и сбои добираются повторным вызовом.
@@ -18,10 +19,11 @@
 // Нет BACKUP_KEY — копия выключена (state:'off'), рассылка работает как раньше. Ключ задан, но негодный (не 64 hex-символа, слишком простой) —
 // это ошибка настройки (state:'error', kind:'config', код 502), а не тихое отключение: опечатка не должна оставлять базу без копий.
 import { authed, sendCustom } from './_bot.js';
-import { mskNow, SLOT_MIN, LAST_HOUR, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf, nextDueRem, nextDueShr, dayEndMs } from './_rem.js';
+import { mskNow, SLOT_MIN, LAST_HOUR, readRem, mutateRem, planRem, unclaimRem, readShr, mutateShr, planShr, unclaimShr, sideOf, sideTzs, nextDueRem, nextDueShr, dayEndMs } from './_rem.js';
+import { WEST_TZ, nowIn, tzOf } from './_tz.js';
 import { dueRange, dueSet, parseMember } from './_due.js';
 import { rebuildDue } from './_reindex.js';
-import { getLink, partnerAcc } from './_acc.js';
+import { getAcc, getLink, partnerAcc } from './_acc.js';
 import { cmd, key, lock, unlock, del } from './_db.js';
 import { backupReady, backupStatus, backupIfDue, runBackup, DUE_GAP_MS } from './_backup.js';
 
@@ -96,15 +98,16 @@ async function backupInfo() {
 }
 
 // Один аккаунт: свои напоминания (w.own) и общие пары (w.shr, его сторона), в зависимости от того, чем он записан в индексе. → { n: сколько ушло (при dry: ушло бы), failed, blocked, nolink }
-// Лишние команды Redis: у не соединённого аккаунта одна (GET pair:<id> в partnerAcc), у соединённого ещё три на проверку пары и одна на чтение общей записи.
+// Лишние команды Redis: пояс аккаунта (GET acc:<id>, один раз за запуск на аккаунт); у не соединённого аккаунта ещё одна (GET pair:<id> в partnerAcc), у соединённого ещё три на проверку пары и одна на чтение общей записи.
 // Личный член индекса уточняется здесь же (счёт w.s был прочитан вместе со списком): dueSet не тронет его, если запись успели изменить. Член пары уточняется после всех аккаунтов (settlePair).
 const clone = (o) => JSON.parse(JSON.stringify(o));
-async function one(id, now, slot, dry, turn, w) {
+async function one(id, nowFor, tzFor, slot, dry, turn, w) {
+  const tz = await tzFor(id), now = nowFor(tz); // «сейчас» этого аккаунта по его поясу
   let rem = null, plan = [];
   if (w.own) { rem = (await readRem(id)).rem; plan = planRem(clone(rem), now, slot); } // пробный расчёт на копии: ничего не меняет
   let pr = null, splan = [];
   if (w.shr) { pr = await partnerAcc(id); if (pr) splan = planShr(clone((await readShr(id, pr.id)).shr), now, slot, sideOf(id, pr.id)); } // общие читаем только у полной пары
-  const settle = async (fresh) => { if (w.own && !dry) await dueSet(id, w.s, fresh === null ? null : nextDueRem(fresh, now)); };
+  const settle = async (fresh) => { if (w.own && !dry) await dueSet(id, w.s, fresh === null ? null : nextDueRem(fresh, now, tz)); };
   if (!plan.length && !splan.length) { await settle(rem); return { n: 0, failed: 0, blocked: 0 }; }
   const link = await getLink(id);
   if (!link || !link.chat) { await settle(null); return { n: 0, failed: 0, blocked: 0, nolink: true }; } // привязку убрали: ничего не помечаем, член индекса убираем (привязка вернёт его: reindexAccount)
@@ -124,10 +127,10 @@ async function one(id, now, slot, dry, turn, w) {
     }
   }
   if (fails.length) {
-    try { await mutateRem(id, (r) => { unclaimRem(r, fails); }); } catch (e) { console.error('unclaim failed', short(id), e && e.message); } // с записью в индекс: неудавшееся снова «пора»
+    try { await mutateRem(id, (r) => { unclaimRem(r, fails); }, { tz }); } catch (e) { console.error('unclaim failed', short(id), e && e.message); } // с записью в индекс: неудавшееся снова «пора»
   }
   if (sfails.length) {
-    try { await mutateShr(id, pr.id, (r, me) => { unclaimShr(r, sfails, me); }); } catch (e) { console.error('unclaim shared failed', short(id), e && e.message); }
+    try { await mutateShr(id, pr.id, (r, me) => { unclaimShr(r, sfails, me); }, { tzs: sideTzs(id, pr.id, tz, tzOf(pr.acc)) }); } catch (e) { console.error('unclaim shared failed', short(id), e && e.message); }
   }
   await settle(w.own ? (await readRem(id)).rem : null);
   return { n, failed: fails.length + sfails.length, blocked };
@@ -135,10 +138,11 @@ async function one(id, now, slot, dry, turn, w) {
 
 // Член-пара индекса после обработки: счёт по свежей общей записи и только по сторонам с привязанным Telegram (у стороны без привязки ничего не отправить,
 // иначе член оставался бы «пора» навсегда). Нет сторон или слать нечего — член убирается; привязка (reindexAccount) и запись напоминаний вернут его.
-async function settlePair(p, now) {
-  const [{ shr }, la, lb] = await Promise.all([readShr(p.a, p.b), getLink(p.a), getLink(p.b)]);
+// Счёт — по поясу каждой стороны (tzFor: пояс читается один раз за запуск).
+async function settlePair(p, tzFor) {
+  const [{ shr }, la, lb, ta, tb] = await Promise.all([readShr(p.a, p.b), getLink(p.a), getLink(p.b), tzFor(p.a), tzFor(p.b)]);
   const sides = [la && la.chat ? 'a' : '', lb && lb.chat ? 'b' : ''].filter(Boolean);
-  await dueSet(p.m, p.s, sides.length ? nextDueShr(shr, now, sides) : null);
+  await dueSet(p.m, p.s, sides.length ? nextDueShr(shr, null, sides, { a: ta, b: tb }) : null);
 }
 
 export default async function handler(req, res) {
@@ -157,12 +161,15 @@ export default async function handler(req, res) {
       const b = await backupStep(t0, true);
       return res.status(b.state === 'error' ? 502 : b.state === 'off' ? 400 : 200).json({ backup: b });
     }
-    let now = mskNow();
+    let ref = mskNow(); // «сейчас» по Москве: для ответа и проверки последнего запуска дня; сами аккаунты считают время по своему поясу (nowFor)
     if (q.date) {
       if (!dry) return res.status(400).json({ error: 'date работает только с dry=1' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(q.date)) return res.status(400).json({ error: 'date: YYYY-MM-DD' });
-      now = { month: q.date.slice(0, 7), date: q.date }; // без часа: весь день
+      ref = { month: q.date.slice(0, 7), date: q.date }; // без часа: весь день (эта дата у каждого аккаунта)
     }
+    const nowFor = (tz) => (q.date ? ref : nowIn(tz));
+    const tzMemo = new Map(); // пояс аккаунта читается один раз за запуск (acc:<id>); на весь процесс не кэшируется
+    const tzFor = (id) => { let pr = tzMemo.get(id); if (!pr) { pr = getAcc(id).then(tzOf); tzMemo.set(id, pr); } return pr; };
     // Ручной запуск одного слота: ?slot=h15 | h15m30 | day | evening (ровно это время, время суток не смотрим). Без slot — всё, чьё время уже наступило.
     if (q.slot !== undefined && !Object.prototype.hasOwnProperty.call(SLOT_MIN, q.slot)) return res.status(400).json({ error: 'slot: h07, h07m30 … h23, h23m30, day, evening' });
     const slot = q.slot;
@@ -197,8 +204,9 @@ export default async function handler(req, res) {
     const token = dry ? null : await lock(lk, LOCK_MS);
     if (!dry && !token) return res.status(rbBad ? 502 : 200).json({ busy: true, ...info, ...(rebuild ? { rebuild } : {}) });
     try {
-      // Кому пора: члены индекса со счётом не больше текущего времени. Ручной слот и сухой прогон с date смотрят до конца московских суток (слот или день, а не «сейчас»).
-      const cutoff = slot || (dry && q.date) ? dayEndMs(now.date) : Date.now();
+      // Кому пора: члены индекса со счётом не больше текущего времени. Ручной слот и сухой прогон с date смотрят до конца суток самого западного пояса (UTC−12) по дате ref:
+      // слот или день, а не «сейчас»; каждый аккаунт всё равно шлёт только то, что приходится на его настенные дату и слот.
+      const cutoff = slot || (dry && q.date) ? dayEndMs(ref.date, WEST_TZ) : Date.now();
       const got = await dueRange(cutoff, DUE_LIMIT + 1);
       const more = got.length > DUE_LIMIT;
       const want = new Map(); // id аккаунта → { own: есть личный член, shr: есть член пары, s: счёт личного члена }
@@ -223,7 +231,7 @@ export default async function handler(req, res) {
           const k = next++;
           if (k >= ids.length) return;
           try {
-            const r = await one(ids[k], now, slot, dry, turn, want.get(ids[k]));
+            const r = await one(ids[k], nowFor, tzFor, slot, dry, turn, want.get(ids[k]));
             st.sent += r.n; st.failed += r.failed; st.blocked += r.blocked; if (r.nolink) st.nolink++;
           } catch (e) { st.errors++; console.error('account failed', short(ids[k]), e && e.message); }
         }
@@ -231,16 +239,16 @@ export default async function handler(req, res) {
       await Promise.all(Array.from({ length: Math.min(WORKERS, ids.length) }, worker));
       if (!dry) {
         for (const p of pairs) {
-          try { await settlePair(p, now); } catch (e) { st.errors++; console.error('pair settle failed', short(p.a), e && e.message); }
+          try { await settlePair(p, tzFor); } catch (e) { st.errors++; console.error('pair settle failed', short(p.a), e && e.message); }
         }
       }
       const left = Math.max(0, ids.length - next) + (more ? 1 : 0);
-      const when = { date: now.date, ...(now.hour !== undefined ? { hour: now.hour } : {}), ...(slot ? { slot } : {}) };
+      const when = { date: ref.date, ...(ref.hour !== undefined ? { hour: ref.hour } : {}), ...(slot ? { slot } : {}) };
       const extra = { due: got.length - (more ? 1 : 0) - junk, ...(junk ? { junk } : {}), ...(rebuild ? { rebuild } : {}) };
       if (dry) return res.status(rbBad ? 502 : 200).json({ dry: true, ...when, ...info, ...extra, accounts: st.accounts, would_send: st.sent, nolink: st.nolink, errors: st.errors, left, backup: await backupInfo() });
       const backup = await backupStep(t0, false);
       // Последний запуск дня (час 23) не успел дописать копию: следующая попытка только завтра утром, поэтому 502. Раньше её доделает следующий запуск.
-      const backupBad = backup.state === 'error' || (backup.state === 'partial' && now.hour >= LAST_HOUR);
+      const backupBad = backup.state === 'error' || (backup.state === 'partial' && ref.hour >= LAST_HOUR);
       return res.status(st.failed || st.errors || left || backupBad || rbBad ? 502 : 200).json({ ...when, ...info, ...extra, ...st, left, backup });
     } finally {
       if (token) await unlock(lk, token).catch((e) => console.error('unlock failed', e && e.message));

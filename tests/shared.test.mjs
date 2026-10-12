@@ -198,24 +198,24 @@ test('normShr: чужие поля и мусор отбрасываются, г�
 });
 
 /* ---------- расход команд ---------- */
-test('команды Redis: GET без связи 3, со связью 6; общее создание 8 (в том числе запись в индекс dueq)', async (t) => {
+test('команды Redis: GET без связи 4, со связью 7; общее создание 9 (в том числе пояс аккаунта и запись в индекс dueq)', async (t) => {
   AT(t);
   const a = await mkAccount(acc, 'anna');
   __cmdLog(true);
   await get(a);
-  assert.equal(__cmdLog().length, 3, __cmdLog().join(' | '));
+  assert.equal(__cmdLog().length, 4, __cmdLog().join(' | '));
   const b = await mkAccount(acc, 'boris');
   const { token } = await acc.createPairToken(a);
   await acc.joinPair(token, b);
   __cmdLog(true);
   await get(a);
   const log = __cmdLog();
-  assert.equal(log.length, 6, log.join(' | ')); // tg, три на проверку пары, общая запись, личная запись
+  assert.equal(log.length, 7, log.join(' | ')); // пояс аккаунта, tg, три на проверку пары (там же пояс партнёра), общая запись, личная запись
   assert.equal(log.filter((c) => c.startsWith('HMGET shr:')).length, 1, 'общая запись читается один раз');
   __cmdLog(true);
   await post(custom, a, { date: '2026-10-12', slot: 'day', text: 'x', shared: true });
   const mk = __cmdLog();
-  assert.equal(mk.length, 8, 'общее создание (проверка пары 3, общая запись чтение и запись, ZADD dueq, личная запись, tg): ' + mk.join(' | '));
+  assert.equal(mk.length, 9, 'общее создание (пояс аккаунта, проверка пары 3, общая запись чтение и запись, ZADD dueq, личная запись, tg): ' + mk.join(' | '));
   assert.equal(mk.filter((c) => c === 'ZADD dueq').length, 1, 'индекс понижается один раз: ' + mk.join(' | '));
   assert.equal(mk.filter((c) => c.startsWith('GET pair:')).length, 2, 'пара проверяется один раз: ' + mk.join(' | '));
 });

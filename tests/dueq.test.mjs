@@ -233,12 +233,12 @@ test('ручной слот смотрит до конца суток; сухо�
   const d0 = await run({ dry: '1' });
   assert.deepEqual([d0.body.accounts, d0.body.would_send], [0, 0], 'сейчас 14:30: никому не пора');
   const d1 = await run({ dry: '1', date: '2026-10-14' });
-  assert.deepEqual([d1.body.accounts, d1.body.would_send], [1, 1]);
+  assert.deepEqual([d1.body.accounts, d1.body.would_send], [2, 1], 'смотрит до конца суток UTC−12: 08:00 МСК 15-го у Бориса уже раньше этой границы, но слать ему 14-го нечего');
   const d2 = await run({ dry: '1', date: '2026-10-15' });
   assert.deepEqual([d2.body.accounts, d2.body.would_send], [2, 1], 'на 15-е в индексе оба, но вечерняя Анны сегодняшняя: по дате 15-го слать нечего');
   assert.equal(scoreOf(a), at(TODAY, 'h18'), 'сухой прогон индекс не трогает');
   const m = await run({ slot: 'h18' });
-  assert.deepEqual([m.body.accounts, m.body.sent], [1, 1]);
+  assert.deepEqual([m.body.accounts, m.body.sent], [2, 1], 'граница та же (до конца суток UTC−12), шлёт только то, что приходится на слот и дату аккаунта');
   assert.deepEqual(texts(calls), ['🔔 вечер Анны']);
   assert.equal(scoreOf(b), at('2026-10-15', 'h08'), 'у Бориса ничего не тронуто');
 });

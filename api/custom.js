@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { session } from './_lib.js';
-import { CUSTOM_MAX, SLOT_MIN, MAX_TEXT, mskNow, minOf, validDate, cleanText, own, idOk, lastDay, target, newShrCustom, anySent } from './_rem.js';
+import { CUSTOM_MAX, SLOT_MIN, MAX_TEXT, validDate, cleanText, own, idOk, lastDay, target, whenErr, newShrCustom, anySent } from './_rem.js';
 
 // Временные (разовые) напоминания аккаунта из сессии. Данные: rem:<id> (см. _rem.js).
 //   POST   /api/custom           {date:'YYYY-MM-DD', slot:'h07'|'h07m30' … 'h23'|'h23m30' (или 'day'|'evening'), text, shared?:true}
@@ -10,7 +10,8 @@ import { CUSTOM_MAX, SLOT_MIN, MAX_TEXT, mskNow, minOf, validDate, cleanText, ow
 // shared — общее напоминание соединённой пары (запись shr:…, _rem.js); без связи 409 {error:'nopair'}. У общего две галочки (у каждого аккаунта своя):
 // who выбирает, чью менять (по умолчанию свою; менять может любой из двоих). Общее считается отправленным, если ушло хоть кому-то (правка → 400 past).
 // Каждый ответ — то же, что GET /api/reminders ({linked, custom, recurring, shared?}).
-// Отправку делает api/cron.js (слоты 14:00 и 18:00 по Москве) в Telegram, привязанный к аккаунту.
+// Отправку делает api/cron.js (слоты с шагом 30 минут по настенным часам пояса аккаунта, у общего — каждой стороны по её поясу) в Telegram, привязанный к аккаунту.
+// «Сегодня» и «время слота уже прошло» считаются по поясу автора; у общего напоминания — по поясу каждой стороны (прошедшее у любой стороны: 400 bad date / late).
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
@@ -39,9 +40,10 @@ export default async function handler(req, res) {
       const { date, slot } = b;
       const text = cleanText(b.text);
       if (!validDate(date) || !own(SLOT_MIN, slot) || !text || text.length > MAX_TEXT) return res.status(400).json({ error: 'bad request' });
-      const now = mskNow();
-      if (date < now.date || date > lastDay(now.date)) return res.status(400).json({ error: 'bad date' });
-      if (date === now.date && minOf(now) >= SLOT_MIN[slot]) return res.status(400).json({ error: 'late' });
+      const nows = T.nows();
+      if (date > lastDay(nows[0].date)) return res.status(400).json({ error: 'bad date' });
+      const we = whenErr(nows, date, slot);
+      if (we) return res.status(400).json({ error: we });
       const r = await T.mut((s) => {
         if (s.custom.length >= CUSTOM_MAX) return { err: 'limit' };
         const it = { id: crypto.randomBytes(6).toString('hex'), date, slot, text, on: true, sent: false };
@@ -64,7 +66,7 @@ export default async function handler(req, res) {
       if (hasText && (!text || text.length > MAX_TEXT)) return res.status(400).json({ error: 'bad request' });
       if (hasDate && !validDate(b.date)) return res.status(400).json({ error: 'bad request' });
       if (hasSlot && !own(SLOT_MIN, b.slot)) return res.status(400).json({ error: 'bad request' });
-      const now = mskNow(), mins = minOf(now), last = lastDay(now.date);
+      const nows = T.nows(), last = lastDay(nows[0].date);
       r = await T.mut((s) => {
         const it = s.custom.find((x) => x.id === id);
         if (!it) return { err: 'gone' };
@@ -72,8 +74,9 @@ export default async function handler(req, res) {
         const date = hasDate ? b.date : it.date, slot = hasSlot ? b.slot : it.slot;
         if (date !== it.date || slot !== it.slot) {
           // перенос: те же проверки, что при создании
-          if (date < now.date || date > last) return { err: 'bad date' };
-          if (date === now.date && mins >= SLOT_MIN[slot]) return { err: 'late' };
+          if (date > last) return { err: 'bad date' };
+          const we = whenErr(nows, date, slot);
+          if (we) return { err: we };
           it.date = date; it.slot = slot;
         }
         if (hasText) it.text = text;
