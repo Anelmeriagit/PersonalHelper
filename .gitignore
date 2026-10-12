@@ -13,6 +13,7 @@ node_modules/
 *.tmp
 *.orig
 tree.txt
+exports/
 .DS_Store
 Thumbs.db
 .vscode/

@@ -4,4 +4,5 @@ PROJECT_NOTES.md
 notes/
 tests/
 scripts/
+exports/
 node_modules/
