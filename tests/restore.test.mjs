@@ -90,7 +90,7 @@ test('сухой прогон по умолчанию (копия прежнег
   assert.deepEqual([r.plan.total, r.plan.create, r.plan.overwrite, r.plan.skipped], [13, 2, 11, 2]);
   assert.match(m.text(), /сухой прогон/);
   assert.match(m.text(), /создать 2, перезаписать 11; пропущено временных 2 \(rl 1, tgt 1\)/);
-  assert.match(m.text(), /Куда: префикс «\(пусто: боевая база\)»/);
+  assert.match(m.text(), /Куда: префикс «\(пусто\)»/);
   assert.equal(m.asked.length, 0);
   assert.doesNotMatch(m.text(), /Магазин|user1|[0-9a-f]{32}/);
 });
@@ -106,7 +106,7 @@ test('--all включает временные ключи в план (копи
 });
 
 /* ---------- применение ---------- */
-test('--apply в боевую базу: нужно ввести RESTORE PROD; неверный ответ ничего не меняет; после записи сверка без расхождений', async () => {
+test('--apply в префикс по умолчанию: нужно ввести RESTORE PROD; неверный ответ ничего не меняет; после записи сверка без расхождений', async () => {
   await seed();
   await makeBackup();
   const original = dumpAll();
@@ -116,7 +116,7 @@ test('--apply в боевую базу: нужно ввести RESTORE PROD; н
   assert.equal(r0.mode, 'cancelled');
   assert.equal(__keys().length, 0);
   assert.equal(bad.asked[0][1], 'RESTORE PROD');
-  assert.match(bad.asked[0][0], /БОЕВУЮ БАЗУ/);
+  assert.match(bad.asked[0][0], /в префикс «\(пусто\)»/);
   const m = mkIo();
   const r = await run({ apply: true }, m.io);
   assert.equal(r.ok, true);
@@ -142,7 +142,7 @@ test('перезапись: устаревшее поле хэша и ключ �
   assert.equal(__raw('новый:ключ'), 'остаётся');
 });
 
-test('--to=t: восстановление в другой префикс, боевые ключи не тронуты; подтверждение RESTORE', async () => {
+test('--to=t: восстановление в другой префикс, боевые ключи не тронуты; подтверждение RESTORE PROD', async () => {
   await seed();
   await makeBackup();
   await db.cmd('HSET', 'doc:' + hex(1), 'd', 'боевое изменено', 'v', '9');
@@ -150,7 +150,7 @@ test('--to=t: восстановление в другой префикс, бо�
   const m = mkIo();
   const r = await run({ apply: true, to: 't' }, m.io);
   assert.equal(r.ok, true);
-  assert.equal(m.asked[0][1], 'RESTORE');
+  assert.equal(m.asked[0][1], 'RESTORE PROD');
   assert.match(m.asked[0][0], /в префикс «t:»/);
   assert.equal(JSON.stringify(__raw('doc:' + hex(1))), prod);
   assert.equal(__raw('t:doc:' + hex(1)).v, '1');

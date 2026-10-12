@@ -24,7 +24,7 @@ export async function main(argv = process.argv.slice(2), io = { confirm: ttyConf
   if (!dbReady()) { log('Нужны KV_REST_API_URL и KV_REST_API_TOKEN (запасные UPSTASH_REDIS_REST_*).'); return 1; }
   const apply = argv.includes('--apply');
   const dry = await rebuildDue({ dry: true, budgetMs: BUDGET_MS });
-  log((prefix() ? 'Префикс базы: ' + prefix() + '\n' : 'Боевая база (префикс пуст)\n') + 'Сухой прогон: ' + line(dry));
+  log((prefix() ? 'Префикс базы: ' + prefix() + '\n' : 'Префикс пуст (в бою DB_PREFIX=t:, проверьте переменную)\n') + 'Сухой прогон: ' + line(dry));
   if (dry.state !== 'ok') { log('Обход неполный (ошибки чтения: ' + dry.errors + '): ничего не записываем, повторите позже.'); return 1; }
   if (!apply) { log('Ничего не записано. Для записи добавьте --apply.'); return 0; }
   if (!dry.add && !dry.change && !dry.drop) { log('Индекс уже в порядке: записывать нечего.'); return 0; }
