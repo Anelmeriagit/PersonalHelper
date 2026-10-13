@@ -447,3 +447,5 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .tzh .acts{justify-content:flex-end;margin-top:.5rem}
 .tzh .err{margin:.25rem 0 0}
 .ar select{margin-bottom:.4rem}
+/* 2026-10-13: блок Telegram скрыт, пока неизвестно, привязан ли он (иначе мигал большим и сжимался) */
+.tgb.wait{display:none}

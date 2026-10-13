@@ -14,12 +14,13 @@ export async function tg({ stand, browser, fail }) {
       }, scheme);
       const page = await ctx.newPage();
       const problems = [];
-      const st = { linked: false, username: 'ivan_k', post: 'ok', del: 'ok', auth: false, posts: 0, dels: 0, rem: 0 };
+      const st = { delay: 0, linked: false, username: 'ivan_k', post: 'ok', del: 'ok', auth: false, posts: 0, dels: 0, rem: 0 };
       page.on('pageerror', (e) => problems.push('JS: ' + e.message));
       page.on('console', (m) => { if (m.type() === 'error' && !/status of (401|429|500|503)/.test(m.text())) problems.push('console: ' + m.text()); });
       // состояние привязки и @имя приходят в ответе напоминаний (отдельного GET /api/tglink при входе на страницу нет); 401 как у настоящего сервера
-      await page.route('**/api/reminders', (r) => {
+      await page.route('**/api/reminders', async (r) => {
         st.rem++;
+        if (st.delay) await new Promise((res) => setTimeout(res, st.delay));
         if (st.auth) return r.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'auth' }) });
         r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ linked: st.linked, ...(st.linked ? { username: st.username } : {}), custom: [], recurring: [] }) });
       });
@@ -110,6 +111,19 @@ export async function tg({ stand, browser, fail }) {
         await page.waitForSelector('#tgBox.ok #tgBody .tgn', { timeout: 5000 });
         check((await page.locator('#tgBody img').count()) === 0 && !/img/.test(await text('#tgBody .tgn')), 'имя не выводится, тега img нет');
         await noHScroll('привязан, длинное имя');
+
+        // 9б. возврат на «Напоминания» при привязанном Telegram: пока ответа нет, блока не видно (не мигает большим), потом сразу компактный
+        st.username = 'ivan_k';
+        await page.goto(stand.url + '/#wifi', { waitUntil: 'load', timeout: 15000 });
+        await page.waitForSelector('#wifiStage:not([hidden])', { timeout: 5000 });
+        st.delay = 1200;
+        await page.evaluate(() => { location.hash = '#reminders'; });
+        await page.waitForTimeout(500);
+        check(await page.locator('#tgBox').isHidden(), 'возврат: до ответа сервера блок Telegram скрыт');
+        await page.waitForSelector('#tgBox.ok #tgBody .tgn', { timeout: 5000 });
+        check(await page.locator('#tgBox').isVisible() && (await page.locator('#tgBox').boundingBox()).width <= 421, 'возврат: блок сразу компактный');
+        st.delay = 0;
+        await noHScroll('возврат на «Напоминания»');
 
         // 10. 401 от /api/tglink: сессии нет, сайт открывается гостем
         st.auth = true;

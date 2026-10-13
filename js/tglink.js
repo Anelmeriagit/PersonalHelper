@@ -11,7 +11,7 @@ function msg(t){var m=$('tgMsg');if(m)m.textContent=t||''}
 function stop(){if(T.timer){clearTimeout(T.timer);T.timer=0}}
 
 function render(){var b=$('tgBody'),x=$('tgBox');if(!b)return;
-  if(x)x.classList.toggle('ok',!!(T.st&&T.st.linked));
+  if(x){x.classList.toggle('ok',!!(T.st&&T.st.linked));x.classList.toggle('wait',!T.st)}
   if(!T.st){b.innerHTML='';return}
   if(T.st.linked){b.innerHTML='<p class="tgn">Telegram привязан. Бот будет отправлять напоминания.</p>';return}
   if(T.url){
