@@ -36,7 +36,8 @@ export function accShow(on){$('uWrap').hidden=!on;$('navAcct').hidden=!on;$('gBt
 /* кнопка меню: на телефоне «Аккаунт» в нижней панели (navAcct), на компьютере кнопка с именем в шапке (uBtn); меню одно и то же */
 function trig(){return navA&&getComputedStyle(navA).display!=='none'?navA:uBtn}
 function setExp(v){uBtn.setAttribute('aria-expanded',v);if(navA)navA.setAttribute('aria-expanded',v)}
-function menuOpen(first){uMenu.hidden=false;setExp('true');
+function menuPlace(){var nv=document.querySelector('.nav');uMenu.style.bottom=trig()===navA&&nv?Math.round(window.innerHeight-nv.getBoundingClientRect().top+8)+'px':''}
+function menuOpen(first){menuPlace();uMenu.hidden=false;setExp('true');
   if(first){var f=uMenu.querySelector('button');if(f)f.focus()}}
 function menuClose(focus){if(!uMenu||uMenu.hidden)return;uMenu.hidden=true;setExp('false');if(focus)trig().focus()}
 function menuKey(e){var it=uMenu.querySelectorAll('button'),i=Array.prototype.indexOf.call(it,document.activeElement);
