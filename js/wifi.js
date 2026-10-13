@@ -103,7 +103,7 @@ function wifiCopy(n){var t=n&&n.password;if(!t)return;
 function wifiPrint(n,c){var cb=c.querySelector('.wpp'),box=$('wPrint');if(!box)return;box.innerHTML=printHtml(n,cb?cb.checked:true);window.print()}
 
 
-/* ---------- общий список: окно «Оставить мою / партнёра / обе» (сервер: notes/wifi.md, «Часть 4») ----------
+/* ---------- общий список: окно «Оставить мою / партнёра / обе» (сервер: notes/wifi.md, «Общий список у соединённых аккаунтов») ----------
    Показывается после соединения аккаунтов (ответ pair-join, wifi.choose) и из «Настроек аккаунта», если выбор не сделан (pair-wifi без choice).
    До выбора у каждого свой личный список. Выбор — POST /api/auth {action:'pair-wifi', choice:'mine'|'partner'|'both'}; в окне только названия сетей, паролей нет. */
 var wdDlg=$('wfDlg'),wd=null,wdBusy=false,wdGen=0;
