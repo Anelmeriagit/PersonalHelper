@@ -14,6 +14,9 @@
   - Интерфейс и стили (`js/`, `index.html`, `style.css`): затронутые файлы, `index.html`, `vercel.json`, `tests/serve.mjs`, `smoke.mjs`, `smoke-lib.mjs`, `fixtures.mjs` и файлы сценариев тех разделов, которых правка касается (`smoke-guest.mjs` и `smoke-session.mjs` — гость и конец сессии, `smoke-merge.mjs` — слияние, `smoke-cashback.mjs`, `smoke-wifi.mjs`, `smoke-tg.mjs`, `smoke-rem.mjs`, `smoke-acct.mjs`, `smoke-pair.mjs`, `smoke-welcome.mjs`, `smoke-refresh.mjs` — расход команд, `smoke-pages.mjs` — проход по страницам). Для нового или изменённого эндпоинта `fixtures.mjs` обязателен. Стили тоже: проверка 360/1280 px, тем и горизонтальной прокрутки делается через `smoke.mjs`.
   - Правка только заметок или текстов без изменения разметки и логики: тесты не нужны.
 
+## Известные проблемы
+- `smoke.mjs --only=paircb` падает: после `page.clock.install` не дожидается элементов. Падает и на копии репозитория до правок, к банкам и кэшбэку не относится; причина не выяснена. Остальные сценарии кэшбэка (`cashback`, `guest`, `merge`) проходят.
+
 ## Файлы сайта и мусор (проверка `tests/deploy-files.test.mjs`)
 На деплой попадают только файлы сайта (`index.html`, `style.css`, `theme.js`, `sw.js`, `manifest.webmanifest`, `vercel.json`, `package.json`, `package-lock.json`, `Icons/`, `logos/`, `js/`, `api/`); заметки, тесты и скрипты исключены в `.vercelignore` (простые строки: имя файла или папка с `/`). Тест обходит рабочую папку и падает, если рядом с сайтом лежит что-то лишнее и не исключено. Список разрешённых файлов в начале теста: добавить туда новый файл сайта, если он появился. От мусора в репозитории (`*.zip`, `*.patch`, выгрузки, логи, временные файлы) защищает `.gitignore`. Тот же файл следит за `vercel.json`: ровно один ежедневный вызов `/api/cron` с `role=backup` и `rebuild=1` (Hobby; частые запуски идут от внешних планировщиков, `notes/reminders.md`).
 
