@@ -15,12 +15,14 @@ export async function acct({ stand, browser, fail }) {
       const page = await ctx.newPage();
       const problems = [];
       const posts = [];
-      let tgDeleted = 0, meFail = false, name = '';
+      let tgDeleted = 0, meFail = false, meAbort = false, meBad = false, quiet = false, name = '';
       page.on('pageerror', (e) => problems.push('JS: ' + e.message));
-      page.on('console', (m) => { if (m.type() === 'error' && !/status of (400|401)/.test(m.text())) problems.push('console: ' + m.text()); });
+      page.on('console', (m) => { if (!quiet && m.type() === 'error' && !/status of (400|401)/.test(m.text())) problems.push('console: ' + m.text()); });
       const json = (r, body, status = 200) => r.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
       await page.route('**/api/auth', (r) => {
         const b = r.request().postDataJSON(); posts.push(b);
+        if (b.action === 'me' && meAbort) return r.abort();
+        if (b.action === 'me' && meBad) return json(r, { id: '0123456789abcdef0123456789abcdef', tz: 'Bad/Zone', partner: { linked: false } });
         if (b.action === 'me') return meFail ? json(r, { error: 'bad request' }, 400) : json(r, { id: '0123456789abcdef0123456789abcdef', name, email: '<u>anna</u>@example.com', tg: tgDeleted ? { linked: false } : { linked: true, id: 123456789, username: 'anna_tg<i>x</i>' } });
         if (b.action === 'rename') { name = b.name; return json(r, { name }); }
         return json(r, { ok: true });
@@ -57,6 +59,8 @@ export async function acct({ stand, browser, fail }) {
         check((await page.locator('#uBtn svg').count()) === 1, 'у кнопки есть галочка');
         check((await page.locator('#outBtn').count()) === 0, 'старой кнопки выхода нет');
         const MOB = vp.width <= 640, TRIG = MOB ? '#navAcct' : '#uBtn';
+        check((await page.locator('a.brand, .brand a').count()) === 0 && (await page.locator('.brand').evaluate((e) => e.tagName)) !== 'A', '«Your Personal Helper» не ссылка');
+        check((await page.locator('#navMain i').count()) === 0, 'у «Кэшбэка» нет точки');
         const brand = await page.locator('.brand').boundingBox();
         check((await text('.brand')).replace(/\s+/g, ' ').trim().endsWith('Your Personal Helper') && brand && brand.x < 40 + (vp.width > 1000 ? 400 : 20) && brand.x + brand.width <= vp.width, 'в шапке слева подпись «Your Personal Helper» со значком');
         if (MOB) {
@@ -94,6 +98,17 @@ export async function acct({ stand, browser, fail }) {
         check(!(await isOpen('#acctDlg')), 'окно закрывается крестиком');
         meFail = false;
 
+        // --- окно настроек: обрыв сети и ошибка страницы — разные сообщения ---
+        quiet = true;
+        meAbort = true; await page.click(TRIG); await page.click('#uMenu [data-u=settings]');
+        await page.waitForFunction(() => /Нет связи с сервером/.test(document.getElementById('acctDlg').innerText), null, { timeout: 5000 });
+        await page.click('#acctDlg [data-a=close]');
+        meAbort = false; meBad = true; await page.click(TRIG); await page.click('#uMenu [data-u=settings]');
+        await page.waitForFunction(() => /Ошибка на странице/.test(document.getElementById('acctDlg').innerText), null, { timeout: 5000 });
+        check(!/Нет связи/.test(await page.locator('#acctDlg').innerText()), 'ошибка страницы не выдаётся за обрыв сети');
+        await page.click('#acctDlg [data-a=close]');
+        meBad = false; quiet = false;
+
         // --- окно настроек ---
         await openSettings();
         check(await isOpen('#acctDlg'), 'окно настроек открыто');
@@ -112,7 +127,7 @@ export async function acct({ stand, browser, fail }) {
           const rows = [...document.querySelectorAll('#acctDlg .ar')].map((e) => e.getBoundingClientRect().top);
           return { rows, dz: q('.dz').top, nm: q('#acName'), btn: q('[data-a=rename]'), lab: q('.al'), dlg: document.getElementById('acctDlg').getBoundingClientRect(), sw: document.getElementById('acctDlg').scrollWidth, cw: document.getElementById('acctDlg').clientWidth, bc: getComputedStyle(document.querySelector('#acctDlg .dz')).borderTopColor, ih: innerHeight, iw: innerWidth };
         });
-        check(ys.rows.length === 5 && ys.rows.every((y, i, a) => i === 0 || y > a[i - 1]) && ys.dz > ys.rows[4], 'порядок: имя, Email, ID, Telegram, соединить, удаление');
+        check(ys.rows.length === 6 && ys.rows.every((y, i, a) => i === 0 || y > a[i - 1]) && ys.dz > ys.rows[5], 'порядок: имя, пояс, Email, ID, Telegram, соединить, удаление');
         check(ys.nm.top > ys.lab.top && ys.btn.left > ys.nm.right, 'имя под подписью, кнопка «Изменить» правее имени');
         check(Math.abs(ys.dlg.left + ys.dlg.width / 2 - ys.iw / 2) <= 2 && ys.dlg.left >= 0 && ys.dlg.right <= ys.iw, 'окно по центру по горизонтали и в экране');
         check(ys.dlg.height >= ys.ih - 1 || Math.abs(ys.dlg.top + ys.dlg.height / 2 - ys.ih / 2) <= 2, 'окно по центру по вертикали (или на всю высоту)');

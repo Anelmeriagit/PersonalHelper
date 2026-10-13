@@ -3,7 +3,7 @@
    POST /api/auth {action:'me'|'rename'|'delete'|'pair-link'|'pair-drop'}; отвязка Telegram — DELETE /api/tglink. Имя для шапки приходит в GET /api/data (поле name),
    поэтому лишних запросов при входе нет; «me» читается только при открытии окна. Часовой пояс аккаунта (tz, tzSet в ответах GET /api/data и «me») выбирается в этом же окне
    (POST /api/auth {action:'set-tz', tz}, js/tzhint.js); подсказка при расхождении с поясом устройства — там же. */
-import {$,esc,nrm,IC} from './util.js';
+import {$,esc,opts,nrm,IC} from './util.js';
 import {api,authFail} from './api.js';
 import {dlgConfirm,dlgAlert} from './dialogs.js';
 import {wifiChoose,wifiPairState} from './wifi.js';
@@ -15,6 +15,10 @@ var DEF='Helper User',WORD='удалить',NAME_MAX=32;
 var TOKEN=/^[A-Za-z0-9_-]{22}$/,SENT='Ссылка отправлена. Она одноразовая и действует 24 часа.',COPIED='Ссылка скопирована. Отправьте её второму человеку: она одноразовая и действует 24 часа.',MANUAL='Скопируйте ссылку и отправьте её второму человеку: она одноразовая и действует 24 часа.';
 var A={name:'',me:null,gen:0,edit:false,busy:false,link:'',pmsg:'',perr:'',manual:false,wfp:null,tmsg:'',terr:''},cb={logout:function(){},tg:function(){},gone:function(){},pair:function(){},name:function(){},tz:function(){}};
 var uBtn,navA,uMenu,acct,del;
+/* запрос окна: обрыв сети (reject у fetch) помечается .net; любая другая ошибка в обработчике — ошибка страницы, а не «нет связи» */
+var NET='Нет связи с сервером',BUG='Ошибка на странице. Обновите её и попробуйте ещё раз.';
+function req(m,u,b){return api(m,u,b).catch(function(e){var x=new Error('network');x.net=true;throw x})}
+function fail(e){if(e&&e.net)return NET;try{console.error(e)}catch(_){}return BUG}
 
 /* ---------- имя в шапке ---------- */
 function label(){return A.name||DEF}
@@ -77,7 +81,7 @@ function focusBtn(a){var b=acct.querySelector('[data-a="'+a+'"]');if(b)b.focus()
 
 function openSettings(){var g=++A.gen;A.me=null;A.edit=false;A.busy=false;pairReset();
   acct.innerHTML=head()+'<p class="mut" role="status">Загрузка…</p>';if(!acct.open)acct.showModal();
-  api('POST','/api/auth',{action:'me'}).then(function(r){return r.json().catch(function(){return null}).then(function(j){
+  req('POST','/api/auth',{action:'me'}).then(function(r){return r.json().catch(function(){return null}).then(function(j){
     if(g!==A.gen||!acct.open)return;
     if(r.status===401){authFail();return}
     if(!r.ok||!j||typeof j.id!=='string'){acct.innerHTML=head()+'<p class="err" role="alert">Не удалось загрузить данные аккаунта. Попробуйте позже.</p>';return}
@@ -89,19 +93,19 @@ function openSettings(){var g=++A.gen;A.me=null;A.edit=false;A.busy=false;pairRe
     render();
     /* соединённый аккаунт: если выбор сетей Wi-Fi не сделан, в строке «Соединить аккаунты» появляется «Выбрать» */
     if(pr.linked)wifiPairState().then(function(s){if(g!==A.gen||!acct.open||!A.me||!A.me.partner.linked)return;A.wfp=s;if(s&&!A.edit)render()})})
-  }).catch(function(){if(g===A.gen&&acct.open)acct.innerHTML=head()+'<p class="err" role="alert">Нет связи с сервером</p>'})}
+  }).catch(function(e){var m=fail(e);if(g===A.gen&&acct.open)acct.innerHTML=head()+'<p class="err" role="alert">'+m+'</p>'})}
 
 function save(){var inp=$('acIn'),er=$('acErr');if(!inp||A.busy)return;
   var v=nrm(inp.value);
   if(v.length>NAME_MAX){er.textContent='Не больше '+NAME_MAX+' символов';return}
   if(/[\u0000-\u001f\u007f]/.test(v)){er.textContent='Уберите служебные символы';return}
   A.busy=true;er.textContent='';var g=A.gen;
-  api('POST','/api/auth',{action:'rename',name:v}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+  req('POST','/api/auth',{action:'rename',name:v}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
     A.busy=false;if(g!==A.gen)return;
     if(r.status===401){authFail();return}
     if(!r.ok||typeof j.name!=='string'){var e2=$('acErr');if(e2)e2.textContent=j.error||'Не получилось сохранить. Попробуйте позже.';return}
     accSetName(j.name);A.edit=false;render();focusBtn('rename');cb.name()})
-  }).catch(function(){A.busy=false;var e3=$('acErr');if(g===A.gen&&e3)e3.textContent='Нет связи с сервером'})}
+  }).catch(function(e){A.busy=false;var m=fail(e),e3=$('acErr');if(g===A.gen&&e3)e3.textContent=m})}
 
 /* смена пояса: ответ применяется, даже если окно уже закрыли (пояс на сервере сменился: сайт должен пересчитаться) */
 function setTz(tz){if(A.busy||!A.me)return;
@@ -115,11 +119,11 @@ function focusId(id){var e=$(id);if(e&&!e.disabled)e.focus()}
 function unlink(){
   dlgConfirm('Отвязать Telegram? Напоминания перестанут приходить, пока не привяжете снова.').then(function(ok){
     if(!ok||!A.me)return;var g=A.gen;A.busy=true;
-    api('DELETE','/api/tglink').then(function(r){A.busy=false;if(g!==A.gen)return;
+    req('DELETE','/api/tglink').then(function(r){A.busy=false;if(g!==A.gen)return;
       if(r.status===401){authFail();return}
       if(!r.ok){dlgAlert('Не получилось отвязать. Попробуйте позже.');return}
       A.me.tg=null;render();cb.tg()
-    }).catch(function(){A.busy=false;if(g===A.gen)dlgAlert('Нет связи с сервером')})})}
+    }).catch(function(e){A.busy=false;var m=fail(e);if(g===A.gen)dlgAlert(m)})})}
 
 /* ---------- соединение аккаунтов: «Поделиться» и «Разорвать» ---------- */
 /* меню «Поделиться» только на телефоне (основной указатель — палец), на компьютере ссылка идёт в буфер */
@@ -136,21 +140,21 @@ function sendLink(url){var g=A.gen;
 function share(){
   if(A.link){sendLink(A.link);return}
   A.busy=true;var g=A.gen;
-  api('POST','/api/auth',{action:'pair-link'}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+  req('POST','/api/auth',{action:'pair-link'}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
     A.busy=false;if(g!==A.gen)return;
     if(r.status===401){authFail();return}
     if(r.status===409&&j.code==='paired'){openSettings();return}
     if(!r.ok||typeof j.token!=='string'||!TOKEN.test(j.token)){pairShown('',j.error||'Не получилось создать ссылку. Попробуйте позже.');return}
     A.link=location.origin+'/?join='+j.token;sendLink(A.link)})
-  }).catch(function(){A.busy=false;if(g===A.gen)pairShown('','Нет связи с сервером')})}
+  }).catch(function(e){A.busy=false;var m=fail(e);if(g===A.gen)pairShown('',m)})}
 function drop(){
   dlgConfirm('Разорвать связь с аккаунтом «'+pname()+'»? Вы перестанете видеть данные друг друга. Общие напоминания будут удалены у обоих; личные останутся.').then(function(ok){
     if(!ok||!A.me||A.busy)return;var g=A.gen;A.busy=true;
-    api('POST','/api/auth',{action:'pair-drop'}).then(function(r){A.busy=false;if(g!==A.gen)return;
+    req('POST','/api/auth',{action:'pair-drop'}).then(function(r){A.busy=false;if(g!==A.gen)return;
       if(r.status===401){authFail();return}
       if(!r.ok){A.perr='Не получилось разорвать связь. Попробуйте позже.';render();focusBtn('pdrop');return}
       A.me.partner={linked:false};pairReset();render();focusBtn('share');cb.pair()
-    }).catch(function(){A.busy=false;if(g===A.gen){A.perr='Нет связи с сервером';render();focusBtn('pdrop')}})})}
+    }).catch(function(e){A.busy=false;var m=fail(e);if(g===A.gen){A.perr=m;render();focusBtn('pdrop')}})})}
 
 function pickWifi(){var s=A.wfp;if(!s)return;
   wifiChoose(s,pname(),function(){A.wfp=null;if(A.me&&acct.open){render();focusBtn('pdrop')}})}
@@ -180,12 +184,12 @@ function openDel(){
 function delOk(){var i=$('delIn');return !!i&&nrm(i.value).toLowerCase()===WORD}
 function doDelete(){var er=$('delErr'),go=$('delGo');if(A.busy||!delOk())return;
   A.busy=true;go.disabled=true;er.textContent='';
-  api('POST','/api/auth',{action:'delete',confirm:WORD}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
+  req('POST','/api/auth',{action:'delete',confirm:WORD}).then(function(r){return r.json().catch(function(){return{}}).then(function(j){
     A.busy=false;
     if(r.status===401){del.close();authFail();return}
     if(!r.ok){er.textContent=j.error||'Не получилось удалить. Попробуйте позже.';go.disabled=!delOk();return}
     del.close();if(acct.open)acct.close();cb.gone()})
-  }).catch(function(){A.busy=false;er.textContent='Нет связи с сервером';go.disabled=!delOk()})}
+  }).catch(function(e){A.busy=false;er.textContent=fail(e);go.disabled=!delOk()})}
 
 /* клик по затемнению (за пределами окна) закрывает окно */
 function backdrop(d){d.addEventListener('click',function(e){if(e.target!==d)return;var r=d.getBoundingClientRect();

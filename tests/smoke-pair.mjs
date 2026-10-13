@@ -170,7 +170,7 @@ export async function pair({ stand, browser, fail }) {
         await closeSettings();
         partner = { linked: true, name: '' };
         await openSettings();
-        check((await text('#acctDlg .ar:nth-of-type(5) .vn')).startsWith('Helper User'), 'пустое имя партнёра: «Helper User»');
+        check((await text('#acctDlg .ar.pr .vn')).startsWith('Helper User'), 'пустое имя партнёра: «Helper User»');
         await closeSettings();
         partner = { linked: false };
 
