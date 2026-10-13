@@ -57,7 +57,7 @@
 | `BACKUP_KEY` | ключ шифрования резервных копий: 64 шестнадцатеричных символа; хранить в менеджере паролей |
 | `BLOB_READ_WRITE_TOKEN` | выдаёт Vercel при подключении Blob; читает `@vercel/blob` (`api/_backup.js`), `api/cron.js` смотрит только наличие |
 | `BACKUP_DIR` | необязательно: папка копий в Blob (по умолчанию `backup`); нужна `tests/live-blob.mjs` и `scripts/restore-backup.mjs`, на боевом сайте не задавать |
-| `AUTH_USER`, `AUTH_HASH`, `WIFI_SSID`, `WIFI_PASSWORD`, `WIFI_SECURITY`, `WIFI_HIDDEN` | **код не читает** (бот берёт документ привязанного аккаунта, сеть Wi-Fi вводится на сайте); если заданы, удалить из Vercel после подтверждения владельцем. `WIFI_*` в Vercel нет (по словам владельца, 2026-10-04) |
+| — | `AUTH_USER`, `AUTH_HASH`, `WIFI_*` код не читает; удалены из Vercel (по словам владельца, 2026-10-13, `notes/VERIFIED.md`); заново не задавать |
 
 ## Служебные вызовы (PowerShell; `$secret` задать заново в каждом окне)
 ```
