@@ -22,4 +22,4 @@
 
 ## Концы строк
 
-CRLF у `index.html`, `style.css`, `manifest.webmanifest`, `logos/sber.svg`, `logos/vtb.svg`, `notes/account.md`, `tests/auth.test.mjs`, `tests/fixtures.mjs`, `tests/smoke.mjs`; остальные текстовые файлы LF. При правке сохранять.
+Все текстовые файлы LF: `.gitattributes` (`* text=auto eol=lf`) не даёт Git на Windows превращать их в CRLF (это убрало предупреждение GitHub Desktop «LF will be converted to CRLF»); CRLF в файлы не вносить.

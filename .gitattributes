@@ -1,0 +1,6 @@
+# Концы строк: в репозитории и в рабочей папке везде LF (GitHub Desktop на Windows не превращает их в CRLF и не предупреждает).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.jpg binary
+*.woff2 binary

@@ -6,3 +6,4 @@ tests/
 scripts/
 exports/
 node_modules/
+.gitattributes
