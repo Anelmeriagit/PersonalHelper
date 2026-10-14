@@ -83,8 +83,8 @@ PWA «Personal Helper»: публичное мультипользователь
 - Журнал: до трёх строк (дата, что изменено, файлы; «не проверялось», если важно после деплоя), хранятся последние 5, остальное — в `git log`. Непроверенное — в `notes/CHECKLIST.md`.
 
 ## Журнал (последние 5; новые записи в конец)
-- 2026-10-14: блок «Telegram» на «Напоминаниях»: `wait` в разметке (не мигает большим), заголовок и текст по центру, нет пустого места под кнопкой, предупреждение `#remWarn` той же ширины и по центру: `index.html`, конец `style.css`, `tests/smoke-tg.mjs`; `notes/reminders.md`, `notes/CHECKLIST.md`, `notes/VERIFIED.md`. Не проверялось: телефон и боевой сайт.
 - 2026-10-14: закрыт пункт «Блок Telegram» (вёрстка подтверждена владельцем); записано, что коммит и деплой владелец делает через GitHub Desktop: `PROJECT_NOTES.md`, `notes/DEPLOY.md`, `notes/CHECKLIST.md`, `notes/VERIFIED.md`.
 - 2026-10-14: концы строк: добавлен `.gitattributes` (`* text=auto eol=lf`), девять файлов с CRLF переведены в LF (в репозитории они и так были LF), `.gitattributes` в `.vercelignore`: `.gitattributes`, `.vercelignore`, `notes/tests.md`. GitHub Desktop без предупреждения (по словам владельца).
 - 2026-10-14: подтверждены шапка, меню «Аккаунт» и вид на ПК; в чек-листе остались формы напоминаний: `notes/CHECKLIST.md`, `notes/VERIFIED.md`.
 - 2026-10-14: подтверждены формы напоминаний на телефоне; пункт закрыт: `notes/CHECKLIST.md`, `notes/VERIFIED.md`.
+- 2026-10-14: подтверждён Wi-Fi на Android; в чек-листе остался QR на iPhone (нет устройства): `notes/CHECKLIST.md`, `notes/VERIFIED.md`.
