@@ -447,3 +447,10 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 #stage.pr{max-width:1100px}
 #stage.pr.two{max-width:1360px}
 @container (min-width:840px){.pair.p3{grid-template-columns:repeat(3,minmax(0,1fr))}.pair.p3 .pcv{grid-column:auto}}
+
+/* 2026-10-14: блок Telegram и предупреждение «не привязан»: по центру, без пустого места под кнопкой и справа; до ответа сервера блок скрыт уже в разметке (класс wait) */
+.tgb .et,.tgb .tgn{text-align:center}
+.tgb .acts{justify-content:center}
+.tgb .rmsg:empty{display:none}
+#remWarn{max-width:640px;margin-inline:auto;text-align:center}
+#remWarn p{margin:0}

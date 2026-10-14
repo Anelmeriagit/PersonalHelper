@@ -103,6 +103,18 @@ export async function tg({ stand, browser, fail }) {
         await page.waitForSelector('#remWarn:not([hidden])', { timeout: 5000 });
         check((await page.locator('#tgBox.ok').count()) === 0 && await page.locator('#tgH').isVisible(), 'не привязан: обычный блок с заголовком');
         check(st.dels === 0, 'на странице напоминаний DELETE не отправляется');
+        // вёрстка: заголовок и текст по центру, под кнопкой нет пустого места, предупреждение той же ширины, что и блок
+        const lay = await page.evaluate(() => {
+          const r = (s) => document.querySelector(s).getBoundingClientRect();
+          const box = r('#tgBox'), btn = r('#tgBody .addbtn'), h = r('#tgH'), warn = r('#remWarn'), wp = r('#remWarn p');
+          const cx = (x) => x.left + x.width / 2;
+          return { gap: box.bottom - btn.bottom, hc: Math.abs(cx(h) - cx(box)), ww: Math.abs(warn.width - box.width), wc: Math.abs(cx(warn) - cx(box)),
+            pad: Math.abs((wp.top - warn.top) - (warn.bottom - wp.bottom)), ta: getComputedStyle(document.getElementById('tgH')).textAlign };
+        });
+        check(lay.gap <= 24, 'не привязан: под кнопкой пустое место ' + Math.round(lay.gap) + ' px');
+        check(lay.ta === 'center', 'не привязан: заголовок «Telegram» не по центру');
+        check(lay.ww <= 1 && lay.wc <= 1, 'предупреждение не той же ширины и не по центру, что блок Telegram');
+        check(lay.pad <= 2, 'предупреждение: текст не по центру по вертикали (разница полей ' + Math.round(lay.pad) + ' px)');
         await noHScroll('после отвязки');
 
         // 9. имя из ответа сервера в блоке не показывается (и не создаёт разметку)
@@ -124,6 +136,15 @@ export async function tg({ stand, browser, fail }) {
         check(await page.locator('#tgBox').isVisible() && (await page.locator('#tgBox').boundingBox()).width <= 421, 'возврат: блок сразу компактный');
         st.delay = 0;
         await noHScroll('возврат на «Напоминания»');
+
+        // 9в. первая загрузка и обновление страницы при привязанном Telegram: до ответа сервера блока не видно (в разметке уже стоит wait)
+        st.delay = 1200;
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(500);
+        check(await page.locator('#tgBox').isHidden(), 'загрузка: до ответа сервера блок Telegram скрыт');
+        await page.waitForSelector('#tgBox.ok #tgBody .tgn', { timeout: 5000 });
+        check((await page.locator('#tgBox').boundingBox()).width <= 421, 'загрузка: блок сразу компактный');
+        st.delay = 0;
 
         // 10. 401 от /api/tglink: сессии нет, сайт открывается гостем
         st.auth = true;
