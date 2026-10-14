@@ -5,10 +5,10 @@ import {api,S,authFail,fresh,stamp} from '../api.js';
 import {dlgAlert,dlgConfirm,dlgPrompt} from '../dialogs.js';
 import {guestGetCb,guestSetCb} from '../local.js';
 import {C,empty,blank,list,setPart,getPart,peek,norm,normPartner,allCats,eachRow,prune,pruneOf,partName,changedParts,hasUnsaved} from './state.js';
-import {render,syncView} from './view.js';
+import {render} from './view.js';
 
 export {hasUnsaved};
-var stage=$('stage'),st=$('st'),editBtn=$('editBtn'),warn=$('warn'),vsw=$('vsw'),timer=0,loading=false;
+var stage=$('stage'),st=$('st'),editBtn=$('editBtn'),warn=$('warn'),timer=0,loading=false;
 /* Пауза между правкой и сохранением: чем она длиннее, тем меньше записей в Redis (каждая запись = чтение + запись). При уходе со вкладки сохраняется сразу (leaving) */
 var SAVE_MS=1800;
 
@@ -145,5 +145,4 @@ export function initCashback(){
     if(a==='delb'){l.splice(i,1);if(!l.length)l.push(blank());parts=[key]}
     save(parts);render()});
   window.addEventListener('beforeunload',function(e){if(C.edit&&changedParts().length){e.preventDefault();e.returnValue=''}});
-  vsw.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;C.compact=b.dataset.v==='compact';lset('view',C.compact?'compact':'blocks');render()});
 }

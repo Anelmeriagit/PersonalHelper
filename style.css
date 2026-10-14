@@ -57,9 +57,6 @@ main{padding:1.5rem 0 4rem}
 .row{display:flex;justify-content:space-between;gap:.5rem;padding:.55rem 0;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
 .pct{font-weight:700;color:var(--accent);white-space:nowrap}
-.row.best{background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:8px;padding-inline:.5rem;margin-inline:-.5rem}
-.row.good{background:color-mix(in srgb,#e6b800 18%,transparent);border-radius:8px;padding-inline:.5rem;margin-inline:-.5rem}
-.row.dim{opacity:.7}
 select,input{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:.7rem .8rem;font:inherit;min-height:46px}
 select{appearance:none;-webkit-appearance:none;padding-right:2.4rem;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%235d6673' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .8rem center;background-size:12px 8px;text-overflow:ellipsis}
 :root[data-theme="dark"] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%2398a2b0' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")}
@@ -180,27 +177,13 @@ dialog input{margin-bottom:1rem}
 dialog .acts{justify-content:flex-end;margin-top:0}
 dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 
-/* --- компактный вид --- */
-.vsw{display:flex;width:max-content;margin:0 auto 1.25rem;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--surface)}
-.vsw button{border:0;background:none;color:var(--muted);font:inherit;font-size:.85rem;padding:.4rem .9rem;cursor:pointer}
-.vsw button[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);font-weight:600}
-.cmp{max-width:640px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:.25rem .9rem}
-.cc{display:flex;gap:.75rem;align-items:flex-start;padding:.6rem 0;border-bottom:1px solid var(--line)}
-.cc:last-child{border-bottom:0}
-.cn{flex:0 1 34%;min-width:0;font-weight:600;overflow-wrap:anywhere;padding-top:.25rem}
-.cgs{flex:1;min-width:0;display:flex;flex-direction:column;gap:.3rem}
-.cg{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem .6rem;padding:.2rem .5rem;border-radius:8px}
-.cg.best{background:color-mix(in srgb,var(--accent) 14%,transparent)}
-.cg.good{background:color-mix(in srgb,#e6b800 18%,transparent)}
-.cg.dim{opacity:.7}
-.cg .pct{margin-left:auto}
+/* --- значки банков (сравнение) --- */
 .cw{display:inline-flex;align-items:center;gap:5px}
 .cl{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:7px;background:var(--line);color:var(--text);font-size:.75rem;font-weight:700;line-height:1}
 .mb{flex:none;display:inline-flex;align-items:center}
 .mb img{width:22px;height:22px;display:block;border-radius:5px}
 .mb b{display:none;font-size:.7rem;color:var(--f,var(--text))}
 .mb.nologo b{display:block}
-@media(max-width:520px){.cc{flex-direction:column;gap:.1rem}.cn{flex:none;padding-top:.1rem}.cgs{width:100%}}
 
 /* ---------- Wi-Fi ---------- */
 .wprint{display:none}
@@ -344,7 +327,7 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 /* узкий экран: в шапке у гостя «Войти» (полная подпись в aria-label), иначе шапка шире экрана; в предложениях гостю подпись полная */
 @media(max-width:480px){.gbtn .gx{display:none}.gst .gbtn .gx{display:inline}}
 
-/* --- соединённые аккаунты: кэшбэк двух людей в две колонки (свой слева, партнёра справа, только просмотр) --- */
+/* --- соединённые аккаунты: кэшбэк двух людей в две колонки (свой слева, партнёра справа, только просмотр) и третья колонка «Сравнение» --- */
 .pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem;align-items:start}
 .pc{min-width:0}
 .pn{margin:0 0 .6rem;font-size:1.05rem;text-align:center;overflow-wrap:anywhere}
@@ -354,11 +337,7 @@ dialog .done{width:auto;margin:0;padding:.65rem 1.2rem}
 .pc .body{padding:.5rem}
 .pc .row{font-size:.8rem;gap:.3rem}
 .pc .row span:first-child{min-width:0;overflow-wrap:break-word}
-.pc .cmp{padding:.15rem .6rem}
-.pc .cc{flex-direction:column;gap:.1rem}
-.pc .cn{flex:none;padding-top:.1rem;font-size:.85rem;overflow-wrap:break-word}
-.pc .cgs{width:100%}
-@media(min-width:640px){.pair{gap:1.25rem}.pn{font-size:1.2rem}.pc .head{padding:.7rem .8rem;gap:.6rem}.pc .head h4{font-size:1.05rem}.pc .body{padding:.9rem}.pc .row{font-size:1rem;gap:.5rem}.pc .cmp{padding:.25rem .9rem}.pc .cn{font-size:1rem}}
+@media(min-width:640px){.pair{gap:1.25rem}.pn{font-size:1.2rem}.pc .head{padding:.7rem .8rem;gap:.6rem}.pc .head h4{font-size:1.05rem}.pc .body{padding:.9rem}.pc .row{font-size:1rem;gap:.5rem}}
 @media(min-width:1100px){.rcols.r3{grid-template-columns:repeat(2,minmax(0,1fr));width:min(100vw - 2rem,1320px);position:relative;left:50%;transform:translateX(-50%)}}
 .rgrp{min-width:0;padding:1rem .85rem;border:1.5px solid var(--line);border-radius:16px}
 .rgt{margin:0 0 .75rem;font-size:1.05rem;text-align:center}
@@ -406,7 +385,6 @@ header .bar.wrap{width:min(100% - 2rem,1100px)}
 /* часть 3 (2026-10-10): плавная смена раздела, уже строка компактного кэшбэка */
 main:not([hidden]){animation:pgin .28s ease-out backwards}
 @keyframes pgin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.cmp{max-width:460px}
 .slots.hrs{display:grid;grid-template-columns:repeat(auto-fill,minmax(4.1rem,1fr));gap:.4rem}
 .slots.hrs .chip{padding:.4rem .2rem;text-align:center;font-variant-numeric:tabular-nums}
 /* Напоминания (2026-10-11): время отправки — прокручиваемый столбец часов и столбец минут 00/30 */
@@ -449,3 +427,23 @@ main:not([hidden]){animation:pgin .28s ease-out backwards}
 .ar select{margin-bottom:.4rem}
 /* 2026-10-13: блок Telegram скрыт, пока неизвестно, привязан ли он (иначе мигал большим и сжимался) */
 .tgb.wait{display:none}
+/* Кэшбэк соединённых аккаунтов, колонка «Сравнение» (2026-10-13): категория и лучший процент у каждого. Три колонки, когда ширины хватает (контейнер ≥ 840 px), иначе сравнение под двумя колонками */
+.vs{max-width:720px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:.25rem .6rem}
+.vh,.vr{display:grid;grid-template-columns:minmax(7.2rem,1.3fr) minmax(0,1fr) minmax(0,1fr);gap:.4rem;align-items:center}
+.vh{padding:.6rem 0;border-bottom:1px solid var(--line);font-weight:700;font-size:.9rem;text-align:center}
+.vh>div{min-width:0;overflow-wrap:anywhere}
+.vh>div:first-child{text-align:left;color:var(--muted);font-weight:600;font-size:.8rem}
+.vr{padding:.5rem 0;border-bottom:1px solid var(--line)}
+.vr:last-child{border-bottom:0}
+.vk{min-width:0;font-weight:600;font-size:.8rem;overflow-wrap:break-word;hyphens:auto}
+.vc{min-width:0;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:.15rem .4rem;padding:.3rem .25rem;border-radius:8px;text-align:center}
+.vc.best{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.vc.dim{opacity:.7}
+.vn{color:var(--muted)}
+@media(min-width:640px){.vs{padding:.25rem 1rem}.vh,.vr{grid-template-columns:minmax(8rem,1.3fr) minmax(0,1fr) minmax(0,1fr);gap:.5rem}.vh{font-size:1rem}.vk{font-size:.9rem}}
+.pairw{container-type:inline-size}
+.pcv{grid-column:1/-1}
+.pc .vs{max-width:none}
+#stage.pr{max-width:1100px}
+#stage.pr.two{max-width:1360px}
+@container (min-width:840px){.pair.p3{grid-template-columns:repeat(3,minmax(0,1fr))}.pair.p3 .pcv{grid-column:auto}}

@@ -2,33 +2,25 @@
 import {$,esc,fp,cls,opts,IC,ls} from '../util.js';
 import {label} from '../time.js';
 import {accName} from '../account.js';
-import {BANKS,PCTS,C,peek,ppeek,list,blank,allCats,hasAny,hasAnyL} from './state.js';
+import {BANKS,PCTS,C,peek,ppeek,list,blank,allCats,hasAny} from './state.js';
 
-var stage=$('stage'),months=$('months'),pNext=$('pNext'),prompt_=$('prompt'),vsw=$('vsw');
+var stage=$('stage'),months=$('months'),pNext=$('pNext'),prompt_=$('prompt');
 
 function bn(id){return BANKS[id]?BANKS[id].n:String(id||'')}
 function badge(id){var b=BANKS[id];if(!b)return '';
   return '<span class="badge" aria-hidden="true"'+(b.f?' style="--f:'+b.f+'"':'')+'><img src="logos/'+id+'.svg" alt=""><b>'+b.m+'</b></span>'}
-/* подсветка в категории, где заполнено несколько банков: лучший процент — best, остальные — dim */
-function hl(l){var g={},out={};
-  l.forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;
-    (g[i.cat]=g[i.cat]||[]).push({bank:b.bank,v:parseFloat(i.pct)})})});
-  Object.keys(g).forEach(function(c){var e=g[c];if(e.length<2)return;
-    var M=Math.max.apply(null,e.map(function(r){return r.v}));
-    e.forEach(function(r){out[r.bank+'|'+c]=r.v===M?' best':' dim'})});
-  return out}
 
 function colHtml(mo,ro,lst){
   var l=lst||peek(mo),h='<div class="col">';
   if(!C.edit||ro){
-    var hm=hl(l),shown=l.filter(function(b){return b.items.length});
+    var shown=l.filter(function(b){return b.items.length});
     if(!shown.length){
       if(ro)return h+'<p class="empty">Пусто</p></div>';
       var cp=mo===C.ck.nxt&&hasAny(C.ck.cur)?'<button class="copybtn" data-m="copy" type="button">Скопировать из текущего месяца</button>':'';
       return h+'<div class="emptybox"><button class="addbtn" data-act="add" type="button">+ Добавить</button>'+cp+'</div></div>'}
     return h+shown.map(function(b){return '<section class="blk"><div class="head">'+badge(b.bank)+'<h4>'+esc(bn(b.bank))+'</h4></div><div class="body">'+
-      b.items.map(function(i){var c=hm[b.bank+'|'+i.cat]||'';
-        return '<div class="row'+c+'"><span>'+esc(i.cat)+'</span><span class="pct">'+fp(i.pct)+'%</span></div>'}).join('')+'</div></section>'}).join('')+'</div>';
+      b.items.map(function(i){
+        return '<div class="row"><span>'+esc(i.cat)+'</span><span class="pct">'+fp(i.pct)+'%</span></div>'}).join('')+'</div></section>'}).join('')+'</div>';
   }
   var used=l.map(function(b){return b.bank}),ids=Object.keys(BANKS).map(function(k){return{id:k,t:BANKS[k].n}});
   return h+l.map(function(b,i){var d=' data-mo="'+mo+'" data-b="'+i+'"',last=i===l.length-1;
@@ -40,29 +32,32 @@ function colHtml(mo,ro,lst){
       '<div class="acts"><button class="btn" data-act="addr"'+d+' type="button">+ Кэшбэк</button>'+
       (last?'<button class="btn" data-act="addb" data-mo="'+mo+'" type="button"'+(l.length>=Object.keys(BANKS).length?' disabled':'')+'>+ Банк</button>':'')+'</div></div></section>'}).join('')+'</div>';
 }
-/* ---------- компактный вид: категории по алфавиту, под каждой «банки + процент» ---------- */
+/* ---------- значки банков и сравнение двух людей ---------- */
 function mini(id){var b=BANKS[id];if(!b)return '';
   return '<span class="mb" title="'+esc(b.n)+'"'+(b.f?' style="--f:'+b.f+'"':'')+'><img src="logos/'+esc(id)+'.svg" alt="'+esc(b.n)+'"><b>'+esc(b.m)+'</b></span>'}
-function compactHtml(l){var g={};
-  l.forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;
-    (g[i.cat]=g[i.cat]||[]).push({bank:b.bank,v:parseFloat(i.pct)})})});
-  var cats=Object.keys(g).sort(function(a,b){return a.localeCompare(b,'ru')});
-  var rowsOf=cats.map(function(c){var M=-1,gr={};
-    g[c].forEach(function(r){M=Math.max(M,r.v);(gr[r.v]=gr[r.v]||{v:r.v,banks:[]}).banks.push(r.bank)});
-    var multi=g[c].length>1;
-    var rows=Object.keys(gr).map(function(k){return gr[k]}).sort(function(a,b){return b.v-a.v});
-    rows.forEach(function(q){q.cl=multi?(q.v===M?' best':' dim'):''});
-    return {c:c,rows:rows}});
-  return '<div class="cmp">'+rowsOf.map(function(o){
-    return '<div class="cc"><div class="cn">'+esc(o.c)+'</div><div class="cgs">'+o.rows.map(function(q){
-      return '<div class="cg'+q.cl+'"><span class="cw">'+q.banks.map(mini).join('')+'</span><span class="pct">'+fp(q.v)+'%</span></div>'}).join('')+'</div></div>'}).join('')+'</div>'}
-/* одна колонка человека: компактный вид или блоки; l — список банков месяца этого человека */
-function side(mo,ro,l){if(C.compact&&(!C.edit||ro)&&hasAnyL(l))return compactHtml(l);
-  return '<div class="cols">'+colHtml(mo,ro,l)+'</div>'}
-/* соединённые аккаунты: слева свой кэшбэк (имя из настроек), справа партнёра, только на просмотр; в режиме правки партнёр скрыт, правка идёт на всю ширину */
+/* «Сравнение» (соединённые аккаунты, третья колонка): по каждой категории лучший процент у каждого и банки с ним; у кого процент выше — best, у другого dim,
+   при равенстве у обоих best, запись только у одного — без подсветки. Подсветка в кэшбэке есть только здесь. Первая колонка своя (подпись accName()), вторая партнёра */
+function topOf(l){var g={};
+  l.forEach(function(b){b.items.forEach(function(i){if(!i.cat||!i.pct)return;var v=parseFloat(i.pct),e=g[i.cat];
+    if(!e||v>e.v)g[i.cat]={v:v,banks:[b.bank]};else if(v===e.v)e.banks.push(b.bank)})});
+  return g}
+function vcell(e,cl){return '<div class="vc'+cl+'" role="cell">'+(e?'<span class="pct">'+fp(e.v)+'%</span><span class="cw">'+e.banks.map(mini).join('')+'</span>':'<span class="vn">—</span>')+'</div>'}
+function vsHtml(mo){var a=topOf(peek(mo)),b=topOf(ppeek(mo));
+  var cats=Object.keys(a).concat(Object.keys(b).filter(function(c){return !a[c]})).sort(function(x,y){return x.localeCompare(y,'ru')});
+  if(!cats.length)return '';
+  return '<div class="vs" role="table"><div class="vh" role="row"><div role="columnheader">Категория</div><div role="columnheader">'+esc(accName())+'</div><div role="columnheader">'+esc(C.partner.name)+'</div></div>'+
+    cats.map(function(c){var x=a[c],y=b[c],cx='',cy='';
+      if(x&&y){cx=x.v>=y.v?' best':' dim';cy=y.v>=x.v?' best':' dim'}
+      return '<div class="vr" role="row"><div class="vk" role="rowheader">'+esc(c)+'</div>'+vcell(x,cx)+vcell(y,cy)+'</div>'}).join('')+'</div>'}
+/* колонка человека: блоки банков за месяц; l — список банков месяца этого человека */
+function side(mo,ro,l){return '<div class="cols">'+colHtml(mo,ro,l)+'</div>'}
+/* соединённые аккаунты: слева свой кэшбэк (имя из настроек), справа партнёра, только на просмотр, третья колонка — «Сравнение» (если у кого-то есть категории);
+   в режиме правки партнёр скрыт, правка идёт на всю ширину */
 function colsHtml(mo,ro){
-  if(C.partner&&(!C.edit||ro))return '<div class="pair"><div class="pc"><h3 class="pn">'+esc(accName())+'</h3>'+side(mo,ro,peek(mo))+'</div>'+
-    '<div class="pc"><h3 class="pn">'+esc(C.partner.name)+'</h3>'+side(mo,true,ppeek(mo))+'</div></div>';
+  if(C.partner&&(!C.edit||ro)){var vs=vsHtml(mo);
+    return '<div class="pairw"><div class="pair'+(vs?' p3':'')+'"><div class="pc"><h3 class="pn">'+esc(accName())+'</h3>'+side(mo,ro,peek(mo))+'</div>'+
+      '<div class="pc"><h3 class="pn">'+esc(C.partner.name)+'</h3>'+side(mo,true,ppeek(mo))+'</div>'+
+      (vs?'<div class="pc pcv"><h3 class="pn">Сравнение</h3>'+vs+'</div>':'')+'</div></div>'}
   return side(mo,ro,peek(mo))}
 function histMonths(){var ms={};
   function add(d){Object.keys(d).forEach(function(mo){if(mo<C.ck.cur&&d[mo].some(function(b){return b.items.length}))ms[mo]=1})}
@@ -84,7 +79,7 @@ function view(){
 function ensureBlank(){[C.ck.cur].concat(C.showNext?[C.ck.nxt]:[]).forEach(function(mo){var l=list(mo);if(!l.length)l.push(blank())})}
 
 export function render(){
-  view();if(C.edit)ensureBlank();syncView();
+  view();if(C.edit)ensureBlank();stage.classList.toggle('pr',!!C.partner&&!C.edit);
   var a=document.activeElement,d=a&&a.dataset,key=d&&(d.k||d.act||d.h)?{k:d.k,act:d.act,h:d.h,mo:d.mo,b:d.b,r:d.r}:null,y=window.scrollY;
   $('tCur').textContent=label(C.ck.cur);$('tNext').textContent=label(C.ck.nxt);
   $('bCur').innerHTML=colsHtml(C.ck.cur);$('bNext').innerHTML=colsHtml(C.ck.nxt);
@@ -95,5 +90,3 @@ export function render(){
   if(key){var q='['+(key.k?'data-k="'+key.k+'"':key.act?'data-act="'+key.act+'"':'data-h="'+key.h+'"')+']'+(key.mo!==undefined?'[data-mo="'+key.mo+'"]':'')+(key.b!==undefined?'[data-b="'+key.b+'"]':'')+(key.r!==undefined?'[data-r="'+key.r+'"]':'');
     var n=stage.querySelector(q);if(n)n.focus({preventScroll:true})}
 }
-
-export function syncView(){vsw.hidden=C.edit;Array.prototype.forEach.call(vsw.querySelectorAll('button'),function(b){b.setAttribute('aria-pressed',String((b.dataset.v==='compact')===C.compact))})}

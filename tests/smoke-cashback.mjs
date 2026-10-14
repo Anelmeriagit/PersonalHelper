@@ -29,16 +29,9 @@ export async function cashback({ stand, browser, fail }) {
         check((await page.locator('#bCur .blk').count()) === 3, 'блоки: три банка из заглушки');
         const stageText = await page.locator('#stage').innerText();
         check(!/Жанна|Денис/.test(stageText), 'на странице кэшбэка нет имён Жанна/Денис');
-        check((await page.locator('#bCur .row.best').count()) === 1 && (await page.locator('#bCur .row.dim').count()) === 1, 'подсветка: в «Маркетплейсы» лучший 12% и приглушённый 5%');
+        check((await page.locator('#bCur .row.best, #bCur .row.dim, #bCur .vs').count()) === 0, 'в блоках одного человека подсветки и сравнения нет');
+        check((await page.locator('#vsw').count()) === 0, 'переключателя вида нет');
         await noHScroll('блоки');
-
-        await page.click('#vsw [data-v=compact]');
-        check((await page.locator('#bCur .cmp .cc').count()) === 3, 'компактно: три категории');
-        check((await page.locator('#bCur .cl').count()) === 0, 'компактно: нет букв Ж/Д');
-        check((await page.locator('#bCur .cg.best').count()) === 1 && (await page.locator('#bCur .cg.dim').count()) === 1, 'компактно: подсветка best/dim');
-        check(/12%/.test(await page.locator('#bCur .cmp').innerText()), 'компактно: проценты видны');
-        await noHScroll('компактно');
-        await page.click('#vsw [data-v=blocks]');
 
         await page.click('#editBtn');
         check((await page.locator('#bCur select[data-k=bank]').count()) === 3, 'правка: три выбора банка');

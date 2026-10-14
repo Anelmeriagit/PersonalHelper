@@ -1,6 +1,6 @@
 /* Кэшбэк: справочники, состояние и чистые функции над данными.
    Состояние одно на весь раздел и лежит в объекте C, чтобы его могли читать и разметка, и логика. */
-import {ls,nrm} from '../util.js';
+import {nrm} from '../util.js';
 import {clock,label} from '../time.js';
 
 export var BANKS={
@@ -12,7 +12,7 @@ export var CATS=['АЗС','Авто и автосервис','Активный �
 export var PCTS=['0.5','1','1.5','2','3','4','5','6','7','8','10','12','15','20','25','30'];
 
 export function empty(){return{months:{},custom:[]}}
-export var C={data:empty(),rev:{},dirty:{},edit:false,flight:false,conflict:null,showNext:false,ck:clock(),histOpen:false,histMo:null,hCache:'',snap:'',dirtyBefore:{},compact:ls('view')==='compact',partner:null};
+export var C={data:empty(),rev:{},dirty:{},edit:false,flight:false,conflict:null,showNext:false,ck:clock(),histOpen:false,histMo:null,hCache:'',snap:'',dirtyBefore:{},partner:null};
 
 export function blank(){return{bank:'',items:[{cat:'',pct:''}]}}
 export function peek(mo){return C.data.months[mo]||[]}

@@ -1,5 +1,5 @@
 // Сценарий smoke.mjs --only=paircb: «Соединить аккаунты», часть 3: кэшбэк партнёра в две колонки, только на просмотр.
-// Проверяет: две колонки с именами (своё слева, имя партнёра с HTML экранируется), у партнёра нет элементов правки, компактный вид,
+// Проверяет: две колонки с именами (своё слева, имя партнёра с HTML экранируется), у партнёра нет элементов правки, третья колонка «Сравнение»,
 // режим правки без колонки партнёра и запись только своих частей, разрыв из настроек, соединение по ссылке, обновление при возврате на вкладку
 // (партнёр сменил данные, разорвал связь), нет партнёра в ответе (гость и старый сервер). Общее: smoke-lib.mjs, fixtures.mjs.
 import { SCHEMES, VIEWPORTS } from './smoke-lib.mjs';
@@ -66,25 +66,17 @@ export async function paircb({ stand, browser, fail }) {
         await page.waitForSelector('#bCur .pair', { timeout: 5000 });
 
         // ---------- блоки: две колонки с именами ----------
-        check((await cnt('#bCur .pair .pc')) === 2, 'две колонки');
+        check((await cnt('#bCur .pair .pc')) === 3 && (await cnt('#bCur .pair .pcv')) === 1, 'две колонки людей и третья «Сравнение»');
         const names = await page.locator('#bCur .pn').allInnerTexts();
         check(names[0] === 'Helper User' && names[1] === PNAME, 'имена в заголовках (своё слева, имя с HTML как текст): ' + JSON.stringify(names));
         check((await cnt('#bCur .pn b')) === 0, 'имя партнёра экранировано: тегов в заголовке нет');
         check((await cnt('#bCur .pc:nth-child(1) .blk')) === 3 && (await cnt('#bCur .pc:nth-child(2) .blk')) === 2, 'банки: у меня 3, у партнёра 2');
         check((await cnt('#bCur .pc:nth-child(2) select, #bCur .pc:nth-child(2) button, #bCur .pc:nth-child(2) input')) === 0, 'у партнёра нет элементов правки');
-        const own1 = await page.locator('#bCur .pc:nth-child(1) .row.best').count();
-        check(own1 === 1, 'подсветка считается внутри колонки человека: у меня один best');
-        check((await cnt('#bCur .pc:nth-child(2) .row.best, #bCur .pc:nth-child(2) .row.dim')) === 0, 'у партнёра «Маркетплейсы» одна запись: без подсветки (мои банки в неё не входят)');
-        const bx = await page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#bCur .pc'), (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
+        check((await cnt('#bCur .pc:not(.pcv) .row.best, #bCur .pc:not(.pcv) .row.dim')) === 0, 'в блоках людей подсветки нет, она только в сравнении');
+        check((await cnt('#vsw')) === 0, 'переключателя вида нет');
+        const bx = await page.evaluate(() => Array.prototype.map.call(document.querySelectorAll('#bCur .pc:not(.pcv)'), (e) => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }));
         check(bx.length === 2 && bx[0][1] <= bx[1][0] + 1, 'колонки рядом, не перекрываются: ' + JSON.stringify(bx));
         await noHScroll('блоки');
-
-        // ---------- компактный вид ----------
-        await page.click('#vsw [data-v=compact]');
-        check((await cnt('#bCur .pc .cmp')) === 2, 'компактно: у каждого человека свой список');
-        check((await cnt('#bCur .pc:nth-child(2) .cc')) === 3, 'компактно: у партнёра три категории');
-        await noHScroll('компактно');
-        await page.click('#vsw [data-v=blocks]');
 
         // ---------- режим правки: партнёра нет, правка на всю ширину, в запись уходит только своё ----------
         await page.click('#editBtn');
