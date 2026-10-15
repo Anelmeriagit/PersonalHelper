@@ -27,6 +27,8 @@
 
 - [x] 2026-10-15 (по словам владельца, по скриншотам консоли): QStash: одно активное расписание (Active 1, Paused 0) на `/api/cron`, `Upstash-Cron` `*/10 * * * *` без `CRON_TZ`, метод POST, заголовок `Authorization` пересылается (`Upstash-Forward`), Retry 3; запуск 02:10 по времени консоли (ночью по Москве) доставлен со статусом 200 за 834 мс; `last` в `?dry=1` совпадает с этим запуском, `took_over:false`.
 
+- [x] 2026-10-15 (по словам владельца): cron-job.org: запасное задание `5,35 * * * *` на `/api/cron?role=backup`, GET, заголовок `Authorization`; ручной запуск отвечает 200 `{"skipped":"primary alive","role":"backup","took_over":false}`, `last` совпадает с запуском QStash (00:30 UTC). Часовой пояс сервиса не сверялся (минуты :05 и :35 от пояса не зависят).
+
 ## Резервная копия и скрипты
 - [x] 2026-10-06 (по словам владельца): `BACKUP_KEY` принят (`state:on`, `blob:true`); ошибка `state:error`/`config` была из-за негодного ключа, он создан заново; первая ручная копия `?backup=1` → `done`.
 - [x] 2026-10-06 (по словам владельца): `node tests/live-redis.mjs` и `node tests/live-blob.mjs` на настоящих Upstash и Vercel Blob прошли (`TYPE`, `HGETALL`, `PTTL`, `SCAN`, `take`, множества, приватные `put`/`get`/`list`/`del`, ротация, восстановление).
